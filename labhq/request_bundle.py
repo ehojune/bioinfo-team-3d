@@ -358,8 +358,9 @@ def _public_hpc_text(settings):
     words = set(redaction_words(["ssh", *shlex.split(cfg.ssh_host or "")]))
     if profile:
         words.update(redaction_words(profile.connect_argv))
-    words.update(word for word in (cfg.user, cfg.default_queue,
-                                  getattr(profile, "queue", None), *(getattr(profile, "pinned_nodes", []) or [])) if word)
+    site_values = (cfg.user, cfg.default_queue, getattr(profile, "queue", None),
+                   *(getattr(profile, "pinned_nodes", []) or []))
+    words.update(redaction_words(["site", *(word for word in site_values if word)]))
     root = getattr(profile, "remote_workdir", None) or "/"
 
     def site_words(text):
@@ -379,24 +380,25 @@ def _public_hpc_text(settings):
     return hide
 
 
-def _public_values(value, hide):
+def _public_values(value, hide, *, redact_keys=True):
     """Transform JSON values structurally so Windows escapes and quoted text stay valid JSON."""
     if isinstance(value, str):
         if re.fullmatch(r'[0-9a-fA-F]{64}', value):
             return value  # hashes are integrity evidence, even when a short account matches their digits
         return hide(value)
     if isinstance(value, Mapping):
-        transformed = {hide(key) if isinstance(key, str) else key: _public_values(item, hide)
+        transformed = {hide(key) if redact_keys and isinstance(key, str) else key:
+                       _public_values(item, hide, redact_keys=redact_keys)
                        for key, item in value.items()}
         if len(transformed) != len(value):
             raise ValueError('site redaction would merge JSON keys; bundle withheld')
         return transformed
     if isinstance(value, list):
-        return [_public_values(item, hide) for item in value]
+        return [_public_values(item, hide, redact_keys=redact_keys) for item in value]
     return value
 
 
-def _redact_bundle_text(path, hide):
+def _redact_bundle_text(path, hide, *, hash_bound=False):
     """Content-based UTF-8 detection includes suffixless configs and scheduler .out/.err files."""
     data = path.read_bytes()
     if b'\0' in data[:8192]:
@@ -417,7 +419,7 @@ def _redact_bundle_text(path, hide):
         cleaned = hide(text, script=path.suffix.casefold() in SCRIPT_SUFFIXES)
     if cleaned == text:
         return False
-    if path.name == 'final_checkpoint.json':
+    if hash_bound:
         raise ValueError('hash-bound final checkpoint contains private site text; bundle withheld')
     path.write_text(cleaned, encoding='utf-8', newline='\n')
     return True
@@ -1016,13 +1018,17 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         redacted_files = set()
         if public_text:
             for path in sorted(p for p in temp.rglob('*') if p.is_file()):
-                if _redact_bundle_text(path, public_text):
+                if _redact_bundle_text(path, public_text, hash_bound=path == temp / 'final_checkpoint.json'):
                     redacted_files.add(path.relative_to(temp).as_posix())
             for row in rows:
                 row['redacted'] = 'yes' if row['relative_path'] in redacted_files else ''
-            rows = _public_values(rows, public_text)
-            input_rows = _public_values(input_rows, public_text)
-            run_records = _public_values(run_records, public_text)
+                # Inventory names identify the unchanged files; hide the descriptive fields only.
+                for key in row:
+                    if key not in ('relative_path', 'step_id'):
+                        row[key] = _public_values(row[key], public_text)
+            for row in input_rows:
+                row['path'] = public_text(row['path'])
+            run_records = {step_id: _public_values(run, public_text) for step_id, run in run_records.items()}
             rewrite_by_file = {name: (count, [public_text(p) for p in paths])
                                for name, (count, paths) in rewrite_by_file.items()}
             remaining = {public_text(p) for p in remaining}
@@ -1086,7 +1092,8 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         crate_warning = None
         try:
             crate_path = temp / METADATA_FILE
-            public_req = _public_values(req, public_text) if public_text else req
+            # Request mapping keys include step IDs and output paths, not free text.
+            public_req = _public_values(req, public_text, redact_keys=False) if public_text else req
             write_ro_crate(crate_path, public_req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
             rows.append({"relative_path": METADATA_FILE, "size": crate_path.stat().st_size,
                          "sha256": _sha256(crate_path), "step_id": "", "original_path": "",

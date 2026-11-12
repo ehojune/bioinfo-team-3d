@@ -1815,7 +1815,7 @@ def test_public_hpc_json_and_hash_bound_checkpoint_fail_closed(tmp_path):
     frozen.write_text(json.dumps(data), encoding='utf-8')
     original = frozen.read_bytes()
     with pytest.raises(ValueError, match='hash-bound'):
-        _redact_bundle_text(frozen, hide)
+        _redact_bundle_text(frozen, hide, hash_bound=True)
     assert frozen.read_bytes() == original
     with pytest.raises(ValueError, match='merge JSON keys'):
         _public_values({'/private/one': 1, '/private/two': 2}, hide)
@@ -2160,5 +2160,48 @@ def test_hpc_bundle_redacts_text_by_content_and_keeps_source_and_verified_hashes
     assert row["redacted"] == "yes" and row["source_sha256"] == digest(work / "outputs/env/condarc")
     assert row["sha256"] != row["source_sha256"]
     assert "redact" in (bundle / "execution_record.md").read_text(encoding="utf-8").lower()
+    assert all(path.read_bytes() == data for path, data in originals.items())
+    assert verify_bundle_copy(bundle)["problems"] == []
+
+
+def test_hpc_bundle_short_site_values_do_not_corrupt_report_or_json(tmp_path, monkeypatch):
+    from labhq.hpc_site import SiteProfile
+    from labhq.request_bundle import _public_hpc_text, _public_values
+
+    settings = Settings()
+    settings.hpc.site_profile = "synthetic"
+    settings.hpc.user, settings.hpc.default_queue = "a", "q"
+    profile = SiteProfile(name="synthetic", access_method="ssh", scheduler="slurm",
+                          connect_argv=["ssh", "fixture-user@fixture-host"],
+                          remote_workdir="/scratch/fixture-team/run", queue="b", pinned_nodes=["c"])
+    monkeypatch.setattr("labhq.hpc_site.load_profile", lambda name: profile)
+    hide = _public_hpc_text(settings)
+    text = "A basic quality control report remains readable."
+    assert hide(text) == text
+    data = {"account": "a", "queue": "q", "baseline": "b", "count": "c"}
+    assert _public_values(data, hide) == data
+    assert "fixture-host" not in hide("fixture-host /scratch/fixture-team/run/data.txt")
+
+
+def test_hpc_bundle_site_words_in_file_names_preserve_manifest_inventory(tmp_path):
+    settings, request, task = pending_bundle_fixture(tmp_path, "req_site_names")
+    settings.hpc.ssh_host = "fixture-user@fixture-host"
+    work = Path(request["results"]["direct"]["workdir"])
+    names = ("fixture-host.txt", "fixture-user.txt", "final_checkpoint.json")
+    originals = {}
+    for name in names:
+        path = work / "outputs" / name
+        write(path, json.dumps({"source": "/scratch/fixture-user/private.txt"}))
+        originals[path] = path.read_bytes()
+        relative = "outputs/" + name
+        request["results"]["direct"]["outputs"].append(relative)
+        request["results"]["direct"]["output_sha256"][relative] = digest(path)
+    bundle = Path(build_request_bundle(request, settings, {"t": task})["path"])
+    rows = manifest_rows(bundle)
+    for name in names:
+        relative = "steps/direct/outputs/" + name
+        assert relative in rows and (bundle / relative).is_file()
+        assert rows[relative]["redacted"] == "yes"
+        assert "fixture-user" not in json.loads((bundle / relative).read_text())["source"]
     assert all(path.read_bytes() == data for path, data in originals.items())
     assert verify_bundle_copy(bundle)["problems"] == []
