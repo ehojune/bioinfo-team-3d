@@ -40,3 +40,7 @@ rows:
     at: "2026-11-12 18:13"
     summary: "가릴 수 없는 텍스트를 원문 그대로 공개 묶음에 싣지 않습니다."
     text: "#1416 r2: 텍스트의 초기·후기 UTF-8 오류와 NUL은 원본을 보존한 채 공개 묶음 거절. 관련 회귀·encoding 217 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
+  - sha: "d9e880b"
+    at: "2026-11-12 18:25"
+    summary: "그림 PDF는 원래 bytes를 보존하고 스크립트의 공유 경로는 가립니다."
+    text: "#1416 r2: binary 형식 header 판별, script의 비시스템 절대경로 가림. ASCII PDF·압축 stream·공유 경로 회귀 포함 222 passed·2 skipped. 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
