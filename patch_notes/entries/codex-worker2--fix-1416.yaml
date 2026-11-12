@@ -80,3 +80,7 @@ rows:
     at: "2026-11-12 19:55"
     summary: "인자 구분자와 shell 연산자 뒤의 비공개 경로를 가립니다."
     text: "#1416 r2: POSIX 경로 시작 경계 확장과 제어 연산자 보존. comma·semicolon·ampersand·pipe 회귀 포함 276 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
+  - sha: "83655ab"
+    at: "2026-11-12 20:06"
+    summary: "숫자형 사이트 식별자와 SSH port를 구분해 가립니다."
+    text: "#1416 r2: user·queue·pinned node의 숫자 문자열은 일반 식별자로 가림. SSH port 문맥·exit code·record ID·hash 보존 포함 277 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS·원본 동일."
