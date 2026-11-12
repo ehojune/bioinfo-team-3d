@@ -486,7 +486,7 @@ def local_copy_conflicts(root: Path, paths: list[str], hashes: dict, receipts: d
 # List names and sizes through held directories. Large outputs stay exactly where the job wrote them;
 # listing never reads file contents, changes permissions, copies or moves them.
 REMOTE_DATA_HELPER = r'''
-import os, sys, json, stat, contextlib, uuid, re
+import os, sys, json, stat, contextlib, uuid, re, hashlib
 root, job, action = sys.argv[1:4]
 with contextlib.ExitStack() as stack:
  skipped=[]
@@ -534,7 +534,15 @@ with contextlib.ExitStack() as stack:
  def info(base,name):
   fd,s=read(base,name)
   try:
-   return {'bytes':s.st_size}
+   digest=hashlib.sha256()
+   while True:
+    block=os.read(fd,1024*1024)
+    if not block: break
+    digest.update(block)
+   after=os.fstat(fd)
+   if (s.st_size,s.st_mtime_ns,s.st_ctime_ns)!=(after.st_size,after.st_mtime_ns,after.st_ctime_ns):
+    raise ValueError('remote file changed while hashing')
+   return {'bytes':s.st_size,'sha256':digest.hexdigest()}
   finally: os.close(fd)
  r=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW); stack.callback(os.close,r)
  j=stack.enter_context(folder(r,job))
@@ -563,7 +571,8 @@ with contextlib.ExitStack() as stack:
   for row in cfg['files']:
    parts=row['path'].split('/')
    with folder(data,'/'.join(parts[:-1])) as parent:
-    if info(parent,parts[-1])['bytes']!=row['bytes']: raise ValueError('remote input size differs')
+    if info(parent,parts[-1])!={'bytes':row['bytes'],'sha256':row['sha256']}:
+     raise ValueError('remote input size or sha256 differs')
   for path in cfg.get('directories',[]):
    with folder(data,path): pass
 '''
@@ -618,8 +627,15 @@ def _remote_data_command(transfer: Transfer, folder: str, action: str, config: s
                  transfer.real_root(), folder, action, config])), "checking remote data")
 
 
+def _require_remote_hashes(manifest: dict) -> None:
+    if any(not isinstance(row.get("sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", row["sha256"])
+           for row in manifest["files"]):
+        raise TransferError("remote input has no valid recorded sha256; it cannot be verified")
+
+
 def verify_remote_data(transfer: Transfer, manifest: dict, request_id: str) -> str:
     validate_remote_manifest(manifest, request_id)
+    _require_remote_hashes(manifest)
     folder = str(PurePosixPath(manifest["data"]).parent)
     transfer.plain_dir(folder)
     # Check the runner's saved names/sizes without reading the large files.
@@ -727,15 +743,15 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         _remote_data_command(transfer, spec["dir"], "scan", "remote-config.json")
         data, _ = transfer.fetch_bytes(f"{spec['dir']}/remote-data.json", max_bytes=4 * 1024 * 1024)
         remote = validate_remote_manifest(json.loads(data), spec["request_id"])
+        _require_remote_hashes(remote)
         if remote["data"] != spec["data"]:
             raise PathRejected("remote manifest folder differs from the submitted job")
         manifest["skipped"].extend(remote.get("skipped", []))
-        # Reuse the existing small-upload checksum to distinguish an unchanged input from a produced file.
-        # This never hashes a large output; large files retain the name/size-only contract.
+        # Compare the scan's digest with the uploaded input's digest.
         uploaded = spec.get("inputs") or {}
         remote["unchanged_inputs"] = [row["path"] for row in remote["files"]
             if row["path"] in uploaded and row["bytes"] <= transfer.limits.upload_max_bytes
-            and transfer.remote_sha256(f"{remote['data']}/{row['path']}") == uploaded[row["path"]]]
+            and row["sha256"] == uploaded[row["path"]]]
         manifest["remote"] = remote
         total = 0
         for row in remote["files"]:
@@ -755,6 +771,8 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
                 continue
             if info.get("remote_bytes", info["bytes"]) != size:
                 raise TransferError(f"{name}: size differs from remote listing")
+            if info.get("remote_sha256", info["sha256"]) != row["sha256"]:
+                raise HashMismatch(f"{name}: content differs from remote listing")
             total += size
             manifest["fetched"].append({"path": name, "bytes": info["bytes"], "sha256": info["sha256"],
                                         **({"redacted": True, "remote_sha256": info["remote_sha256"]}

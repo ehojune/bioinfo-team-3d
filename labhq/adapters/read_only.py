@@ -120,6 +120,7 @@ def with_tool_notice(prompt: str, fields: dict, denied: tuple | list = (), shell
     tools = ", ".join(available_tools(fields, denied, shell)) or "none"
     others = "PubMed or bioRxiv tools, other labhq_annot tools" + ("" if shell else ", shell commands")
     return (prompt.rstrip() + "\n\n" + TOOL_NOTICE_HEAD + "\nAvailable now: " + tools + ".\n"
+            "스킬 도구가 없는 읽기 전용 실행입니다. 스킬 호출 지시 대신 제공된 글쓰기 규칙만 적용하세요.\n"
             "Every other tool or service named in the instructions above (for example " + others + ") is not "
             "available in this run. Do not try it; say what you could not check instead.")
 

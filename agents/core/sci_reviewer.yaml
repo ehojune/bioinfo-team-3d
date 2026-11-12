@@ -9,15 +9,6 @@ sandbox: read-only  # runner grants writes only to this task's outputs/ and .tmp
 tools: [WebSearch]  # Codex: live web search
 builtin_mcp: [annot]
 annot_tools: [pdb, chembl]  # structure and compound lookups only, through labhq_annot: counted, time-limited, raw kept (#1055)
-mcp:  # citation checks only; queries leave the PC, never send restricted data (#274)
-  - name: pubmed
-    type: http
-    url: https://pubmed.mcp.claude.com/mcp
-    auto_approve: true   # read-only public search
-  - name: biorxiv
-    type: http
-    url: https://hcls.mcp.claude.com/biorxiv/mcp
-    auto_approve: true
 system_prompt: |
   Write only in your own task's outputs/ and .tmp/. Never edit reviewed files or inputs.
   Save the final review JSON to outputs/review.json and return the same JSON as the final answer.

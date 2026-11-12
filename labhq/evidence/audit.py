@@ -411,6 +411,8 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     source_reports = _run_live_source_reports(req, settings, observed_artifacts)
     problems = [f"{row['step_id']}: {row['path']} {row['status']} ({row['detail']})"
                 for row in files if row["status"] in PROBLEM_STATUSES]
+    reasons += [f"{row['step_id']}: {row['path']} 원격 파일은 이 로컬 검사에서 다시 읽지 않아 무결성 미확인"
+                for row in files if row["status"] == REMOTE]
     if report_check and report_check["rerun"]:
         problems += [f"보고서 앵커: {problem}" for problem in report_check["rerun"]["problems"]]
     problems += [f"계획 결속: {problem}" for problem in ledger_binding_problems(req)]
