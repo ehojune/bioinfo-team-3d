@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:00 | [`da39d80`](https://github.com/ehojune/bioinfo-team-3d/pull/1414/commits/da39d80) | **표 앞 주석이 있어도 결과를 저장합니다.**<br>TSV 머리줄 앞 탭 없는 # 행을 주석으로 처리하고 탭이 있는 머리줄과 원본을 보존합니다. |
+| 15:59 | [`e5b3d58`](https://github.com/ehojune/bioinfo-team-3d/pull/1414/commits/e5b3d58) | **탭이 있는 표 머리줄을 주석으로 지우지 않습니다.**<br>TSV에서 탭 없는 선행 # 행만 주석으로 처리하고 한 열짜리 # 머리줄의 제한을 문서화했습니다. |
 | 15:25 | [`149ac28`](https://github.com/ehojune/bioinfo-team-3d/commit/149ac28) | **채용이 꺼졌을 때의 계획 안내를 매뉴얼에 적습니다.**<br>한영 매뉴얼에 빈 recruit 요청과 논문 스킬 선택 안내 생략을 설명하고 모델 준수는 미검증으로 남깁니다. |
 | 15:25 | [`d7defe6`](https://github.com/ehojune/bioinfo-team-3d/commit/d7defe6) | **채용이 꺼져 있을 때 계획에 채용 불가 안내를 넣습니다.**<br>일반·연구 계획과 일반 재계획에서 채용 및 논문 스킬 OFF를 안내하고 recruit를 빈 배열로 요청합니다. |
 | 15:19 | [`228d28a`](https://github.com/ehojune/bioinfo-team-3d/commit/228d28a) | **재계획 검사를 기존 시험 파일에서 실행합니다.**<br>Windows CI의 시험 목록에 맞춰 동일한 mock Task 검증을 기존 파일로 옮겼습니다. |
