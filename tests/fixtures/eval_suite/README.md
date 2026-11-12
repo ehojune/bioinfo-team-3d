@@ -4,4 +4,4 @@
 
 - `citation_audit/`: 인용 10건, 기록된 조회 응답(`records.json`, DOI 예시 접두사 10.5555), 원문 텍스트. `expected`가 등급 정답.
 - `review_calibration/clean/`: 내부가 맞는 작은 결과 묶음. `seeded/`: 오류 9종을 심은 것. `seeded_contrast/`: 대조 방향만 뒤집은 것(방향 오류와 서로 상쇄하지 않게 분리). 각 `ERRORS.json`이 정답 키이고 리뷰어에게 보여 주지 않습니다. 묶음마다 `records.json`(조회 기록)이 있습니다.
-- `falsification/cases.json`: 반증 반영 사례 6건의 틀. 정답 칸은 PI가 실행 전에 채웁니다.
+- `falsification/cases.json`: 반증 반영 사례 6건의 틀과 사례 사실(`facts`, 반증과 함께 줌). 정답 칸(`answer` · `answer_rationale`)은 비워 둡니다. 정답은 공개 저장소에 넣지 않고 채점자만 보는 파일에 있으며, 실행 전에 그 sha256을 #1383에 고정했습니다.
