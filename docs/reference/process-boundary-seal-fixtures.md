@@ -1,4 +1,4 @@
-> Historical: the experimental implementation described below was removed in #1389. Commands and file paths are no longer current.
+> #1389 removed the experimental product integration and observer test. The four seal fixture files, their offline validator/adapter, and fixture-only data tests remain; they do not establish OS protection.
 
 # Supervisor/seal acceptance fixtures
 
@@ -8,8 +8,10 @@ Lookup-only evidence for [#1063](https://github.com/ehojune/bioinfo-team-3d/issu
 |---|---|
 | `tests/fixtures/process_boundary_seal/cases.json` | v3 positive control, independent pins and 28 rejected cases |
 | `tests/fixtures/process_boundary_seal/controls.json` | 53 negative lifecycle controls with required reason codes |
+| `tests/fixtures/process_boundary_seal/lifecycle-v1.json` | Offline lifecycle interoperability vector |
 | `tests/fixtures/process_boundary_seal/validator.py` | Pure validator, independent of W1 producer and W3 harness |
 | `tests/test_process_boundary_seal_contract.py` | Phase, ancestry, identity, malformed-input and receipt mutations |
+| `tests/test_boundary_probe.py` | Offline validator, authentication and corpus checks alongside retained probe tests |
 
 ## v3 identity and ancestry
 
@@ -54,4 +56,4 @@ Each negative control rejects with its reason code against both the original led
 
 A production adapter still needs authenticated external observer/ledger inputs and supervisor request-deadline, stop-reason and cleanup evidence. Real OS seal, writable-handle revocation, continuous ancestry monitoring and independent resource inventory remain **UNVERIFIED**. Child receipts or endpoint hashes cannot replace them; execution approval is separate.
 
-Validation: `python -m pytest tests/test_process_boundary_seal_contract.py tests/test_boundary_observer.py -q`. Windows inventory retains all seal cases. PR #1064 tracks code-only integration and final-head CI/review; real protection and execution approval remain separate #666 gates.
+Validation: `python -m pytest tests/test_process_boundary_seal_contract.py tests/test_boundary_probe.py -q`. Windows inventory retains these test paths. The former observer and integration harness were removed in #1389. Real protection and execution approval remain separate #666 gates.

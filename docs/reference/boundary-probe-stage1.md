@@ -26,11 +26,11 @@ A fixture file the child cannot read (for example the socket port or the descrip
 
 Pending: positive interop controls in a suitable disposable environment, authenticated proof of detached-child cleanup, actual hook invocation, MCP operation inside the namespace and launcher-driven adversarial probes. Engine compatibility and protection are UNVERIFIED. Do not use this harness to enable the capability or claim protection.
 
-## Historical: removed offline seal fixtures
+## Offline seal fixtures and removed integration
 
-The seal adapter, lifecycle vector, observer and integration harness described below were removed in #1389. They are not part of the retained probe above.
+The fixture validator's offline adapter, lifecycle vector and fixture-only data tests remain in #1389. The product observer and probe integration harness were removed. These offline fixtures are separate from the retained probe above.
 
-The offline seal fixture adapter models separate producer and observer MACs, externally supplied expectations and a one-use run/nonce set. Its accepted verdict is `synthetic_only`: keys, observer, ledger and resource inventory are test inputs, not authenticated OS observations. Replay state is in-memory and not a production replay store. The pinned producer emits only unsealed diagnostics and has no authenticated observer or sealed-storage interface. Actual producer authentication, independent whole-tree cleanup and protection remain UNVERIFIED.
+The offline seal fixture adapter models separate producer and observer MACs, externally supplied expectations and a one-use run/nonce set. Its accepted verdict is `synthetic_only`: keys, observer, ledger and resource inventory are test inputs, not authenticated OS observations. Replay state is in-memory and not a production replay store. The former producer emitted only unsealed diagnostics and had no authenticated observer or sealed-storage interface. Actual producer authentication, independent whole-tree cleanup and protection remain UNVERIFIED.
 
 ## Offline lifecycle event v1
 
@@ -39,6 +39,6 @@ Producer events are JSON objects with exactly `version` (integer 1), `run_id`, `
 For this synthetic v1 contract, `algorithm` is `hmac-sha256`; `tag` is lowercase hex HMAC-SHA256 over UTF-8 JSON of the event without `auth`, serialized with sorted keys, separators `(',', ':')`, and ASCII escaping. The verifier selects a preconfigured key by `key_id`; keys are never carried in events. The fixture key is public test data and grants no trust. `tests/fixtures/process_boundary_seal/lifecycle-v1.json` is the byte-level interoperability vector.
 
 Observer inventory is separately collected, ordered and run/nonce bound; producer events alone cannot prove cleanup. Production authentication, protected replay storage and independent OS process/resource collection require a separately trusted implementation. This offline contract does not establish protection.
-# Offline observer inventory assertions
+# Historical: offline observer inventory assertions
 
-Synthetic snapshots carry a source label, phase sequence and complete flag; launch must include the launch identity. These are fixture assertions, not authenticated provenance or proof of a complete OS inventory. The synchronous collector is not bounded; a separately owned supervisor must enforce timeouts and protect keys and replay storage. Actual cleanup remains UNVERIFIED.
+The removed observer's synthetic snapshots carried a source label, phase sequence and complete flag; launch had to include the launch identity. These assertions were not authenticated provenance or proof of a complete OS inventory. Actual cleanup remains UNVERIFIED.
