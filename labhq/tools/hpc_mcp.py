@@ -316,6 +316,11 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
                                or not all(isinstance(i, str) and i and not i.startswith("/") and ".." not in i.split("/")
                                           for i in inputs)):
         raise tool_failure("inputs is a list of at most 20 relative paths inside your workspace")
+    if any(part.casefold().rstrip(' .') == '.tmp' for item in inputs or []
+           for part in item.replace('\\', '/').split('/')):
+        raise tool_failure(".tmp/ is private task scratch and cannot be an HPC job input. "
+                           "Move scripts to outputs/scripts/ and small supporting files to outputs/; "
+                           "update the script and inputs paths before submitting. Upload limits are unchanged.")
     if crlf := crlf_shell_inputs(WORKDIR, inputs or []):
         raise tool_failure("CRLF line endings in " + ", ".join(crlf) + ": bash on the cluster reads the \\r as part "
                            "of each command and fails. Rewrite them with LF line endings and submit again")

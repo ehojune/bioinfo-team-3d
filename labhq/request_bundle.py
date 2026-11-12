@@ -41,6 +41,7 @@ MANIFEST_FIELDS = (
     "relative_path", "size", "sha256", "step_id", "original_path", "status",
     "rewritten", "remaining_absolute_paths", "rewritten_files", "reproducibility_grade",
     "reproducibility_reasons", "environment_records", "rerun_receipt",
+    "redacted", "source_sha256", "source_size",
 )
 INPUT_FIELDS = ("step_id", "path", "size", "mtime_ns", "sha256", "skipped", "cached")
 MANIFEST_MAX_BYTES = 16 * 1024 * 1024
@@ -342,6 +343,75 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
     return replacements, remaining
 
 
+# A configured remote work folder's path is cut where a shell word, a quoted string or a markup tag ends.
+_REMOTE_PATH_END = r"""[^\s"'<>|`;,()\[\]{}\\]*"""
+# Curated documents keep their own text: the report is checked by `labhq verify`, not rewritten here (#1416).
+PUBLIC_TEXT_SKIP = frozenset({"report.md", "report_appendix.md", "README.md"})
+PUBLIC_TEXT_SKIP_SUFFIXES = frozenset({".html", ".htm"})
+
+
+def _public_hpc_text(settings):
+    """Hide the configured remote site's work-folder paths in bundle copies (#1416); never opens a session.
+
+    Only what the configuration names is hidden: a path that starts at the site profile's ``remote_workdir`` is
+    replaced to its end, which also hides the account and group names inside it. Other absolute paths, URIs and
+    words are left as they are; guessing them by shape broke report markup and identifiers."""
+    cfg = settings.hpc
+    if not cfg.site_profile:
+        return None
+    from .hpc_site import load_profile
+    profile = load_profile(cfg.site_profile)  # an unreadable named profile fails closed
+    root = (getattr(profile, "remote_workdir", None) or "").rstrip("/")
+    if not root:
+        return None
+    pattern = re.compile(rf"(?<![\w.\-/]){re.escape(root)}(?=$|[/\s\"'<>|`;,()\[\]{{}}\\]){_REMOTE_PATH_END}")
+
+    def hide(text):
+        return pattern.sub("<remote-path>", text)
+
+    return hide
+
+
+def _public_values(value, hide):
+    """Hide strings inside manifest rows, input rows and run records without changing their structure."""
+    if isinstance(value, str):
+        return hide(value)
+    if isinstance(value, Mapping):
+        transformed = {hide(key) if isinstance(key, str) else key: _public_values(item, hide)
+                       for key, item in value.items()}
+        if len(transformed) != len(value):
+            raise ValueError("site redaction would merge keys; bundle withheld")
+        return transformed
+    if isinstance(value, list):
+        return [_public_values(item, hide) for item in value]
+    return value
+
+
+def _public_text_target(relative: str) -> bool:
+    path = PurePosixPath(relative)
+    if path.suffix.casefold() in PUBLIC_TEXT_SKIP_SUFFIXES:
+        return False
+    return not (len(path.parts) == 1 and path.name in PUBLIC_TEXT_SKIP)
+
+
+def _redact_bundle_text(path, hide):
+    """Rewrite one UTF-8 text copy in place; binary and non-UTF-8 files keep their bytes."""
+    data = path.read_bytes()
+    if b"\0" in data[:8192]:
+        return False
+    try:
+        text = data.decode("utf-8")
+    except UnicodeError:
+        return False
+    cleaned = hide(text)
+    if cleaned == text:
+        return False
+    if path.name == "final_checkpoint.json":
+        raise ValueError("hash-bound final checkpoint contains the remote work-folder path; bundle withheld")
+    path.write_bytes(cleaned.encode("utf-8"))
+    return True
+
+
 def _superseded(req: Mapping[str, Any], tasks: Mapping[str, Any]) -> list[str]:
     rid = req.get("id")
     current = {str(sid): str((result or {}).get("task_id") or "")
@@ -577,6 +647,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
     runner_capabilities = runner_capabilities or {}
     results = req.get("results") if isinstance(req.get("results"), Mapping) else {}
     rerun_receipt = _rerun_receipt(req)
+    public_text = _public_hpc_text(settings)
     # The report links a figure as <workdir_id>/outputs/<file>; the bundle names it steps/<step_id>/outputs/<file>, and
     # a linked figure is kept even when the bundle's total limits are full (#584). The per-file limit still applies.
     report_text = link_workdir_figures(str(req.get("report") or ""), figure_owners(results), output_exists(results))
@@ -655,6 +726,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                         return row
                     copied_files += 1
                     copied_bytes += info.st_size
+                    row.update(source_sha256=source_sha256, source_size=info.st_size)
                     suffix = destination.suffix.casefold()
                     command = python_command if suffix == ".py" else SCRIPT_COMMANDS.get(suffix)
                     if suffix == ".py" and command is None:
@@ -698,6 +770,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                     else:
                         copied_files += 1
                         copied_bytes += info.st_size
+                        row.update(source_sha256=current, source_size=info.st_size)
                         copied_job_scripts.append(relative.as_posix())
         except (FileNotFoundError, NotPlainFolder):
             row["status"] = "not copied: missing"
@@ -929,15 +1002,34 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             rewrite_by_file[relative] = (count, paths)
             remaining.update(paths)
 
+        redacted_files = set()
+        if public_text:
+            for path in sorted(p for p in temp.rglob('*') if p.is_file()):
+                if _public_text_target(path.relative_to(temp).as_posix()) and _redact_bundle_text(path, public_text):
+                    redacted_files.add(path.relative_to(temp).as_posix())
+            for row in rows:
+                row['redacted'] = 'yes' if row['relative_path'] in redacted_files else ''
+            rows = _public_values(rows, public_text)
+            input_rows = _public_values(input_rows, public_text)
+            run_records = _public_values(run_records, public_text)
+            rewrite_by_file = {name: (count, [public_text(p) for p in paths])
+                               for name, (count, paths) in rewrite_by_file.items()}
+            remaining = {public_text(p) for p in remaining}
+
         # The figure check reads the rewritten report: an image linked by its absolute workdir path now points inside the
         # bundle. It is the same check `labhq verify` runs later.
         figure_check = bundle_figure_check(temp)
         figure_findings = [*figure_check["problems"], *(f"WARN: {warning}" for warning in figure_check["warnings"])]
+        if public_text:
+            figure_findings = _public_values(figure_findings, public_text)
         if figure_findings:
             with (temp / "execution_record.md").open("a", encoding="utf-8", newline="\n") as handle:
                 handle.write("\n\n## 보고서 그림 링크\n\n" + "\n".join(f"- {finding}" for finding in figure_findings))
 
         grade, grade_reasons = _grade(rows, ordered_steps, rewrite_by_file, not_copied, rerun_receipt)
+        if any('/jobs/' in name or '/outputs/scripts/' in name for name in redacted_files):
+            grade = 'documented'
+            grade_reasons.append('Site-specific script operands were redacted; review before rerunning.')
         with (temp / "README.md").open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(["## 재현 등급", "", f"- `{grade}`", *(f"- {reason}" for reason in grade_reasons),
                                     f"- {input_summary}",
@@ -948,9 +1040,14 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         bundle_note = ["", "## 요청 묶음 변환", "", f"- 절대경로를 바꾼 파일: {rewritten_files}개",
                        f"- 재현 등급: {grade}" + (f" ({'; '.join(grade_reasons)})" if grade_reasons else "")]
         bundle_note.append(f"- {input_summary}")
+        if public_text:
+            bundle_note.append(f"- HPC 사이트 경로 가림: {len(redacted_files)}개 파일에서 설정된 원격 작업 폴더 경로를 "
+                               "<remote-path>로 바꿨습니다. 원본은 그대로입니다 (MANIFEST: redacted, source_sha256, source_size).")
         bundle_note.append("- 남은 절대경로: " + (", ".join(sorted(remaining)) if remaining else "없음"))
         if replaced:
             bundle_note.append(f"- 대체되어 제외한 판: {len(replaced)}개")
+        if public_text:
+            bundle_note = _public_values(bundle_note, public_text)
         appendix_path = temp / "execution_record.md"
         with appendix_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(bundle_note) + "\n")
@@ -968,6 +1065,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             rows.append({"relative_path": relative, "size": path.stat().st_size, "sha256": _sha256(path),
                          "step_id": "", "original_path": "", "status": "generated", "rewritten": count,
                          "remaining_absolute_paths": " | ".join(paths), "rewritten_files": ""})
+            rows[-1]['redacted'] = 'yes' if relative in redacted_files else ''
         for row in rows:
             if row["status"] in ("copied", f"copied{UNREPORTED_TAG}"):
                 copied = temp / str(row["relative_path"])
@@ -977,13 +1075,16 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
         crate_warning = None
         try:
             crate_path = temp / METADATA_FILE
-            write_ro_crate(crate_path, req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
+            public_req = _public_values(req, public_text) if public_text else req
+            write_ro_crate(crate_path, public_req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
             rows.append({"relative_path": METADATA_FILE, "size": crate_path.stat().st_size,
                          "sha256": _sha256(crate_path), "step_id": "", "original_path": "",
                          "status": "generated", "rewritten": 0, "remaining_absolute_paths": "",
                          "rewritten_files": ""})
         except Exception as exc:
             crate_warning = f"RO-Crate metadata를 만들지 못했습니다: {exc}"
+            if public_text:
+                crate_warning = public_text(crate_warning)
             for path in (temp / "README.md", appendix_path):
                 with path.open("a", encoding="utf-8", newline="\n") as handle:
                     handle.write(f"\n- {crate_warning}\n")
