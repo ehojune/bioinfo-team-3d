@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:20 | [`19b5e45`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/19b5e45) | **요청을 취소한 뒤 다음 요청의 결과가 반영되지 않고 멈추던 문제를 고쳤습니다. 이미 멈춘 메시지도 다음 메시지나 재기동 때 이어서 처리합니다.**<br>수정: #1406 취소 스캔의 옛 snapshot이 runner inbox를 영구히 막지 않게 한다 |
+| 14:11 | [`12166ce`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/12166ce) | **다른 요청의 멈춘 메시지도 각자 조건이 맞으면 이어서 처리하고, 처리할 수 없는 메시지는 오류로 남깁니다.**<br>수정: #1406 보류 행 재판정이 앞의 보류 행에서 멈추지 않고, 거부된 메시지는 invalid_message로 남긴다 |
+| 13:59 | [`4111e08`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/4111e08) | **설정 설명서에 멈춘 메시지를 자동으로 다시 처리하는 조건을 적었습니다.**<br>기록·CI: #1406 시험을 Windows 목록에 등록하고 manual에 보류 항목 자동 재판정을 적는다 |
+| 13:46 | [`a9d8896`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/a9d8896) | **재현 시험이 수정 뒤에는 실제로 통과하도록 시험 환경을 보완했습니다.**<br>시험: #1406 재현 hub에 session·incarnation 상태를 채워 수정 뒤 통과 경로를 연다 |
+| 13:32 | [`ace9294`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/ace9294) | **요청을 취소한 뒤 다음 요청의 결과가 반영되지 않던 문제를 재현하는 시험을 추가했습니다.**<br>시험: #1406 취소 뒤 runner inbox 막힘 재현 (strict xfail) |
 | 12:55 | [`e9fdb40`](https://github.com/ehojune/bioinfo-team-3d/commit/e9fdb40) | **호출되지 않는 gateway 내부 코드를 정리했습니다.**<br>참조가 없는 동기 메서드 다섯 개를 삭제하고 대응 async 경로는 유지했다 (Refs |
 | 12:52 | [`df6152b`](https://github.com/ehojune/bioinfo-team-3d/pull/1404/commits/df6152b) | **영문 도구 목록을 리뷰어 설정에 맞춥니다.**<br>PubMed와 bioRxiv 사용자 목록에서 과학 리뷰어를 제외합니다. |
 | 12:50 | [`a010c8f`](https://github.com/ehojune/bioinfo-team-3d/pull/1403/commits/a010c8f) | **평가 묶음 짝 비교 4번 질문을 labhq 전용 진행 지시를 뺀 문장으로 두 갈래에 똑같이 주고, 뺀 문장을 문서에 남겼습니다. 반증 정답은 공개 저장소 밖에 있다고 fixture 안내도 고쳤습니다.**<br>eval-suite.md 4번 중립판·뺀 문장 5개와 바꾼 절 1개·원문, tests/fixtures/eval_suite/README.md 정답 위치, manual 07 한영 평가 묶음 한 문단 (#1383, PR #1403 리뷰 P2) |
