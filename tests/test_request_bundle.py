@@ -2418,3 +2418,45 @@ def test_hpc_bundle_refuses_unredactable_text_without_publishing_private_copies(
 
     assert path.read_bytes() == original
     assert not (Path(settings.runner.workspace_root) / 'requests' / request['id']).exists()
+
+
+@pytest.mark.parametrize('suffix', ['.pdf', ''])
+@pytest.mark.parametrize('compressed', [False, True])
+def test_hpc_bundle_preserves_ascii_header_binary_formats(tmp_path, suffix, compressed):
+    settings, request, task = pending_bundle_fixture(tmp_path, 'req_binary_format')
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    work = Path(request['results']['direct']['workdir'])
+    relative = 'outputs/figure' + suffix
+    path = work / relative
+    original = b'%PDF-1.7\n' + b'fixture-host\n' * 1000 + (b'\xff' if compressed else b'%%EOF\n')
+    path.write_bytes(original)
+    request['results']['direct']['outputs'].append(relative)
+    request['results']['direct']['output_sha256'][relative] = digest(path)
+
+    bundle = Path(build_request_bundle(request, settings, {'t': task})['path'])
+
+    assert (bundle / 'steps/direct' / relative).read_bytes() == original == path.read_bytes()
+    assert manifest_rows(bundle)['steps/direct/' + relative]['redacted'] == ''
+    assert verify_bundle_copy(bundle)['problems'] == []
+
+
+def test_hpc_bundle_scripts_hide_shared_paths_and_keep_system_executables(tmp_path):
+    settings, request, task = pending_bundle_fixture(tmp_path, 'req_script_paths')
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    work = Path(request['results']['direct']['workdir'])
+    relative = 'outputs/scripts/analyze.sh'
+    original = ('#!/usr/bin/env bash\n/usr/bin/bcftools view /project/cohort/patient.vcf '
+                '> /scratch/shared/private.tsv\ncat /dev/null\n')
+    path = work / relative
+    write(path, original)
+    request['results']['direct']['outputs'].append(relative)
+    request['results']['direct']['output_sha256'][relative] = digest(path)
+
+    bundle = Path(build_request_bundle(request, settings, {'t': task})['path'])
+
+    copied = (bundle / 'steps/direct' / relative).read_text(encoding='utf-8')
+    assert '/project/cohort' not in copied and '/scratch/shared' not in copied
+    assert '#!/usr/bin/env bash' in copied and '/usr/bin/bcftools' in copied and '/dev/null' in copied
+    assert path.read_text(encoding='utf-8') == original
+    assert manifest_rows(bundle)['steps/direct/' + relative]['redacted'] == 'yes'
+    assert verify_bundle_copy(bundle)['problems'] == []

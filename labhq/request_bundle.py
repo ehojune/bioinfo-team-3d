@@ -59,6 +59,10 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
 _POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
+_SYSTEM_OPERAND = re.compile(r'/(?:((?:usr/(?:local/)?)?s?bin)/[A-Za-z0-9_.+-]+|dev/(?:null|stdin|stdout|stderr))\Z')
+_BINARY_PREFIXES = (b'%PDF-', b'\x89PNG', b'\xff\xd8\xff', b'GIF87a', b'GIF89a', b'PK\x03\x04',
+                    b'\x1f\x8b', b'BAM\x01', b'CRAM', b'\x89HDF', b'\x93NUMPY', b'PAR1', b'ARROW1',
+                    b'SQLite format 3\0', b'SIMPLE  =')
 REMOTE_RUNNER_NOTE = "runner가 다른 PC라 묶음을 만들지 않음"
 LINK_SCRIPT = "link_inputs.py"
 RERUN_RECEIPT_FILE = "rerun_receipt.json"
@@ -300,6 +304,10 @@ def _path_prefix_pattern(workdir: Any, *, outputs: bool = True) -> re.Pattern[st
                       r"(?P<tail>[^\s<>\"'`|]*)", flags)
 
 
+def _binary_prefix(data: bytes) -> bool:
+    return data.startswith(_BINARY_PREFIXES) or (data.startswith(b'RIFF') and data[8:12] in (b'WEBP', b'WAVE', b'AVI '))
+
+
 def _text_lines(path: Path, *, newline=''):
     with path.open('r', encoding='utf-8', newline=newline) as handle:
         while line := handle.readline(_TEXT_LINE_MAX_CHARS + 1):
@@ -311,7 +319,8 @@ def _text_lines(path: Path, *, newline=''):
 def _transform_text(path: Path, transform, *, newline='') -> bool | None:
     """Bounded UTF-8 transformation; invalid/binary text leaves the derived copy untouched."""
     with path.open(mode='rb') as handle:
-        if b'\0' in handle.read(8192):
+        prefix = handle.read(8192)
+        if b'\0' in prefix or _binary_prefix(prefix):
             return None
     try:
         with tempfile.TemporaryFile(dir=path.parent) as staged:
@@ -335,7 +344,8 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
                   data_inputs: list[tuple[str, Path]] = ()) -> tuple[int, list[str]]:
     try:
         with path.open(mode='rb') as handle:
-            if b'\0' in handle.read(8192):
+            prefix = handle.read(8192)
+            if b'\0' in prefix or _binary_prefix(prefix):
                 return 0, []
     except OSError:
         return 0, []
@@ -445,13 +455,31 @@ def _public_hpc_text(settings, *, claim_refs=()):
     transfer = Transfer(no_remote_command, root, redact=site_words)
 
     def hide(text, *, script=False):
-        # Code keeps system operands and shebangs; site-specific operands are still hidden.
         if script:
-            return transfer._hide(text)
+            sentinel = '\x01'
+            while sentinel in text:
+                sentinel *= 2
+            systems = []
+
+            def operand(match):
+                raw = match.group(0)
+                path = raw.rstrip('.,;:)')
+                if _SYSTEM_OPERAND.fullmatch(path):
+                    systems.append(raw)
+                    return f'{sentinel}{len(systems) - 1}{sentinel}'
+                return '<remote-path>' + raw[len(path):]
+
+            # Keep only system interpreters/executables/devices; shared-site paths outside the configured root are private.
+            text = re.sub(r'(?<=#!)/[^\s]+', operand, text)
+            text = _POSIX_ABS.sub(operand, text)
+            text = _WINDOWS_ABS.sub('<local-path>', transfer._hide(text))
+            for index, value in enumerate(systems):
+                text = text.replace(f'{sentinel}{index}{sentinel}', value)
+            return text
         # Preserve only references to declared ledger IDs, never arbitrary relative-looking site text.
         sentinel = '\x01'
         while sentinel in text:
-            sentinel += '\x01'
+            sentinel *= 2
         references = [token for ref in claim_refs for token in (f'[[claim:{ref}]]', f'`{ref}`') if token in text]
         for index, token in enumerate(references):
             text = text.replace(token, f'{sentinel}{index}{sentinel}')
@@ -491,6 +519,8 @@ def _redact_bundle_text(path, hide, *, hash_bound=False, record_fields=()):
     """Content-based UTF-8 detection includes suffixless configs and scheduler .out/.err files."""
     with path.open(mode='rb') as handle:
         prefix = handle.read(8192)
+    if _binary_prefix(prefix):
+        return False  # PDFs and other binary containers can start with entirely ASCII metadata
     text_candidate = path.suffix.casefold() in TEXT_SUFFIXES | {'.out', '.err', '.log', ''}
     if b'\0' in prefix:
         if text_candidate:

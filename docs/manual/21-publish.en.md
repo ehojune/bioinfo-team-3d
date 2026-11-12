@@ -4,7 +4,7 @@
 
 Request bundles configured with an HPC site profile or `ssh_host` apply the job-log path redaction policy to text copies, including suffixless configs, `.out`/`.err`, execution records and manifests. Sources remain unchanged; `MANIFEST.tsv` labels transformed copies with `redacted`, `source_sha256` and `source_size`, and recalculates copy sizes and hashes. Scripts with redacted site operands receive the `documented` grade. A hash-bound final checkpoint requiring redaction prevents bundle creation ([validation scope](../reference/fix-1416.md)).
 
-Bundle text is processed incrementally. Exceeding 16 MiB of JSON, 1M characters per line, or 10,000 remaining paths/16M path characters refuses the bundle with an explicit error. Invalid UTF-8 or NUL bytes in text also refuse publication.
+Binary formats such as PDF retain their original bytes; scripts also redact shared absolute paths. Bundle text is processed incrementally. Exceeding 16 MiB of JSON, 1M characters per line, or 10,000 remaining paths/16M path characters refuses the bundle with an explicit error. Invalid UTF-8 or NUL bytes in text also refuse publication.
 
 A Windows selection refusal is shown with a dedicated error. If a prerequisite step fails, the coverage report is skipped and diagnostic artifacts are preserved. A successful run goes through both coverage and receipt verification.
 
