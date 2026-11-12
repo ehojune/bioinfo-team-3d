@@ -6,8 +6,6 @@
 
 **실험 중인 연결(#666):** 프로세스 경계는 기본 off이며 embedding Python API에서만 요청합니다. 요청하면 아직 unsupported로 실행을 거부하고, offline observer 결과는 합성 근거에 머뭅니다. 실제 보호·인증 cleanup은 미검증입니다. [연결 범위](../reference/sandbox-666-phase2.md).
 
-VM 없는 transport 초안도 기본 off이며 일반 CLI와 연결되지 않습니다. 가짜 peer로 요청 인증·재전송 거절·env/FD 허용 목록을 시험하는 단계로, 실제 OS 인증이나 보호 실행을 제공하지 않습니다. [초안의 범위와 한계](../reference/sandbox-666-transport.md).
-
 **VM 준비 초안(#666, PR #1267 검토 중·draft/hold):** [Hyper-V 설치·정리 안내](../reference/sandbox-666-vm-install.md)에 따라 사용자가 관리자 권한 Windows PowerShell 5.1에서 `Inspect` → `EnableFeature` → 필요한 수동 재부팅 → `Provision`을 직접 실행합니다. 자동 UAC·재부팅·VM 시작은 없으며, 준비된 VM은 전원 OFF·NIC 0 상태입니다.
 
 `RemoveVM`은 VM 설정·checkpoint를 삭제하므로 사전 export/백업과 정확한 VmId·`-ConfirmConfigurationRemoval`이 필요합니다(VHD·ISO·state는 남음). 실제 설치·guest·권한 분리·OS 보호·종료/회수는 **UNVERIFIED**, 같은 관리자 계정 격리는 **UNSUPPORTED**입니다. 기본 off·일반 CLI 미연결·#666 OPEN을 유지합니다.
