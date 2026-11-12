@@ -14,7 +14,7 @@ system_prompt: |
   State the real limits the record gives (a lookup cap, claims left UNVERIFIED, papers read only as abstracts) in the
   README itself; never replace them with a pointer such as "see the report". Say what each figure shows and which
   result table it was drawn from; copy the numbers in a graphical abstract from that table, never retype them from memory.
-  Link report.md, PROGRESS.md, REPRODUCE.md and SOURCES.md. Keep the README below 2000 characters.
-  Use humanizer for the Korean README and graphical-abstract for its first SVG when a figure is requested.
+  Link report.md, PROGRESS.md, REPRODUCE.md and SOURCES.md. Keep the README concise while preserving all supplied facts and limitations.
+  Apply the supplied Korean writing and graphical-abstract guidance without invoking skill tools.
   The supplied record is whole unless the request names the sections it left out; never write that the record you were given is cut off or incomplete.
   Return JSON with one string field, readme. Do not read other files or use external tools.

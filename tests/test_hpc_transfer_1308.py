@@ -35,6 +35,45 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def test_legacy_remote_inventory_without_hash_is_not_admitted():
+    spec = ht.job_spec('t', 'align', 'r')
+    manifest = {'request_id': 'r', 'data': spec['data'], 'bytes': 4,
+                'files': [{'path': 'out.tsv', 'bytes': 4}], 'directories': []}
+    transfer = ht.Transfer(lambda command: pytest.fail('must refuse before remote access'), ROOT)
+    with pytest.raises(ht.TransferError, match='hash|sha256|checksum'):
+        ht.verify_remote_data(transfer, manifest, 'r')
+
+
+def test_remote_record_is_not_a_live_integrity_check(tmp_path):
+    from tests.test_hpc_whole_request import _verify_remote_request
+    report = _verify_remote_request(tmp_path, remote_files={'big.tsv': 10}, outputs=['outputs/big.tsv'])
+    assert report['files'][0]['status'] == 'remote'
+    assert report['exit_code'] != 0
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX descriptor helper')
+def test_remote_helper_rejects_same_size_content_change(tmp_path):
+    import json
+    import subprocess
+    job = tmp_path / 'job'
+    data = tmp_path / 'data'
+    job.mkdir()
+    data.mkdir()
+    (data / 'result.tsv').write_bytes(b'aaaa')
+    (job / 'config.json').write_text(json.dumps({'data': 'data'}))
+    helper = job / 'helper.py'
+    helper.write_text(ht.REMOTE_DATA_HELPER)
+    def run(action, config):
+        return subprocess.run([sys.executable, str(helper), str(tmp_path), 'job', action, config],
+                              capture_output=True, text=True)
+    assert run('scan', 'config.json').returncode == 0
+    manifest = json.loads((job / 'remote-data.json').read_text())
+    assert manifest['files'][0]['sha256'] == sha(b'aaaa')
+    assert run('verify', 'remote-data.json').returncode == 0
+    (data / 'result.tsv').write_bytes(b'bbbb')
+    assert run('verify', 'remote-data.json').returncode != 0
+
+
 def test_a_script_is_uploaded_and_checked_by_sha256(cluster):
     transfer = cluster.transfer()
     script = b"#!/bin/bash\necho hello\n"
