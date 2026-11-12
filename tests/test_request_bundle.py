@@ -2584,3 +2584,30 @@ def test_structured_identifiers_do_not_preserve_absolute_paths(tmp_path, private
     assert cleaned['id'] == value['id'] and cleaned['status'] == value['status']
     assert cleaned['bundle_path'] == value['bundle_path'] and cleaned['url'] == value['url']
     assert cleaned['engine_cli_version'].startswith('1.2.3 ')
+
+
+@pytest.mark.parametrize('operand', [
+    '"/project/private cohort/patient.vcf"', "'/project/private cohort/patient.vcf'",
+    r'/project/private\ cohort/patient.vcf', '/project/"private cohort"/patient.vcf',
+    r'"C:\private cohort\patient.vcf"', r'"\\nas\private cohort\patient.vcf"',
+    '"s3://bucket/private cohort/patient.vcf"', r's3://bucket/private\ cohort/patient.vcf',
+])
+def test_hpc_bundle_redacts_whole_script_operands_with_spaces(tmp_path, operand):
+    settings, request, task = pending_bundle_fixture(tmp_path, 'req_script_spaces')
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    work = Path(request['results']['direct']['workdir'])
+    relative = 'outputs/scripts/spaces.bash'
+    original = '#!/bin/bash\ncat ' + operand + '\necho "https://example.org/paper"\n'
+    path = work / relative
+    write(path, original)
+    request['results']['direct']['outputs'].append(relative)
+    request['results']['direct']['output_sha256'][relative] = digest(path)
+
+    bundle = Path(build_request_bundle(request, settings, {'t': task})['path'])
+    copied = (bundle / 'steps/direct' / relative).read_text(encoding='utf-8')
+    assert not any(part in copied for part in ('cohort', 'patient.vcf', 'bucket', 'nas'))
+    assert '#!/bin/bash' in copied and '"https://example.org/paper"' in copied
+    assert path.read_text(encoding='utf-8') == original
+    assert manifest_rows(bundle)['steps/direct/' + relative]['redacted'] == 'yes'
+    assert manifest_rows(bundle)['.']['reproducibility_grade'] == 'documented'
+    assert verify_bundle_copy(bundle)['problems'] == []
