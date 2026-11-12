@@ -1,9 +1,11 @@
+> Historical: the experimental implementation described below was removed in #1389. Commands and file paths are no longer current.
+
 # Claude Code + WSL2 boundary evidence
 
 Status: **UNVERIFIED**. A mock or skipped test is not evidence that a sandbox
 protects an actual engine. Keep the existing command and path gates enabled.
 
-The current test implements evidence classification and checks the W1
+The retained experimental test implements evidence classification and checks the
 `build_launch()` contract. It does **not** execute boundary probes: that
 contract currently raises `SandboxUnavailable` and has no executable launch
 interface. A successful return deliberately fails the test until real probe
@@ -18,11 +20,10 @@ silence alone does not prove denial or that a command ran.
 python -m pytest -q -rs tests/test_claude_sandbox_boundary.py
 ```
 
-To reproduce the current launch refusal, combine this test with the W1 branch
-containing its launcher and run the same command. The final test reports a skip
-with the refusal reason. The real disposable WSL command cannot be specified until W1
-publishes an executable contract and the fixture is identified. Do not replace
-it with a mock or execute an arbitrary command outside that contract.
+The retained launcher is in this checkout. The final test reports a skip when it
+refuses to launch; that skip is not a protection pass. A real disposable WSL
+command requires a reviewed executable contract and an identified fixture. Do
+not substitute a mock or execute an arbitrary command outside that contract.
 
 ## Required disposable test
 

@@ -1,3 +1,7 @@
+> Historical: the experimental implementation described below was removed in #1389. APIs, tests and file paths are no longer current. Actual OS protection remains UNVERIFIED.
+
+Current tree: `ProcessBoundaryGate` retains only the pre-execution refusal for explicit opt-in. The observer and protected-launch APIs below were removed.
+
 # Process boundary wiring (#666)
 
 Lookup-only integration notes. Actual protection and authenticated cleanup remain **UNVERIFIED**.

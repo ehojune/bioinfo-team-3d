@@ -1,3 +1,5 @@
+> Historical: the experimental implementation described below was removed in #1389. Commands and file paths are no longer current.
+
 # Process boundary: stage 1
 
 Protected launch is **unsupported**. `protected_launch` never starts a process; caller-supplied assertions, digests, or supervisor objects cannot grant authority. This module is not wired into the daemon or an engine.

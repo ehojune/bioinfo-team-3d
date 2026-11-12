@@ -1,3 +1,5 @@
+> Historical: the experimental implementation described below was removed in #1389. APIs, tests and file paths are no longer current. Actual OS protection remains UNVERIFIED.
+
 # #666 VM-free transport contract
 
 Lookup only. This draft implements synthetic admission, not an OS transport.

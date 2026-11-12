@@ -2,11 +2,8 @@
 
 ## 설치와 첫 설정
 
-**프로세스 경계 진단:** `python -m labhq.runner.process_boundary --unsealed-diagnostic`은 봉인되지 않은 고정 진단만 실행합니다. 기본 실행은 보호 실행을 거부합니다(fail-closed). JSON receipt를 출력하며 실패·미지원은 nonzero로 끝납니다. 진단 성공은 보호 검증이 아닙니다. [한계와 조건](../reference/process-boundary-stage1.md).
 
-**실험 중인 연결(#666):** 프로세스 경계는 기본 off이며 embedding Python API에서만 요청합니다. 요청하면 아직 unsupported로 실행을 거부하고, offline observer 결과는 합성 근거에 머뭅니다. 실제 보호·인증 cleanup은 미검증입니다. [연결 범위](../reference/sandbox-666-phase2.md).
-
-VM 없는 transport 초안도 기본 off이며 일반 CLI와 연결되지 않습니다. 가짜 peer로 요청 인증·재전송 거절·env/FD 허용 목록을 시험하는 단계로, 실제 OS 인증이나 보호 실행을 제공하지 않습니다. [초안의 범위와 한계](../reference/sandbox-666-transport.md).
+**프로세스 경계(#666):** 기본 off이며 embedding Python API에서 요청하면 unsupported로 실행을 거부합니다. 실제 OS 보호와 인증 cleanup은 미검증입니다.
 
 **VM 준비 초안(#666, PR #1267 검토 중·draft/hold):** [Hyper-V 설치·정리 안내](../reference/sandbox-666-vm-install.md)에 따라 사용자가 관리자 권한 Windows PowerShell 5.1에서 `Inspect` → `EnableFeature` → 필요한 수동 재부팅 → `Provision`을 직접 실행합니다. 자동 UAC·재부팅·VM 시작은 없으며, 준비된 VM은 전원 OFF·NIC 0 상태입니다.
 
