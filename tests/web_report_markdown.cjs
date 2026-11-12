@@ -1,6 +1,8 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
+const vm = require('node:vm');
 
 require(path.join(__dirname, '../labhq/web/state.js'));
 
@@ -55,6 +57,30 @@ test('external report images become links without automatic requests', () => {
   assert.doesNotMatch(html, /<img[^>]+tracker\.example/);
   assert.match(html, /<a href="https:\/\/tracker\.example\/pixel\.png\?request=secret"/);
   assert.match(html, />외부 그림<\/a>/);
+});
+
+test('request report assets are inert until fetched with authentication', () => {
+  const html = globalThis.LabHQState.reportMarkdownHTML(
+    '![Plot](steps/s1/outputs/p.png)\n\n[Table](steps/s1/outputs/a.csv)', 'req_1');
+  assert.match(html, /data-report-asset="steps\/s1\/outputs\/p.png"/);
+  assert.match(html, /data-report-asset="steps\/s1\/outputs\/a.csv"/);
+  assert.doesNotMatch(html, /(?:src|href)="steps\//);
+});
+
+test('2.5D passes the request id to the report renderer', () => {
+  const html = fs.readFileSync(path.join(__dirname, '../labhq/web/index.html'), 'utf8');
+  const start = html.indexOf('const reportHTML = '), end = html.indexOf('\n// A finished request', start);
+  assert.ok(start >= 0 && end > start);
+  const context = vm.createContext({LabHQState: globalThis.LabHQState, api: {reportAsset() {}}, esc: String, fuLoading: new Set()});
+  vm.runInContext(`${html.slice(start, end)}\nthis.render = reportHTML;`, context);
+  assert.match(context.render({id: 'req_1', report: '![plot](steps/s/outputs/a.png)'}), /data-report-asset="steps\/s\/outputs\/a.png"/);
+});
+
+test('footnote labels agree across report and front without rewriting code', () => {
+  const html = globalThis.LabHQState.reportMarkdownHTML('Result[^step_1].\n\nResult[^step_1].\n\n`[^step_1]`\n\n[^step_1]: Source text.');
+  assert.equal((html.match(/Result\[근거 1\]/g) || []).length, 2);
+  assert.match(html, /<li>Source text\.<\/li>/);
+  assert.match(html, /<code>\[\^step_1\]<\/code>/);
 });
 
 test('stored source report receives the shared first screen at display time', () => {

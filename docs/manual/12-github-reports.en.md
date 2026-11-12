@@ -29,6 +29,8 @@ You can answer the closing question together with `labhq review-done <request id
 
 ### The editor and checking the summary
 
+Relative figures and files in the 2.5D report come from that request's bundle. File links download the asset; they cannot open without the bundle or for a controlled-data request. The web and PDF number Markdown footnotes and show a source list.
+
 The beaver editor (`editor`) polishes the README with the `humanizer` and `graphical-abstract` rules. A polish that fails the preservation checks for numbers, links, citations, headings and table shape is discarded and the base draft is used.
 
 | Path | Contents |

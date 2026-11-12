@@ -52,6 +52,16 @@ def headings(text: str) -> list[str]:
     return [line.removeprefix("## ") for line in text.splitlines() if line.startswith("## ")]
 
 
+def test_pdf_front_and_body_share_footnote_with_underscore() -> None:
+    report = "# Report\n\n## 요약\n\nResult[^claim-step_1].\n\n[^claim-step_1]: Original source.\n"
+    req = {"id": "req_test", "text": "Question", "status": "done", "report": report}
+    page, _ = build_report_html(req, None)
+    assert page.count("Result[근거 1]") == 2
+    assert "Original source." in page
+    assert "근거 원장은 저장소의 docs/reference/claim_evidence.md에 있습니다." not in page
+    assert "&lt;!-- labhq-report-package:" not in page
+
+
 def test_common_front_order_and_reader_copy_are_shared() -> None:
     request, report, results = fixed_request()
     package = build_report_package(request, report, results)

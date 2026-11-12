@@ -36,7 +36,7 @@ from .report_figures import (ABSTRACT_FILE, FIGURE_SUFFIXES, IMAGE_PATTERN, MAX_
 from .report_contract import (FRONT_START, ReportPackage, build_report_package, reader_markdown,
                               research_question, with_pipeline_section, with_report_front)
 
-RENDER_VERSION = "7"  # bump when the page's markup or CSS changes: a cached PDF of an older one is not reused
+RENDER_VERSION = "8"  # invalidate PDFs made before the footnote and package-marker fixes
 PRINT_TIMEOUT_S = 60.0
 _CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'"  # no network
 PRINT_SLOW_BYTES_PER_S = 2 * 1024 * 1024  # a page of embedded figures gets one more second of printing per 2 MB (#608)
@@ -316,6 +316,9 @@ def _blocks(lines: list[str], figures: FigureEmbedder, shift: int) -> str:
     index, count = 0, len(lines)
     while index < count:
         line = lines[index]
+        if re.fullmatch(r" {0,3}<!-- labhq-report-package:(?:v1|end) -->\s*", line):
+            index += 1
+            continue
         if not line.strip():
             index += 1
             continue
