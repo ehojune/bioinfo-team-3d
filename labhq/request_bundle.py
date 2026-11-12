@@ -309,7 +309,7 @@ def _text_lines(path: Path, *, newline=''):
 
 def _transform_text(path: Path, transform, *, newline='') -> bool | None:
     """Bounded UTF-8 transformation; invalid/binary text leaves the derived copy untouched."""
-    with path.open('rb') as handle:
+    with path.open(mode='rb') as handle:
         if b'\0' in handle.read(8192):
             return None
     try:
@@ -323,7 +323,7 @@ def _transform_text(path: Path, transform, *, newline='') -> bool | None:
                 staged.write(cleaned.encode('utf-8'))
             if changed:
                 staged.seek(0)
-                with path.open('wb') as target:
+                with path.open(mode='wb') as target:
                     shutil.copyfileobj(staged, target, length=1024 * 1024)
             return changed
     except UnicodeError:
@@ -333,7 +333,7 @@ def _transform_text(path: Path, transform, *, newline='') -> bool | None:
 def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
                   data_inputs: list[tuple[str, Path]] = ()) -> tuple[int, list[str]]:
     try:
-        with path.open('rb') as handle:
+        with path.open(mode='rb') as handle:
             if b'\0' in handle.read(8192):
                 return 0, []
     except OSError:
@@ -488,12 +488,12 @@ def _public_values(value, hide, *, redact_keys=True, preserve_fields=()):
 
 def _redact_bundle_text(path, hide, *, hash_bound=False, record_fields=()):
     """Content-based UTF-8 detection includes suffixless configs and scheduler .out/.err files."""
-    with path.open('rb') as handle:
+    with path.open(mode='rb') as handle:
         if b'\0' in handle.read(8192):
             return False
     if path.suffix.casefold() != '.json':
         return bool(_transform_text(path, lambda line: hide(line, script=path.suffix.casefold() in SCRIPT_SUFFIXES)))
-    with path.open('rb') as handle:
+    with path.open(mode='rb') as handle:
         data = handle.read(_JSON_REDACTION_MAX_BYTES + 1)
     if len(data) > _JSON_REDACTION_MAX_BYTES:
         raise ValueError('JSON artifact exceeds bounded structural-redaction limit; bundle withheld')
