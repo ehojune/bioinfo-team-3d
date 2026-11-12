@@ -5,6 +5,21 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.mark.parametrize('relative', ['.tmp/fetch.sh', 'outputs/.tmp/data.tsv', r'.tmp\fetch.sh'])
+async def test_hpc_submit_refuses_temporary_inputs_before_writes(tmp_path, monkeypatch, relative):
+    from labhq.tools import hpc_mcp
+
+    monkeypatch.setattr(hpc_mcp, 'WORKDIR', tmp_path)
+    monkeypatch.setenv('LABHQ_EXECUTION_MODE', 'hpc')
+    async def no_broker(*args, **kwargs):
+        pytest.fail('temporary input reached the broker')
+    monkeypatch.setattr(hpc_mcp, '_broker', no_broker)
+    with pytest.raises(Exception) as caught:
+        await hpc_mcp.hpc_submit('bash outputs/scripts/fetch.sh', 'fixture', inputs=[relative])
+    assert '.tmp' in str(caught.value) and 'outputs/scripts/' in str(caught.value)
+    assert not (tmp_path / 'jobs').exists()
+
 from labhq.models import Engine, Task
 from labhq.policy import evaluate_tool
 from labhq.settings import DataZone

@@ -1800,6 +1800,27 @@ def test_a_research_bundle_carries_the_claims_its_report_anchors_name(tmp_path):
     assert verify_bundle_copy(bundle)["problems"] == []
 
 
+def test_public_hpc_json_and_hash_bound_checkpoint_fail_closed(tmp_path):
+    from labhq.request_bundle import _public_hpc_text, _public_values, _redact_bundle_text
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    hide = _public_hpc_text(settings)
+    data = {'nested': [r'C:\Users\fixture-user\private.txt'], 'url': 'https://example.org/paper'}
+    path = tmp_path / 'metadata.json'
+    path.write_text(json.dumps(data), encoding='utf-8')
+    assert _redact_bundle_text(path, hide)
+    cleaned = json.loads(path.read_text(encoding='utf-8'))
+    assert 'fixture-user' not in str(cleaned) and cleaned['url'] == data['url']
+    frozen = tmp_path / 'final_checkpoint.json'
+    frozen.write_text(json.dumps(data), encoding='utf-8')
+    original = frozen.read_bytes()
+    with pytest.raises(ValueError, match='hash-bound'):
+        _redact_bundle_text(frozen, hide)
+    assert frozen.read_bytes() == original
+    with pytest.raises(ValueError, match='merge JSON keys'):
+        _public_values({'/private/one': 1, '/private/two': 2}, hide)
+
+
 def test_a_general_bundle_has_no_claims_file(tmp_path):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
@@ -2097,3 +2118,47 @@ def test_public_cleanup_redacts_arbitrary_absolute_paths():
     cleaned = _clean(' '.join(paths), Settings(), {})
     assert all(path not in cleaned for path in paths)
     assert '<local-path>' in cleaned
+
+
+def test_hpc_bundle_redacts_text_by_content_and_keeps_source_and_verified_hashes(tmp_path, monkeypatch):
+    from labhq.hpc_site import SiteProfile
+    settings, request, task = pending_bundle_fixture(tmp_path, "req_redaction")
+    settings.hpc.site_profile = "synthetic"
+    profile = SiteProfile(name="synthetic", access_method="ssh", scheduler="slurm",
+                          connect_argv=["ssh", "fixture-user@fixture-host"],
+                          remote_workdir="/scratch/fixture-team/fixture-user/run")
+    monkeypatch.setattr("labhq.hpc_site.load_profile", lambda name: profile)
+    work = Path(request["results"]["direct"]["workdir"])
+    payload = ('/scratch/fixture-team/fixture-user/run/file.txt\n'
+               'C:/Users/fixture-user/private.txt\n'
+               'fixture-host fixture-team\nhttps://example.org/paper\nrelative/file.txt\n')
+    originals = {}
+    for name in ("session_info.txt", "env/condarc", "job.out", "metadata.json"):
+        path = work / "outputs" / name
+        write(path, json.dumps({"path": payload}) if name.endswith(".json") else payload)
+        originals[path] = path.read_bytes()
+        relative = "outputs/" + name
+        request["results"]["direct"]["outputs"].append(relative)
+        request["results"]["direct"]["output_sha256"][relative] = digest(path)
+    binary = work / "outputs" / "binary.dat"
+    binary.write_bytes(b"\x00fixture-host\xff")
+    originals[binary] = binary.read_bytes()
+    request["results"]["direct"]["outputs"].append("outputs/binary.dat")
+    request["results"]["direct"]["output_sha256"]["outputs/binary.dat"] = digest(binary)
+    request["execution_record"] = payload
+    built = build_request_bundle(request, settings, {"t": task})
+    bundle = Path(built["path"])
+    for path in [bundle / "execution_record.md", bundle / "MANIFEST.tsv",
+                 *(bundle / "steps/direct" / p.relative_to(work) for p in originals if p != binary)]:
+        text = path.read_text(encoding="utf-8")
+        assert all(term not in text for term in ("fixture-user", "fixture-host", "fixture-team", "C:/Users"))
+    assert "https://example.org/paper" in (bundle / "execution_record.md").read_text(encoding="utf-8")
+    assert json.loads((bundle / "steps/direct/outputs/metadata.json").read_text(encoding="utf-8"))
+    assert (bundle / "steps/direct/outputs/binary.dat").read_bytes() == originals[binary]
+    rows = manifest_rows(bundle)
+    row = rows["steps/direct/outputs/env/condarc"]
+    assert row["redacted"] == "yes" and row["source_sha256"] == digest(work / "outputs/env/condarc")
+    assert row["sha256"] != row["source_sha256"]
+    assert "redact" in (bundle / "execution_record.md").read_text(encoding="utf-8").lower()
+    assert all(path.read_bytes() == data for path, data in originals.items())
+    assert verify_bundle_copy(bundle)["problems"] == []
