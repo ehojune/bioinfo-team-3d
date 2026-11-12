@@ -783,6 +783,14 @@ def test_review_without_claim_id_is_visible_without_inventing_a_claim_match():
     assert "claim 연결 미확인" in claim_evidence_section(rows)
 
 
+def test_exact_review_match_takes_priority_over_earlier_unlinked_or_other_claim():
+    result = {'structured': {'claims': [{'id': 'c1', 'statement': 'Old direction.'}]}}
+    for first in ({'step_id': 's1', 'claim_id': 'other'}, {'step_id': 's1'}):
+        req = {'review': {'issues': [first, {'step_id': 's1', 'claim_id': 'c1'}]}}
+        summary = portfolio._reviewed_summary(req, 's1', result, 'Old direction.')
+        assert summary.startswith('이전 기록 · 검토 지적 · 해결 여부 미확인:')
+
+
 def test_unlinked_review_does_not_expose_internal_or_unscoped_content(monkeypatch):
     monkeypatch.setattr(portfolio, 'internal_data_steps', lambda *args: {'private'})
     monkeypatch.setattr(portfolio, 'step_uses_internal_data', lambda step, *args: step == 'private')

@@ -1276,6 +1276,7 @@ def _reviewed_summary(req: Mapping[str, Any], step_id: str, result: Any, summary
     reviews = [req.get("review") or (req.get("review_progress") or {}).get("review") or {}]
     reviews += [r.get("review") or {} for r in (req.get("research_contract") or {}).get("rounds") or []
                 if isinstance(r, Mapping)]
+    fallback = ""
     for review in reviews:
         if not isinstance(review, Mapping):
             continue
@@ -1284,13 +1285,13 @@ def _reviewed_summary(req: Mapping[str, Any], step_id: str, result: Any, summary
                 continue
             issue_step, issue_claim = issue.get("step_id"), issue.get("claim_id")
             if not issue_claim and (not issue_step or str(issue_step) == step_id):
-                return "이전 기록 · 검토 지적(주장 연결 미확인) · 해결 여부 미확인: " + summary
+                fallback = "이전 기록 · 검토 지적(주장 연결 미확인) · 해결 여부 미확인: "
             if (first and first.get("id") and str(issue_step) == step_id
                     and str(issue_claim) == str(first["id"])):
                 return "이전 기록 · 검토 지적 · 해결 여부 미확인: " + summary
-            if issue_step and str(issue_step) == step_id:
-                return "이전 기록 · 같은 단계 검토 지적(주장 연결 확인 필요) · 해결 여부 미확인: " + summary
-    return summary
+            if not fallback and issue_step and str(issue_step) == step_id:
+                fallback = "이전 기록 · 같은 단계 검토 지적(주장 연결 확인 필요) · 해결 여부 미확인: "
+    return fallback + summary
 
 
 def _result_sentence(text: str) -> str:
