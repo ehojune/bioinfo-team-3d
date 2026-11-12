@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: "2e8cbce"
+    at: "2026-11-12 15:05"
+    summary: "다른 runner의 메시지 보류가 전파되지 않게 하고 복구 안내를 웹과 doctor에 표시합니다."
+    text: "#1386 10번: 같은 runner의 ACK·세대·결과 불명 보류는 유지한다. 원문 없는 상태 조회와 두 UI의 5초 갱신, doctor --network 읽기와 수동 retry/resume 안내를 추가했다. 관련 mock 310건과 web·doctor 재검증 90건으로 확인했으며 운영 복구는 미검증이다."
