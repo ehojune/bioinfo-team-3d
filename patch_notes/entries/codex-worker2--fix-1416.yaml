@@ -28,3 +28,7 @@ rows:
     at: "2026-11-12 17:53"
     summary: "사이트 가림 뒤에도 실행 도구와 환경 상태 기록을 보존합니다."
     text: "#1416 r2: run provenance key·engine·model·CLI version·환경 상태 보존, 설명 값만 가림. 충돌 값 회귀 포함 191 passed·2 skipped, 비공개 사본 public 6→0·bundle 검증 PASS."
+  - sha: "9172c01"
+    at: "2026-11-12 18:03"
+    summary: "큰 산출을 통째로 읽지 않고 묶음 텍스트를 나눠 처리합니다."
+    text: "#1416 r2: binary 8 KiB 선확인, 텍스트·경로 순차 변환과 JSON/한 줄/경로 기록 상한. 통째 읽기 금지·늦은 UTF-8 오류·상한 거절 포함 197 passed·2 skipped. 비공개 사본 public 6→0·bundle 검증 PASS."
