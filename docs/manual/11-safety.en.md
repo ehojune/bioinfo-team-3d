@@ -60,7 +60,6 @@ A task's own folder is the exception. Even when an internal zone wraps every tas
 
 The Claude Bash sandbox policy contract (#666) has its capability disabled and its launcher refuses to run. Actual settings enforcement and protection are **UNVERIFIED**; it does not provide whole-process isolation.
 
-Check a disposable fixture plan offline with `python scripts/boundary_fixture_plan.py plan.json`. It reads one JSON file; `plan_valid` checks the plan, while actual protection remains **UNVERIFIED**. See the [fixture plan guide](../reference/boundary-fixture-plan.md) for input and scope.
 
 The independent supervisor/seal [synthetic fixture validation](../reference/process-boundary-seal-fixtures.md) checks only when simulated evidence is accepted or rejected. Real supervisor trust, file protection during execution and cleanup of remaining processes and sockets are **UNVERIFIED**; this validation does not authorize a protected run.
 

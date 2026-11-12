@@ -1,3 +1,5 @@
+> Historical: the experimental implementation described below was removed in #1389. Commands and file paths are no longer current.
+
 # Claude Code + WSL2 boundary evidence
 
 Status: **UNVERIFIED**. A mock or skipped test is not evidence that a sandbox

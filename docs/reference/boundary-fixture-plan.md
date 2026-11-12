@@ -1,3 +1,5 @@
+> Historical: the experimental implementation described below was removed in #1389. Commands and file paths are no longer current.
+
 # Disposable fixture plan review
 
 Run `python scripts/boundary_fixture_plan.py plan.json`. The tool reads that one JSON file, reports all detected issues and exits 0 only when its schema passes. Unknown fields and values need review. It does not execute strings, inspect or create a VM, install anything, or delete resources. `plan_valid` is a document check; `protection` remains `UNVERIFIED`. An independent review must establish the actual identities, authority, observations and teardown before provisioning.

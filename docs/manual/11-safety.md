@@ -60,7 +60,6 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 
 Claude Bash sandbox 정책 계약(#666)은 capability가 꺼져 있고 launcher가 실행을 거부합니다. 실제 설정 적용과 보호 효과는 **UNVERIFIED**이며 전체 프로세스 격리를 제공하지 않습니다.
 
-Disposable fixture 계획은 `python scripts/boundary_fixture_plan.py plan.json`으로 offline 검사합니다. JSON 파일 하나를 읽으며 `plan_valid`는 계획 검사 결과일 뿐 실제 보호는 **UNVERIFIED**입니다. 입력 예시와 검사 범위는 [fixture 계획 안내](../reference/boundary-fixture-plan.md)를 보세요.
 
 독립 supervisor/seal의 [synthetic fixture 검증](../reference/process-boundary-seal-fixtures.md)은 모의 증거의 수락·거부 조건만 확인합니다. 실제 supervisor의 신뢰성·실행 중 파일 보호·종료 뒤 잔류 정리는 **UNVERIFIED**이며 이 검증으로 보호 실행을 허용하지 않습니다.
 

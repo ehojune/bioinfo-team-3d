@@ -493,31 +493,9 @@ class ProcessBoundaryGate:
     def refusal(self, task: Task) -> TaskResult | None:
         if not self.required:
             return None
-        from ..runner import process_boundary
-
-        try:
-            receipt = process_boundary.protected_launch()
-            unsupported = receipt.preparation == "unsupported" and receipt.launch == "not_started"
-            reason = ("trusted supervisor and sealed storage unavailable" if unsupported else
-                      "protected adapter transport unavailable")
-        except Exception:
-            # Do not expose exception text (which may contain credentials or host paths).
-            reason = "producer check failed"
-        # Even a future successful receipt cannot fall through to create_subprocess_exec.
-        # That needs a separately reviewed transport and authenticated lifecycle owner.
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
                           cost_usd=0.0, cost_known=True, error_kind="boundary_unsupported",
-                          error=f"process boundary unsupported: {reason}")
-
-    def observe_lifecycle(self, events, **expectations) -> dict:
-        """Offline observer seam; its synthetic output never changes launch admission.
-
-        Keys, replay storage and collector must come from the embedding test/operator,
-        never task metadata. Invalid, incomplete or cancelled observations propagate.
-        """
-        from ..runner.boundary_observer import observe
-
-        return observe(events, **expectations)
+                          error="process boundary unsupported: protected transport unavailable")
 
 
 @dataclass

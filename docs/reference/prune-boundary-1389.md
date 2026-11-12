@@ -1,64 +1,7 @@
-# #1389 경계 골격 조사
+# #1389 boundary removal
 
-## r4 연결 조사
+PI decision: [approved removal](https://github.com/ehojune/bioinfo-team-3d/issues/1389#issuecomment-6812064276). Five experimental modules and their dedicated tests are removed; the opt-in still refuses before preparation, credentials and spawn. `codex_sandbox.py` and its doctor/runner users remain.
 
-기준 main `b03e8548`. opt-in을 제거하면 다음 고유 거절이 사라진다. 동등 대체 없이 연결과 시험을 보존한다.
+`boundary_probe/probe.py` and its independent tests remain: it exercises retained hook and local job functions. Its integration harness and seal fixture tests addressed the removed broker and boundary and were removed. Repository import search is the scope of the survey.
 
-| 계약 | 증거 |
-|---|---|
-| bool만 opt-in; runner 두 진입점이 준비 전에 거절 | `test_boundary_wiring_666.py`의 `test_opt_in_requires_an_explicit_bool`, `test_opt_in_runner_refuses_before_workspace_or_adapter` |
-| adapter는 자격증명·준비·spawn 전에 거절; producer 예외·성공에도 fallback 금지 | `test_opt_in_adapter_cannot_prepare_or_spawn`, `test_producer_error_or_success_never_falls_back` |
-| synthetic 관측은 실행 권한을 주지 않고 replay·취소·불완전 결과를 거부 | `test_observer_success_cannot_authorize_engine_and_replay_is_rejected`, `test_observer_failure_is_not_swallowed_or_reusable` |
-
-최소 보존안은 현재 gate와 producer·observer, 위 시험 및 혼합 broker/probe 시험을 유지하는 것이다. 연결 제거에는 동일한 거절과 observer 계약을 구현·검증하는 별도 설계가 필요하다. 이번 배정에는 대체 구현이 없다.
-
-`git grep`에서 daemon의 두 진입점과 adapter가 gate를 쓰고, settings에는 이름 참조가 없었다. `integration_probe.py`는 경로 기반 동적 import를 받으며 seal fixture 시험도 validator를 동적 로드한다. 문자열 검색은 임의 외부 호출의 부재를 증명하지 못한다. `codex_sandbox.py`와 실제 doctor/runner 경로는 유지한다. main 대비 제품·시험 삭제는 각 0줄이다.
-
-## r3 판단과 assertion 보존표
-
-고유 계약을 다른 boundary로 옮길 동등 근거가 없어 r2 삭제를 되돌렸다. 아래 시험과 구현은 원본 그대로 보존한다. Windows inventory와 현재 안내도 복원했다. 제품·시험 순삭제는 0줄이다.
-
-| 기존 시험 | 보존하는 assertion | r3 처리 |
-|---|---|---|
-| `test_boundary_fixture_plan.py` | 닫힌 schema·유형·만료·principal 충돌 거부, command 미실행, malformed JSON fail-closed | fixture plan과 시험 원본 복원 |
-| `test_protected_transport.py` | schema 거부, 인증·run/policy binding, replay 및 동시성·ledger 오류 fail-closed, env/stdio 허용 목록 | synthetic transport와 시험 원본 복원 |
-| `test_claude_sandbox.py` | 충돌·약화 정책 거부 및 launcher fail-closed | sandbox 초안과 시험 원본 복원 |
-| `test_claude_sandbox_boundary.py` | positive control 없는 결과·timeout은 UNVERIFIED, 위반은 FAIL, launcher 차단 | 시험 원본 복원; 실제 보호는 UNVERIFIED |
-
-`test_auth_broker.py`와 `test_boundary_probe.py`도 혼합 계약 때문에 그대로 유지한다. 구현 제거와 계약 이관 여부는 별도 판단이 필요하다. 이 표는 시험 통과나 실제 격리의 증거가 아니다.
-
-## r2 당시 결과 (r3에서 삭제 취소)
-
-- `claude_sandbox.py`, `protected_transport.py`, fixture plan과 전용 시험을 제거했다. 제품 302줄, plan script 101줄, 시험 491줄 삭제.
-- `tests/test_auth_broker.py:315`는 보존 중인 process boundary와 observer의 lifecycle도 검증한다. broker와 시험을 보류한다.
-- `tests/test_boundary_probe.py:468`부터 보존 중인 seal fixture validator의 수락·거부도 검증한다. probe와 시험을 보류한다.
-- `git grep`에서 제거한 모듈·script를 사용하는 제품·시험·CI·현재 manual 참조는 찾지 못했다. 동적 경로 일반에 대한 부재 증명은 아니다.
-- 전체 수집 16,138건. 관련 시험 873 passed, 39 skipped, 2 xfailed. 전체 실행·mock 종단·최종 CI와 리뷰·실제 요청 비교는 남았다.
-
-## r1 조사 기록
-
-기준: `0e381aec0f462300052ab04637b3efa2f2cb644d`. 정적 검색이며 실제 실행·삭제는 하지 않았다.
-
-## 제품 후보 5개
-
-| 경로 | 참조 및 구분 |
-|---|---|
-| `labhq/runner/process_boundary.py` | `labhq/adapters/base.py`의 `ProcessBoundaryGate.refusal`; 시험과 진단 CLI. 연결 제거 후 삭제 |
-| `labhq/runner/boundary_observer.py` | `labhq/adapters/base.py`의 `observe_lifecycle`; 시험만 그 밖에 import. 연결 제거 후 삭제 |
-| `labhq/runner/auth_broker.py` | 제품 import 없음; `tests/test_auth_broker.py`와 동적 경로를 받는 integration probe의 synthetic broker |
-| `labhq/runner/claude_sandbox.py` | 제품 import 없음; `tests/test_claude_sandbox.py`, `tests/test_claude_sandbox_boundary.py`만 참조 |
-| `labhq/runner/protected_transport.py` | 제품 import 없음; `tests/test_protected_transport.py`만 import |
-
-`labhq/runner/codex_sandbox.py`는 유지: `labhq/doctor.py`, `labhq/init_wizard.py`, `labhq/runner/daemon.py`가 사용한다. `auth_broker.py`는 이름과 달리 실제 provider 연결이 아닌 synthetic 단계다.
-
-## 다음 revision에 필요한 경로
-
-독립 후보: 위 5개 중 `auth_broker.py`, `claude_sandbox.py`, `protected_transport.py`와 `tests/test_auth_broker.py`, `tests/test_claude_sandbox.py`, `tests/test_claude_sandbox_boundary.py`, `tests/test_protected_transport.py`. 단 `tests/test_auth_broker.py`는 process boundary/observer와도 결합한다. 전체 검증 전 독립 안전성은 확정하지 않는다.
-
-연결 제거와 함께: `labhq/adapters/base.py`, `labhq/runner/daemon.py`, `labhq/runner/process_boundary.py`, `labhq/runner/boundary_observer.py`, `tests/test_boundary_wiring_666.py`, `tests/test_boundary_observer.py`, `tests/test_process_boundary.py`, `tests/test_process_boundary_seal_contract.py`, `tests/fixtures/process_boundary_seal/{cases.json,controls.json,lifecycle-v1.json,validator.py}`. `daemon.py`는 W2 작업 종료 뒤에만 편집한다. `Runner(..., process_boundary=True)`의 명시적 거절도 사라지므로 API 동작 변화다.
-
-추가 조사·정리 후보: `scripts/boundary_probe/{__init__.py,integration_probe.py,probe.py}`, `tests/test_boundary_probe.py`, `scripts/boundary_fixture_plan.py`, `tests/test_boundary_fixture_plan.py`. 앞 둘은 #666 probe와 시험이고 fixture plan은 사용자 문서에 노출되어 있으므로 다음 claim에서 명시적으로 결정한다. `config/ci/windows-boundary-v1.json`에서 삭제하는 시험의 inventory와 사유를 같이 정리한다. `docs/manual/04-install.md`, `.en.md`, `docs/manual/11-safety.md`, `.en.md`는 해당 기능을 삭제할 때 같이 고친다. 기존 reference·status·patch notes는 과거 기록으로 보존하되 끊긴 현재 안내를 확인한다.
-
-`labhq/settings.py`에서 위 모듈명과 `process_boundary` 문자열 참조는 찾지 못했다. 다른 워커의 settings 변경 후 재검색한다. `scripts/boundary_probe/integration_probe.py`는 파일 경로로 모듈을 동적 로드하므로 정적 import 검색만으로 호출 0을 증명하지 못한다. VM 준비 스크립트와 안내는 이 다섯 모듈의 직접 import가 아니므로 이번 최소 삭제 목록에서 제외하고 별도 결정한다.
-
-검증: `git grep`으로 제품·시험·config·manual의 이름과 `ProcessBoundaryGate`를 검색했다. 삭제 줄 수·시험·CI·mock 종단·실제 요청 비교는 미실행이며 다음 revision의 gate다.
+Windows inventory excludes only removed tests. CI, review and the #1375 comparison remain required; actual OS protection is unverified.

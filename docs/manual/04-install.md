@@ -2,7 +2,6 @@
 
 ## 설치와 첫 설정
 
-**프로세스 경계 진단:** `python -m labhq.runner.process_boundary --unsealed-diagnostic`은 봉인되지 않은 고정 진단만 실행합니다. 기본 실행은 보호 실행을 거부합니다(fail-closed). JSON receipt를 출력하며 실패·미지원은 nonzero로 끝납니다. 진단 성공은 보호 검증이 아닙니다. [한계와 조건](../reference/process-boundary-stage1.md).
 
 **실험 중인 연결(#666):** 프로세스 경계는 기본 off이며 embedding Python API에서만 요청합니다. 요청하면 아직 unsupported로 실행을 거부하고, offline observer 결과는 합성 근거에 머뭅니다. 실제 보호·인증 cleanup은 미검증입니다. [연결 범위](../reference/sandbox-666-phase2.md).
 

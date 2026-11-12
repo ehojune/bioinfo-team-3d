@@ -1,3 +1,5 @@
+> Historical: the experimental implementation described below was removed in #1389. Commands and file paths are no longer current.
+
 # Supervisor/seal acceptance fixtures
 
 Lookup-only evidence for [#1063](https://github.com/ehojune/bioinfo-team-3d/issues/1063), parent #666. Acceptance is **synthetic contract only**; every verdict keeps `protection=unverified`. No process, socket, link or protected launch is created.
