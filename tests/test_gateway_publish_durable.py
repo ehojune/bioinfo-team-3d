@@ -64,6 +64,19 @@ def test_inbox_summary_reads_backlog_once_and_matches_admission_boundary(gateway
     assert {(r["runner_id"], r["seq"]): r["action"] == "resume" for r in actual} == expected
 
 
+@pytest.mark.parametrize("state", ["pending", "blocked"])
+@pytest.mark.parametrize("task_id,typ", [({"invalid": "scope"}, "agent.log"), ("task", ["agent.log"])])
+def test_inbox_summary_keeps_malformed_retained_scope_visible(gateway, state, task_id, typ):
+    hub = gateway
+    hub.store.put("task", "task", {"request_id": "request"})
+    hub.store.accept_runner_inbox("runner", None, 1,
+        {"type": typ, "runner_seq": 1, "task_id": task_id, "data": {}})
+    if state == "blocked":
+        hub.store.set_runner_inbox_state("runner", None, 1, "blocked", expected="pending")
+    rows = hub.runner_inbox_summary()
+    assert len(rows) == 1 and rows[0]["state"] == state and rows[0]["action"] is None
+
+
 def stall_commit(hub, monkeypatch, number=1, fail=False):
     entered, release = threading.Event(), threading.Event()
     transaction = hub.store._transaction

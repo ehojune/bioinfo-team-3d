@@ -6489,11 +6489,18 @@ class Hub:
         from itertools import groupby
 
         activity = {"agent.log", "agent.status", "agent.tool", "agent.tool_result"}
-        groups, scopes, tasks = defaultdict(list), {}, {}
+        groups, scopes, tasks, malformed = defaultdict(list), {}, {}, set()
         key = lambda row: (row["runner_id"], row["incarnation"], row["seq"])
         for row in rows:
-            task, request = self._inbox_scope(row["message"], tasks)
+            try:
+                task, request = self._inbox_scope(row["message"], tasks)
+            except TypeError:
+                task, request = None, None
+                malformed.add(key(row))  # Retained invalid identities must not break a status read.
             typ = row["message"].get("type")
+            if not isinstance(typ, str):
+                typ = None
+                malformed.add(key(row))
             local = typ in activity or typ == "task.accepted" or (
                 typ == "ask.requested" and row.get("error") == "ask_publication_incomplete")
             scopes[key(row)] = task, request, not (task and request and local)
@@ -6511,7 +6518,7 @@ class Hub:
 
         eligible = set()
         def consider(counts, row):
-            if row["state"] != "blocked":
+            if row["state"] != "blocked" or key(row) in malformed:
                 return
             task, request, unsafe = scopes[key(row)]
             # Counts include the target itself; all equal-order rows are predecessors to each other.
@@ -6553,6 +6560,7 @@ class Hub:
             runner, incarnation = row["runner_id"], row["incarnation"]
             current = (self.store.get("runner_incarnation", runner) or {}).get("id") == incarnation
             typ, error, state = row["message"].get("type"), row.get("error"), row["state"]
+            typ = typ if isinstance(typ, str) else None
             action = None
             if current and state == "blocked" and (runner, incarnation, row["seq"]) in resumable:
                 action = "resume"
