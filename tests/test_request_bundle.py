@@ -2553,3 +2553,23 @@ def test_hpc_bundle_redacts_network_paths_and_keeps_public_https_urls(tmp_path, 
     assert 'https://example.org/paper' in copied
     assert path.read_text(encoding='utf-8') == original
     assert verify_bundle_copy(bundle)['problems'] == []
+
+
+@pytest.mark.parametrize('private_path', [r'\\nas\share\private.tsv', '//nas/share/private.tsv', 'file://nas/share/private.tsv'])
+def test_structured_identifiers_do_not_preserve_absolute_paths(tmp_path, private_path):
+    from labhq.request_bundle import _PUBLIC_RECORD_FIELDS, _public_hpc_text, _redact_bundle_text
+
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    path = tmp_path / 'claims.json'
+    value = {'id': 'c_main', 'status': 'supported', 'path': private_path,
+             'bundle_path': 'steps/direct/outputs/table.tsv', 'url': 'https://example.org/paper',
+             'engine_cli_version': '1.2.3 /scratch/fixture-user/build'}
+    write(path, json.dumps(value))
+
+    assert _redact_bundle_text(path, _public_hpc_text(settings), record_fields=_PUBLIC_RECORD_FIELDS)
+    cleaned = json.loads(path.read_text(encoding='utf-8'))
+    assert 'nas' not in str(cleaned) and 'fixture-user' not in str(cleaned)
+    assert cleaned['id'] == value['id'] and cleaned['status'] == value['status']
+    assert cleaned['bundle_path'] == value['bundle_path'] and cleaned['url'] == value['url']
+    assert cleaned['engine_cli_version'].startswith('1.2.3 ')

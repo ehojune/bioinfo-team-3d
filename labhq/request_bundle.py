@@ -539,8 +539,9 @@ def _public_values(value, hide, *, redact_keys=True, preserve_fields=()):
         transformed = {}
         for key, item in value.items():
             preserve = key in preserve_fields
-            if key in ('path', 'bundle_path') and isinstance(item, str) \
-                    and (item.startswith('/') or _WINDOWS_ABS.match(item)):
+            if preserve and isinstance(item, str) and (
+                    _WINDOWS_ABS.search(item) or _POSIX_ABS.search(item)
+                    or _UNC_ABS.search(item) or _LOCAL_URI.search(item)):
                 preserve = False
             public_key = hide(key) if redact_keys and isinstance(key, str) else key
             transformed[public_key] = item if preserve else _public_values(
