@@ -14,11 +14,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:16 | [`0117d06`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/0117d06) | **잘못된 식별자가 남은 실패 메시지에는 재시도를 안내하지 않습니다.**<br>#1411 P2: malformed 판정을 failed retry에도 적용한다. 잘못된 task·request 식별자와 type은 모든 retained 상태에서 수동 확인으로 남긴다. 관련 API·doctor·상태 회귀 120건 통과. |
+| 16:05 | [`518e610`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/518e610) | **잘못된 식별자가 남은 메시지도 상태 화면에서 확인하도록 고쳤습니다.**<br>#1411 집계 경계: malformed 식별자·type을 수동 확인으로 남긴다. 조회 실패 재현 뒤 누적 집계·malformed 경계 8건 통과. |
 | 16:00 | [`da39d80`](https://github.com/ehojune/bioinfo-team-3d/pull/1414/commits/da39d80) | **표 앞 주석이 있어도 결과를 저장합니다.**<br>TSV 머리줄 앞 탭 없는 # 행을 주석으로 처리하고 탭이 있는 머리줄과 원본을 보존합니다. |
 | 15:59 | [`e5b3d58`](https://github.com/ehojune/bioinfo-team-3d/pull/1414/commits/e5b3d58) | **탭이 있는 표 머리줄을 주석으로 지우지 않습니다.**<br>TSV에서 탭 없는 선행 # 행만 주석으로 처리하고 한 열짜리 # 머리줄의 제한을 문서화했습니다. |
+| 15:59 | [`9c00166`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/9c00166) | **메시지가 많이 보류돼도 상태 조회가 inbox를 반복해서 읽지 않도록 고쳤습니다.**<br>#1411 P2: runner별 누적 집계로 복구 안내를 판정한다. 40행 읽기 41→1회, 누락·동일 순서와 unknown ask 경계 4개 경우 일치, 관련 회귀 157건 통과. |
+| 15:46 | [`051bab0`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/051bab0) | **특수 문자가 든 runner 이름도 안내된 URL로 메시지를 복구하도록 고쳤습니다.**<br>#1411 P2: runner_id를 query로 전달하고 legacy 세대 표식을 고정한다. 특수 ID 재현 2건 실패 뒤 관련 105건과 기존 경로형 API 회귀 1건 통과. |
+| 15:36 | [`c856089`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/c856089) | **메시지 복구 안내가 기존 웹 화면의 시작·갱신 동작과 함께 작동하도록 고쳤습니다.**<br>#1411 CI: 3D 경고 영역과 단일 timer를 재사용하고 초기 snapshot을 상태 원본으로 유지한다. 기존 UI 실패 8건 수정 뒤 web·3D·시설 표시 116 passed, 1 skipped. 기존 harness·assertions는 유지했다. |
 | 15:25 | [`149ac28`](https://github.com/ehojune/bioinfo-team-3d/commit/149ac28) | **채용이 꺼졌을 때의 계획 안내를 매뉴얼에 적습니다.**<br>한영 매뉴얼에 빈 recruit 요청과 논문 스킬 선택 안내 생략을 설명하고 모델 준수는 미검증으로 남깁니다. |
 | 15:25 | [`d7defe6`](https://github.com/ehojune/bioinfo-team-3d/commit/d7defe6) | **채용이 꺼져 있을 때 계획에 채용 불가 안내를 넣습니다.**<br>일반·연구 계획과 일반 재계획에서 채용 및 논문 스킬 OFF를 안내하고 recruit를 빈 배열로 요청합니다. |
 | 15:19 | [`228d28a`](https://github.com/ehojune/bioinfo-team-3d/commit/228d28a) | **재계획 검사를 기존 시험 파일에서 실행합니다.**<br>Windows CI의 시험 목록에 맞춰 동일한 mock Task 검증을 기존 파일로 옮겼습니다. |
+| 15:14 | [`b928d11`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/b928d11) | **doctor가 원격 서버를 조회할 때 token을 보호하고 복구 명령을 안전하게 안내합니다.**<br>#1411 P1·P2: 원격 평문 조회 거부, redirect 금지, percent-encoded 복구 경로 검사와 Bash URL quoting을 적용했다. 재현 4건 실패 뒤 web·doctor 회귀 98건 통과. |
+| 15:05 | [`ebf078e`](https://github.com/ehojune/bioinfo-team-3d/pull/1411/commits/ebf078e) | **다른 runner의 메시지 보류가 전파되지 않게 하고 복구 안내를 웹과 doctor에 표시합니다.**<br>#1386 10번: 같은 runner의 ACK·세대·결과 불명 보류는 유지한다. 원문 없는 상태 조회와 두 UI의 5초 갱신, doctor --network 읽기와 수동 retry/resume 안내를 추가했다. 관련 mock 310건과 web·doctor 재검증 90건으로 확인했으며 운영 복구는 미검증이다. |
 | 15:00 | [`3c5731b`](https://github.com/ehojune/bioinfo-team-3d/pull/1410/commits/3c5731b) | **다음 단계로 넘기지 못한 문헌이 있으면 경고합니다.**<br>#1385 9번: 200개 초과 문헌 목록의 잘림과 원격 전용 조상의 문헌 미복사를 알린다. 문헌 경고만으로 HPC 배정을 막지 않으며 산출 입력 누락은 계속 거부한다. 관련 mock 회귀 45건 통과. |
 | 14:35 | [`fb72621`](https://github.com/ehojune/bioinfo-team-3d/pull/1410/commits/fb72621) | **문헌이 없는 원격 계산 단계에는 문헌 누락 경고를 띄우지 않습니다.**<br>#1410 P2: 링크를 따라가지 않고 문헌 목록만 확인한다. 문헌 없음·빈 폴더·inbox만 있는 경우의 오탐 재현 3건 실패 → 관련 48건 통과. 목록 검사 실패는 경고로 남긴다. |
 | 14:23 | [`90fdb84`](https://github.com/ehojune/bioinfo-team-3d/commit/90fdb84) | **QC 정정 뒤 표와 근거를 확인하는 방법을 안내합니다.**<br>앞 단계 값이나 위치를 바로잡아야 하면 CP2에서 수정 요청으로 해당 단계를 다시 실행하도록 설명합니다. |
