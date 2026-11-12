@@ -46,6 +46,7 @@ A plan may carry an optional `selection_record` (#890). When writing the plan, t
 
 With `evidence_checkpoint: true` also on, after CP1 the research steps run under the `result v2` claim and evidence contract, and at the CP2 card the PI chooses approve, request revision or reject.
 **Request revision** has the CSO make a new plan with the points to fix written in the note, and the PI approves it at a new CP1 (PI check R10). A continuation card does not appear separately.
+If QC or review reports a correction to an earlier step's value or location, choose **Request revision** at CP2 instead of approving and rerun that step. Approval leaves the old value in the table and evidence ledger.
 After that it is the same as continuation after a review revise: only the steps the new plan changed and the steps below them run again, and the rest are reused (see "Review and continuation" below).
 A revision request needs a note. The web does not send an empty note, and `labhq approve <id> --choice revise` refuses without `--note`. If an empty note arrives by another route, it raises the CP2 card again and asks for a note (up to three times, and if there is never one, it ends without a new plan).
 If the `research.revise_continuations` cap is reached, a revision request ends the request as it does now (`evidence_revision_requested`). Then the card summary and button (`Request revision (ends the request)`) say so and no note is needed.

@@ -4,6 +4,7 @@
 
 What to check on first run is here too.
 
+- Even if QC or review corrects an earlier step's value or location, approval leaves the old value in the table and evidence ledger. Request revision at CP2 to rerun that step.
 - Runaway detection compares only the first 4,096 characters of the canonical input, so it cannot tell differences after that. A legacy event with no original fingerprint compares only inputs that were not truncated. It is a warn-only shadow mode and there is no automatic stop yet (#59 ②).
 - The Windows Store and Python Install Manager execution-alias folders are removed from the PATH of the runner and staff CLIs. If doctor finds a `python3` alias on the PATH, it warns how to turn it off in the Windows app execution aliases.
 - Windows limits a staff CLI command line to 32,000 characters. A long prompt is passed through the TASK file in the work folder, and if it still overflows (for example when per-folder rules grow because of many ancestor steps), Claude staff's `--settings` is passed as a file `.labhq-settings/<task>.json` next to the work folder. A staff member's write rules cover only their own work folder, so this file cannot be changed without going through the shell write gate. If it still overflows, the step fails with the reason.
