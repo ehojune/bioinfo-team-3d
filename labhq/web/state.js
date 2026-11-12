@@ -101,7 +101,13 @@ function reportMarkdownHTML(markdown, requestId) {
     }
     if (/^ {0,3}<!-- labhq-report-package:(?:v1|end) -->\s*$/.test(line)) { i++; continue; }
     const heading = line.match(/^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
-    if (heading) { const level = Math.min(6, heading[1].length + 1); out.push(`<h${level}>${inline(heading[2])}</h${level}>`); i++; continue; }
+    if (heading) {
+      const level = Math.min(6, heading[1].length + 1);
+      out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      if (/^(?:정정|수정 이력|이전 차수에서 고친 것|리뷰 참고)$/i.test(heading[2].trim()))
+        out.push('<p>이전 기록 · 검토 지적 · 해결 여부 미확인</p>');
+      i++; continue;
+    }
     if (i + 1 < lines.length && /^\s*\|?.+\|.+\|?\s*$/.test(line) && /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(lines[i + 1])) {
       const cells = row => row.trim().replace(/^\||\|$/g, '').split('|').map(cell => cell.trim());
       const header = cells(line); i += 2; const rows = [];

@@ -757,3 +757,17 @@ def test_no_env_example_without_input_variables(tmp_path):
     settings, request, bundle, assets, images, decisions, tasks = portfolio_fixture(tmp_path)
     files = build_portfolio_files(request, settings, assets, images, decisions=decisions, tasks=tasks, bundle=bundle)
     assert ".env.example" not in files
+def test_reviewed_ledger_summary_marks_historical_unresolved_claim():
+    from labhq.portfolio import _step_rows, _branch_rows
+
+    req = {"plan": {"steps": [{"id": "s1"}]},
+           "results": {"s1": {"structured": {"claims": [{"id": "c1", "statement": "Old direction."}]}}},
+           "research_contract": {"rounds": [{"round": 1, "review": {"issues": [
+               {"step_id": "s1", "claim_id": "c1", "problem": "Direction reversed"}]}}]}}
+    step = _step_rows(req, {})[0][2]
+    branch = _branch_rows(req, [{"folder": "b", "terminals": ["s1"]}], {"s1": "b"})[0]["result"]
+    for text in (step, branch):
+        assert "Old direction" in text
+        assert "이전 기록" in text and "검토 지적" in text and "해결 여부 미확인" in text
+    req["research_contract"]["rounds"][0]["review"]["issues"][0]["claim_id"] = "other"
+    assert "검토 지적" not in _step_rows(req, {})[0][2]

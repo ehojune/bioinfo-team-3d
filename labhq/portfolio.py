@@ -1263,6 +1263,25 @@ def _claim_summary(result: Any) -> str:
     return " ".join(_SENTENCE_END.split(" ".join(statements[0].split()))[:2])[:380]
 
 
+def _reviewed_summary(req: Mapping[str, Any], step_id: str, result: Any, summary: str) -> str:
+    """Keep an old ledger claim visible without implying that review was resolved."""
+    claims = _claim_ledger(result).get("claims") or []
+    first = next((c for c in claims if isinstance(c, Mapping) and str(c.get("statement") or "").strip()), None)
+    if not first or not first.get("id"):
+        return summary
+    reviews = [req.get("review") or (req.get("review_progress") or {}).get("review") or {}]
+    reviews += [r.get("review") or {} for r in (req.get("research_contract") or {}).get("rounds") or []
+                if isinstance(r, Mapping)]
+    for review in reviews:
+        if not isinstance(review, Mapping):
+            continue
+        for issue in review.get("issues") or []:
+            if (isinstance(issue, Mapping) and str(issue.get("step_id")) == step_id
+                    and str(issue.get("claim_id")) == str(first["id"])):
+                return "이전 기록 · 검토 지적 · 해결 여부 미확인: " + summary
+    return summary
+
+
 def _result_sentence(text: str) -> str:
     compact = " ".join(str(text or "").split())
     sentences = re.split(r"(?<=[.!?다요])\s+", compact)
@@ -1297,7 +1316,8 @@ def _step_rows(req: dict, assets: Mapping[str, str]) -> list[tuple[str, str, str
         text = _result_text(result)
         if not text and "report" in sid.casefold():
             text = str(req.get("report") or "")
-        rows.append((sid, data, _result_sentence(text)))
+        summary = _result_sentence(text)
+        rows.append((sid, data, _reviewed_summary(req, sid, result, summary)))
     return rows or [("종합", "요청에 기록된 자료", _result_sentence(str(req.get("report") or "")))]
 
 
@@ -1387,7 +1407,8 @@ def _branch_rows(req: dict, specs: list[dict[str, Any]],
                          if result.get("ok") is not False]
             if not completed:
                 failures = [("terminal", "terminal 결과 없음")]
-        summaries = [_claim_summary(result) for _step_id, result in completed]
+        summaries = [_reviewed_summary(req, str(step_id), result, _claim_summary(result))
+                     for step_id, result in completed]
         scientific = [summary for summary in summaries if not _operational_result(summary)]
         if scientific:
             summaries = scientific

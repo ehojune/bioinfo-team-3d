@@ -59,6 +59,8 @@ In a summary table, a row missing only the last `note`, `notes`, `comment` or `c
 
 Claims in the evidence table come from the ledger. A scientific review issue from the current or an earlier round with the same step and claim is shown with the row, but its resolution is not determined automatically. Check the final conclusion alongside the ledger.
 
+README step and branch summaries mark a displayed ledger claim with a review issue as a historical record with unconfirmed resolution. The web report also marks revision-history sections.
+
 The PDF cover uses only the report's formal title and research question and wraps automatically. A short paragraph after consecutive figures is checked as the same group, and figures are placed at 80% width. Figures are not re-encoded or resampled. Only the figure preview on the publication card is limited to 1 MB per file and 5 MB in total. If there is no browser, only the PDF is omitted and the reason is left. See the [graphical abstract SVG example](../media/graphical-abstract-example.svg).
 
 When you set the storage location again after the report's **Review done**, the editor makes the summary. When you check the documents and figures on the **Editor summary check** card and press **I checked · upload**,
