@@ -4,6 +4,12 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1387 QC 정정 대응
+
+- QC가 앞 단계 위치를 정정해도 게시 표와 원장에 이전 값이 남는 현상을 합성 입력으로 재현했다. [재현 근거](https://github.com/ehojune/bioinfo-team-3d/issues/1387#issuecomment-6815325289)
+- [v1 판단](https://github.com/ehojune/bioinfo-team-3d/issues/1387#issuecomment-6815367286)에 따라 CP2 수정 요청 절차와 한계를 한영 manual에 기록했다. 구조화 정정은 v2 후보다.
+- 실제 QC 원문과 원자료는 확인하지 않았다. 15번은 별도 작업이다.
+
 # #1390 gateway 동기 메서드 정리
 
 ## 결과

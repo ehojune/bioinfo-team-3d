@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 14:23 | [`90fdb84`](https://github.com/ehojune/bioinfo-team-3d/commit/90fdb84) | **QC 정정 뒤 표와 근거를 확인하는 방법을 안내합니다.**<br>앞 단계 값이나 위치를 바로잡아야 하면 CP2에서 수정 요청으로 해당 단계를 다시 실행하도록 설명합니다. |
 | 14:20 | [`19b5e45`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/19b5e45) | **요청을 취소한 뒤 다음 요청의 결과가 반영되지 않고 멈추던 문제를 고쳤습니다. 이미 멈춘 메시지도 다음 메시지나 재기동 때 이어서 처리합니다.**<br>수정: #1406 취소 스캔의 옛 snapshot이 runner inbox를 영구히 막지 않게 한다 |
 | 14:11 | [`12166ce`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/12166ce) | **다른 요청의 멈춘 메시지도 각자 조건이 맞으면 이어서 처리하고, 처리할 수 없는 메시지는 오류로 남깁니다.**<br>수정: #1406 보류 행 재판정이 앞의 보류 행에서 멈추지 않고, 거부된 메시지는 invalid_message로 남긴다 |
 | 13:59 | [`4111e08`](https://github.com/ehojune/bioinfo-team-3d/pull/1408/commits/4111e08) | **설정 설명서에 멈춘 메시지를 자동으로 다시 처리하는 조건을 적었습니다.**<br>기록·CI: #1406 시험을 Windows 목록에 등록하고 manual에 보류 항목 자동 재판정을 적는다 |
