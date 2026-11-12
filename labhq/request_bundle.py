@@ -413,7 +413,15 @@ def _redact_bundle_text(path, hide, *, hash_bound=False):
         except ValueError:
             cleaned = hide(text)
         else:
-            transformed = _public_values(value, hide)
+            if hash_bound and isinstance(value, Mapping):
+                # Canonical checkpoint metadata names the immutable request. Inspect only its payloads,
+                # retaining schema keys and the request IDs repeated in the draft and receipt.
+                value = {key: ({k: v for k, v in section.items() if k != 'request_id'}
+                               if isinstance(section, Mapping) else section)
+                         for key in ('draft', 'receipt') if (section := value.get(key)) is not None}
+                transformed = _public_values(value, hide, redact_keys=False)
+            else:
+                transformed = _public_values(value, hide)
             cleaned = json.dumps(transformed, ensure_ascii=False, indent=2) + '\n' if transformed != value else text
     else:
         cleaned = hide(text, script=path.suffix.casefold() in SCRIPT_SUFFIXES)

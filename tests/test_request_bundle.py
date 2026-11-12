@@ -1812,7 +1812,8 @@ def test_public_hpc_json_and_hash_bound_checkpoint_fail_closed(tmp_path):
     cleaned = json.loads(path.read_text(encoding='utf-8'))
     assert 'fixture-user' not in str(cleaned) and cleaned['url'] == data['url']
     frozen = tmp_path / 'final_checkpoint.json'
-    frozen.write_text(json.dumps(data), encoding='utf-8')
+    frozen.write_text(json.dumps({'request_id': 'req_checkpoint', 'draft': {'content': data},
+                                  'receipt': None}), encoding='utf-8')
     original = frozen.read_bytes()
     with pytest.raises(ValueError, match='hash-bound'):
         _redact_bundle_text(frozen, hide, hash_bound=True)
@@ -2252,3 +2253,21 @@ def test_hpc_bundle_redacts_input_paths_without_changing_inventory_schema(tmp_pa
     assert "fixture-user" not in row["path"]
     assert manifest_rows(bundle)["INPUTS.tsv"]["redacted"] == "yes"
     assert verify_bundle_copy(bundle)["problems"] == []
+
+
+@pytest.mark.parametrize("site_value", ["ab", "draft", "request_id"])
+def test_hpc_bundle_checkpoint_preserves_structural_request_ids(tmp_path, site_value):
+    settings, request, task = pending_bundle_fixture(tmp_path, "req_ab_control")
+    settings.hpc.ssh_host = "fixture-user@fixture-host"
+    settings.hpc.user = site_value
+    request["research_contract"] = {"schema_version": 2, "final_checkpoint": True,
+        "final_draft": {"request_id": request["id"], "content": {"report": "public result"}},
+        "final_receipt": {"request_id": request["id"], "decision": "accepted"}}
+
+    bundle = Path(build_request_bundle(request, settings, {"t": task})["path"])
+
+    frozen = json.loads((bundle / "final_checkpoint.json").read_text(encoding="utf-8"))
+    assert frozen == {"contract_version": 2, "request_id": request["id"],
+                      "draft": request["research_contract"]["final_draft"],
+                      "receipt": request["research_contract"]["final_receipt"]}
+    assert manifest_rows(bundle)["final_checkpoint.json"]["redacted"] == ""
