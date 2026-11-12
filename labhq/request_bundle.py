@@ -64,7 +64,7 @@ _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
 _UNC_ABS = re.compile(r'''(?<![A-Za-z0-9_:/\\])(?:/{2,}|\\{2,})[^/\\\s<>"'`|]+[/\\]+[^\s<>"'`|]+''')
-_LOCAL_URI = re.compile(r'''(?i)\b(?:file|smb|nfs)://[^\s<>"'`|]+''')
+_PRIVATE_URI = re.compile(r'''(?i)\b(?!(?:http|https)://)[a-z][a-z0-9+.-]*://[^\s<>"'`|]+''')
 _POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
 _SYSTEM_OPERAND = re.compile(r'/(?:((?:usr/(?:local/)?)?s?bin)/[A-Za-z0-9_.+-]+|dev/(?:null|stdin|stdout|stderr))\Z')
 _BINARY_PREFIXES = (b'%PDF-', b'\x89PNG', b'\xff\xd8\xff', b'GIF87a', b'GIF89a', b'PK\x03\x04',
@@ -478,7 +478,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
     def hide(text, *, script=False):
         nonlocal portable_count, portable_pattern
         if script:
-            text = _UNC_ABS.sub('<remote-path>', _LOCAL_URI.sub('<remote-path>', text))
+            text = _UNC_ABS.sub('<remote-path>', _PRIVATE_URI.sub('<remote-path>', text))
             sentinel = '\x01'
             while sentinel in text:
                 sentinel *= 2
@@ -520,7 +520,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
                 if token in text:
                     references.append(token)
                     text = text.replace(token, f'{sentinel}{len(references) - 1}{sentinel}')
-        text = _UNC_ABS.sub('<remote-path>', _LOCAL_URI.sub('<remote-path>', text))
+        text = _UNC_ABS.sub('<remote-path>', _PRIVATE_URI.sub('<remote-path>', text))
         text = _WINDOWS_ABS.sub("<local-path>", transfer.hide_log(text))
         for index, token in enumerate(references):
             text = text.replace(f'{sentinel}{index}{sentinel}', token)
@@ -541,7 +541,7 @@ def _public_values(value, hide, *, redact_keys=True, preserve_fields=()):
             preserve = key in preserve_fields
             if preserve and isinstance(item, str) and (
                     _WINDOWS_ABS.search(item) or _POSIX_ABS.search(item)
-                    or _UNC_ABS.search(item) or _LOCAL_URI.search(item)):
+                    or _UNC_ABS.search(item) or _PRIVATE_URI.search(item)):
                 preserve = False
             public_key = hide(key) if redact_keys and isinstance(key, str) else key
             transformed[public_key] = item if preserve else _public_values(

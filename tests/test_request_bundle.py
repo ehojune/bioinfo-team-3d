@@ -2539,13 +2539,17 @@ def test_unknown_binary_formats_are_not_treated_as_utf8_text(tmp_path, suffix, h
     assert path.read_bytes() == original
 
 
-@pytest.mark.parametrize('operand', ['//nas/share/private.vcf', r'\\nas\share\private.vcf', 'file://nas/share/private.vcf'])
+@pytest.mark.parametrize('operand', [
+    '//nas/share/private.vcf', r'\\nas\share\private.vcf', 'file://nas/share/private.vcf',
+    's3://nas/private.vcf', 'ssh://nas/private.vcf', 'gs://nas/private.vcf',
+    'az://nas/private.vcf', 'ftp://nas/private.vcf', 'lab+store://nas/private.vcf',
+])
 def test_hpc_bundle_redacts_network_paths_and_keeps_public_https_urls(tmp_path, operand):
     settings, request, task = pending_bundle_fixture(tmp_path, 'req_unc')
     settings.hpc.ssh_host = 'fixture-user@fixture-host'
     work = Path(request['results']['direct']['workdir'])
     relative = 'outputs/scripts/unc.sh'
-    original = '#!/bin/bash\ncat ' + operand + '\necho https://example.org/paper\n'
+    original = '#!/bin/bash\ncat ' + operand + '\necho https://example.org/paper http://example.org/paper\n'
     path = work / relative
     write(path, original)
     request['results']['direct']['outputs'].append(relative)
@@ -2554,11 +2558,15 @@ def test_hpc_bundle_redacts_network_paths_and_keeps_public_https_urls(tmp_path, 
     copied = (bundle / 'steps/direct' / relative).read_text(encoding='utf-8')
     assert 'nas' not in copied and 'private.vcf' not in copied
     assert 'https://example.org/paper' in copied
+    assert 'http://example.org/paper' in copied
     assert path.read_text(encoding='utf-8') == original
+    assert manifest_rows(bundle)['steps/direct/' + relative]['redacted'] == 'yes'
+    assert manifest_rows(bundle)['.']['reproducibility_grade'] == 'documented'
     assert verify_bundle_copy(bundle)['problems'] == []
 
 
-@pytest.mark.parametrize('private_path', [r'\\nas\share\private.tsv', '//nas/share/private.tsv', 'file://nas/share/private.tsv'])
+@pytest.mark.parametrize('private_path', [r'\\nas\share\private.tsv', '//nas/share/private.tsv', 'file://nas/share/private.tsv',
+                                          's3://nas/private.tsv', 'ssh://nas/private.tsv'])
 def test_structured_identifiers_do_not_preserve_absolute_paths(tmp_path, private_path):
     from labhq.request_bundle import _PUBLIC_RECORD_FIELDS, _public_hpc_text, _redact_bundle_text
 
