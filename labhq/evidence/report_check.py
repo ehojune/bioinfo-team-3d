@@ -8,6 +8,7 @@ sha256 labhq recorded.
 
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -102,7 +103,7 @@ def _claims_without_accepted_support(ledgers: Mapping[str, Any], refused: Iterab
 
 
 def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = (),
-                        unsupported: Iterable[Any] = ()) -> list[dict[str, str]]:
+                        unsupported: Iterable[Any] = (), review_issues: Iterable[Any] = ()) -> list[dict[str, str]]:
     """All claims and lookup gaps, including uncitable/refused rows, for every reader surface.
 
     Lineage is assessed only over valid, CP2-accepted evidence. A refused original therefore cannot be
@@ -113,6 +114,13 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
     no_support = _claims_without_accepted_support(ledgers, refused)
     refusal_reasons = {(str(row.get("step_id")), str(row.get("evidence_id"))): str(row.get("reason") or "")
                        for row in refused if isinstance(row, Mapping)}
+    review_by_claim: dict[tuple[str, str], list[str]] = {}
+    for issue in review_issues:
+        if not isinstance(issue, Mapping) or not issue.get("step_id") or not issue.get("claim_id"):
+            continue
+        key = (str(issue["step_id"]), str(issue["claim_id"]))
+        detail = " → ".join(str(issue.get(field) or "").strip() for field in ("problem", "request")).strip(" →")
+        review_by_claim.setdefault(key, []).append(detail or "내용 미기록")
     rows = []
     for step_id, ledger in ledgers.items():
         evidence = {str(row.get("id")): row for row in _rows(ledger, "evidence")}
@@ -140,6 +148,9 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
             elif assessment and assessment.status in {"cycle", "dangling"}:
                 lineage += "; 독립 group 0"
             state = str(claim.get("status") or "미기록")
+            review = review_by_claim.get((step_id, str(claim.get("id"))), [])
+            if review:
+                state += "; 검토 지적 · 해결 여부 미확인"
             if (step_id, str(claim.get("id"))) in blocked:
                 state += "; CP2 지지 근거 거부"
             elif (step_id, str(claim.get("id"))) in no_support:
@@ -147,6 +158,7 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
             evidence_state = "CP2 거부" if is_refused else str(row.get("status") or "미기록")
             rows.append({"step_id": step_id, "claim_id": str(claim.get("id") or "—"),
                          "claim": str(claim.get("statement") or "claim 연결 없음"), "claim_status": state,
+                         "review": "; ".join(review),
                          "evidence_id": evidence_id or "—", "relation": relation or "연결 없음",
                          "evidence_status": evidence_state,
                          "detail": refusal_reasons.get((step_id, evidence_id), "") if is_refused
@@ -178,9 +190,11 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
 
 def evidence_note(row: Mapping[str, str]) -> str:
     """One readable evidence note, shared by report tables and publication footnotes."""
+    review = html.escape(row.get("review") or "").replace("[", "&#91;").replace("]", "&#93;")
     return (f"{row['source']}; 위치: {row['locator']}; 접근: {row['access']}; "
             f"Methods: {row['methods']}; QC: {row['qc']}; 보충자료: {row['supplement']}; "
-            f"계보: {row['lineage']}")
+            f"계보: {row['lineage']}" +
+            (f"; 리뷰 지적 (해결 여부 미확인): {review}" if review else ""))
 
 
 def evidence_literals(value: str) -> str:
@@ -202,7 +216,7 @@ def claim_evidence_section(rows: list[dict[str, str]]) -> str:
         value = " ".join(value.split()).replace("|", "&#124;")
         return evidence_literals(value)
 
-    lines = [f"## {SOURCE_EVIDENCE_TITLE}", "", "접근 상태는 지지 여부와 별개입니다. 미기록 위치·최초 출처는 추정하지 않습니다.", "",
+    lines = [f"## {SOURCE_EVIDENCE_TITLE}", "", "접근 상태는 지지 여부와 별개입니다. 원장에 기록된 주장과 당시 상태입니다. 최종 결론은 본문을 확인하세요. 리뷰 지적의 해결 여부는 자동 판정하지 않습니다.", "",
              "| Claim (상태) | Evidence · 관계 (상태) | 출처·원문 위치·접근·계보 |",
              "|---|---|---|"]
     for row in rows:

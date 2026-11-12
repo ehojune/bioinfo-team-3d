@@ -313,3 +313,31 @@ async def test_a_correction_that_swaps_links_between_sentences_is_not_kept(tmp_p
 
 def test_tilde_fenced_examples_are_not_checked():
     assert _consistency("~~~\nKLF15 log2FC 9.9 ([표](steps/s3/outputs/de.tsv)).\n~~~\n")["findings"] == []
+
+
+def test_review_flags_preserve_original_claims_without_deciding_resolution():
+    from copy import deepcopy
+    from labhq.evidence.report_check import claim_evidence_rows, claim_evidence_section
+
+    ledgers = {"s1": {"claims": [
+        {"id": "direction", "statement": "A is higher than B", "status": "supported"},
+        {"id": "count", "statement": "There were 10 lookups", "status": "supported"},
+        {"id": "other", "statement": "Unrelated", "status": "supported"},
+    ]}}
+    before = deepcopy(ledgers)
+    issues = [
+        {"step_id": "s1", "claim_id": "direction", "problem": "Direction reversed", "request": "Correct direction"},
+        {"step_id": "s1", "claim_id": "count", "problem": "Counts conflict", "request": "Reconcile counts"},
+        {"step_id": "s1", "claim_id": "", "problem": "General concern"},
+    ]
+    rows = claim_evidence_rows(ledgers, review_issues=issues)
+    by_id = {row["claim_id"]: row for row in rows}
+    assert ledgers == before
+    for claim_id in ("direction", "count"):
+        assert "검토 지적" in by_id[claim_id]["claim_status"]
+        assert "해결 여부 미확인" in by_id[claim_id]["claim_status"]
+    assert "검토 지적" not in by_id["other"]["claim_status"]
+    section = claim_evidence_section(rows)
+    assert "Direction reversed" in section and "Counts conflict" in section
+    assert "Correct direction" in section and "Reconcile counts" in section
+    assert "General concern" not in section

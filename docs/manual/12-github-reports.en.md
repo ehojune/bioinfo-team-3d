@@ -57,6 +57,8 @@ For a branch plan, the combined outputs are at the root and branch outputs in `s
 
 In a summary table, a row missing only the last `note`, `notes`, `comment` or `comments` cell is repaired with an empty cell and recorded in `docs/reference/table_repairs.md`. Original values are preserved, and missing or extra other columns are still blocked. `mcp__…` tool names and URLs containing `__` in auto-generated evidence tables are shown as inline code. The real emphasis-error check stays.
 
+Claims in the evidence table come from the ledger. A scientific review issue from the current or an earlier round with the same step and claim is shown with the row, but its resolution is not determined automatically. Check the final conclusion alongside the ledger.
+
 The PDF cover uses only the report's formal title and research question and wraps automatically. A short paragraph after consecutive figures is checked as the same group, and figures are placed at 80% width. Figures are not re-encoded or resampled. Only the figure preview on the publication card is limited to 1 MB per file and 5 MB in total. If there is no browser, only the PDF is omitted and the reason is left. See the [graphical abstract SVG example](../media/graphical-abstract-example.svg).
 
 When you set the storage location again after the report's **Review done**, the editor makes the summary. When you check the documents and figures on the **Editor summary check** card and press **I checked · upload**,
