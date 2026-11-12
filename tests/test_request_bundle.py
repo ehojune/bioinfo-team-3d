@@ -1800,6 +1800,44 @@ def test_a_research_bundle_carries_the_claims_its_report_anchors_name(tmp_path):
     assert verify_bundle_copy(bundle)["problems"] == []
 
 
+SYNTHETIC_ROOT = "/scratch/fixture-team/fixture-user/run"
+
+
+def synthetic_site(monkeypatch, settings):
+    from labhq.hpc_site import SiteProfile
+    settings.hpc.site_profile = "synthetic"
+    profile = SiteProfile(name="synthetic", access_method="ssh", scheduler="slurm",
+                          connect_argv=["ssh", "fixture-user@fixture-host"], remote_workdir=SYNTHETIC_ROOT)
+    monkeypatch.setattr("labhq.hpc_site.load_profile", lambda name: profile)
+
+
+def test_public_hpc_text_hides_only_paths_under_the_configured_root(tmp_path, monkeypatch):
+    from labhq.request_bundle import _public_hpc_text, _public_values, _redact_bundle_text
+    settings = Settings()
+    settings.hpc.ssh_host = "fixture-user@fixture-host"
+    assert _public_hpc_text(settings) is None  # no configured remote path: nothing is guessed
+    synthetic_site(monkeypatch, settings)
+    hide = _public_hpc_text(settings)
+    assert hide(f"cd {SYNTHETIC_ROOT}/jobs/j1 && sbatch run.sh") == "cd <remote-path> && sbatch run.sh"
+    assert hide(f'<a href="{SYNTHETIC_ROOT}/r.html">r</a>') == '<a href="<remote-path>">r</a>'
+    kept = (f"{SYNTHETIC_ROOT}ner/x /other{SYNTHETIC_ROOT}/y C:/Users/fixture-user/a.txt req_0123abcd "
+            "</a> fixture-host https://example.org/paper relative/file.txt " + "a" * 64)
+    assert hide(kept) == kept
+    data = {"nested": [f"{SYNTHETIC_ROOT}/out.tsv"], "url": "https://example.org/paper"}
+    path = tmp_path / "metadata.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert _redact_bundle_text(path, hide)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"nested": ["<remote-path>"], "url": data["url"]}
+    frozen = tmp_path / "final_checkpoint.json"
+    frozen.write_text(json.dumps(data), encoding="utf-8")
+    original = frozen.read_bytes()
+    with pytest.raises(ValueError, match="hash-bound"):
+        _redact_bundle_text(frozen, hide)
+    assert frozen.read_bytes() == original
+    with pytest.raises(ValueError, match="merge keys"):
+        _public_values({f"{SYNTHETIC_ROOT}/one": 1, f"{SYNTHETIC_ROOT}/two": 2}, hide)
+
+
 def test_a_general_bundle_has_no_claims_file(tmp_path):
     settings, request, tasks, _upstream, _outside, _old = request_fixture(tmp_path)
     bundle = Path(build_request_bundle(request, settings, tasks)["path"])
@@ -2097,3 +2135,47 @@ def test_public_cleanup_redacts_arbitrary_absolute_paths():
     cleaned = _clean(' '.join(paths), Settings(), {})
     assert all(path not in cleaned for path in paths)
     assert '<local-path>' in cleaned
+
+
+def test_hpc_bundle_redacts_text_by_content_and_keeps_source_and_verified_hashes(tmp_path, monkeypatch):
+    settings, request, task = pending_bundle_fixture(tmp_path, "req_redaction")
+    synthetic_site(monkeypatch, settings)
+    work = Path(request["results"]["direct"]["workdir"])
+    payload = (f"{SYNTHETIC_ROOT}/file.txt\n"
+               f'cd "{SYNTHETIC_ROOT}/jobs/j1" && bash run.sh\n'
+               "https://example.org/paper\nrelative/file.txt\n")
+    originals = {}
+    for name in ("session_info.txt", "env/condarc", "job.out", "metadata.json", "page.html"):
+        path = work / "outputs" / name
+        write(path, json.dumps({"path": payload}) if name.endswith(".json") else payload)
+        originals[path] = path.read_bytes()
+        relative = "outputs/" + name
+        request["results"]["direct"]["outputs"].append(relative)
+        request["results"]["direct"]["output_sha256"][relative] = digest(path)
+    binary = work / "outputs" / "binary.dat"
+    binary.write_bytes(b"\x00" + SYNTHETIC_ROOT.encode() + b"\xff")
+    originals[binary] = binary.read_bytes()
+    request["results"]["direct"]["outputs"].append("outputs/binary.dat")
+    request["results"]["direct"]["output_sha256"]["outputs/binary.dat"] = digest(binary)
+    request["execution_record"] = payload
+    request["report"] = f'<a href="https://example.org/paper">paper</a> body {SYNTHETIC_ROOT}/kept'
+    built = build_request_bundle(request, settings, {"t": task})
+    bundle = Path(built["path"])
+    for name in ("session_info.txt", "env/condarc", "job.out", "metadata.json"):
+        text = (bundle / "steps/direct/outputs" / name).read_text(encoding="utf-8")
+        assert "fixture-user" not in text and "<remote-path>" in text and "https://example.org/paper" in text
+    for path in (bundle / "execution_record.md", bundle / "MANIFEST.tsv"):
+        assert SYNTHETIC_ROOT not in path.read_text(encoding="utf-8")
+    assert json.loads((bundle / "steps/direct/outputs/metadata.json").read_text(encoding="utf-8"))
+    # Curated documents and binaries keep their bytes: report markup is never rewritten (#1416).
+    assert (bundle / "steps/direct/outputs/page.html").read_bytes() == originals[work / "outputs/page.html"]
+    assert (bundle / "steps/direct/outputs/binary.dat").read_bytes() == originals[binary]
+    assert '<a href="https://example.org/paper">paper</a>' in (bundle / "report.md").read_text(encoding="utf-8")
+    rows = manifest_rows(bundle)
+    row = rows["steps/direct/outputs/env/condarc"]
+    assert row["redacted"] == "yes" and row["source_sha256"] == digest(work / "outputs/env/condarc")
+    assert row["sha256"] != row["source_sha256"]
+    assert rows["steps/direct/outputs/page.html"]["redacted"] == ""
+    assert "redact" in (bundle / "execution_record.md").read_text(encoding="utf-8").lower()
+    assert all(path.read_bytes() == data for path, data in originals.items())
+    assert verify_bundle_copy(bundle)["problems"] == []
