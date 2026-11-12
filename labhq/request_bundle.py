@@ -75,7 +75,6 @@ _SCRIPT_ABS = re.compile(_PRIVATE_PATH_START +
     r'''(?:\\[^\r\n]|"(?:\\[^\r\n]|[^"\r\n\\])*"|'[^'\r\n]*'|[^\s<>"'`|\\;&])+''', re.MULTILINE)
 # Without shell quoting, a log/JSON value cannot distinguish path spaces from trailing prose.
 # Hide that whole span conservatively, stopping at explicit markup or a protected bundle reference.
-_TEXT_ABS = re.compile(_PRIVATE_PATH_START + r'''[^\r\n<>"'`|\x01]+''', re.MULTILINE)
 _HASH_TOKEN = re.compile(r'(?<![A-Za-z0-9_])([0-9a-fA-F]{64})(?![A-Za-z0-9_])')
 _SYSTEM_OPERAND = re.compile(r'/(?:((?:usr/(?:local/)?)?s?bin)/[A-Za-z0-9_.+-]+|dev/(?:null|stdin|stdout|stderr))\Z')
 _BINARY_PREFIXES = (b'%PDF-', b'\x89PNG', b'\xff\xd8\xff', b'GIF87a', b'GIF89a', b'PK\x03\x04',
@@ -490,6 +489,21 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
 
     transfer = Transfer(no_remote_command, root, redact=site_words)
     portable_count, portable_pattern = -1, None
+    private_chars = set(root + ''.join(words) + ''.join(site_identifiers))
+
+    def placeholders(text):
+        used = private_chars | set(text)
+        symbols = []
+        for codepoint in range(0xE000, 0xF900):
+            symbol = chr(codepoint)
+            if symbol not in used:
+                symbols.append(symbol)
+                if len(symbols) == 11:
+                    break
+        if len(symbols) != 11:
+            raise ValueError('cannot allocate safe text placeholders; public bundle withheld')
+        marker, digits = symbols[0], symbols[1:]
+        return marker, lambda index: marker + ''.join(digits[int(d)] for d in str(index)) + marker
 
     def hide(text, *, script=False):
         nonlocal portable_count, portable_pattern
@@ -503,9 +517,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
 
         if script:
             text = _SCRIPT_QUOTED.sub(quoted_operand, text)
-            sentinel = '\x01'
-            while sentinel in text:
-                sentinel *= 2
+            _marker, placeholder = placeholders(text)
             systems = []
 
             def operand(match):
@@ -513,7 +525,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
                 path = raw.rstrip('.,;:)')
                 if _SYSTEM_OPERAND.fullmatch(path):
                     systems.append(raw)
-                    return f'{sentinel}{len(systems) - 1}{sentinel}'
+                    return placeholder(len(systems) - 1)
                 return '<remote-path>' + raw[len(path):]
 
             # Keep only system interpreters/executables/devices; shared-site paths outside the configured root are private.
@@ -521,12 +533,10 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
             text = _SCRIPT_ABS.sub(operand, text)
             text = _WINDOWS_ABS.sub('<local-path>', transfer._hide(text))
             for index, value in enumerate(systems):
-                text = text.replace(f'{sentinel}{index}{sentinel}', value)
+                text = text.replace(placeholder(index), value)
             return text
         # Preserve only references to declared ledger IDs, never arbitrary relative-looking site text.
-        sentinel = '\x01'
-        while sentinel in text:
-            sentinel *= 2
+        marker, placeholder = placeholders(text)
         references = []
         if portable_count != len(portable_refs):
             known = {token for ref in portable_refs for token in (ref, quote(ref, safe='/-._~'))}
@@ -535,7 +545,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
 
         def keep_reference(match):
             references.append(match.group(0))
-            return f'{sentinel}{len(references) - 1}{sentinel}'
+            return placeholder(len(references) - 1)
 
         if portable_pattern:
             text = portable_pattern.sub(keep_reference, text)
@@ -543,12 +553,13 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
             for token in (f'[[claim:{ref}]]', f'`{ref}`'):
                 if token in text:
                     references.append(token)
-                    text = text.replace(token, f'{sentinel}{len(references) - 1}{sentinel}')
+                    text = text.replace(token, placeholder(len(references) - 1))
         text = _SCRIPT_QUOTED.sub(quoted_operand, text)
-        text = _TEXT_ABS.sub('<remote-path>', text)
+        text = re.sub(_PRIVATE_PATH_START + r'''[^\r\n<>"'`|''' + re.escape(marker) + ']+',
+                      '<remote-path>', text, flags=re.MULTILINE)
         text = _WINDOWS_ABS.sub("<local-path>", transfer.hide_log(text))
         for index, token in enumerate(references):
-            text = text.replace(f'{sentinel}{index}{sentinel}', token)
+            text = text.replace(placeholder(index), token)
         return text
 
     return hide

@@ -2694,3 +2694,23 @@ def test_streamed_text_preserves_complete_hash_tokens(tmp_path, identifier, suff
     lines = path.read_text(encoding='utf-8').splitlines()
     assert lines[0] == checksum + '  data.tsv'
     assert identifier not in lines[1]
+
+
+@pytest.mark.parametrize('existing_symbols', ['', '\ue000\ue001\ue002'])
+def test_numeric_site_identifiers_do_not_corrupt_protected_operands_or_references(monkeypatch, existing_symbols):
+    from labhq.hpc_site import SiteProfile
+    from labhq.request_bundle import _public_hpc_text
+
+    settings = Settings()
+    settings.hpc.site_profile = 'synthetic'
+    settings.hpc.user = '10'
+    profile = SiteProfile(name='synthetic', access_method='ssh', scheduler='slurm',
+                          connect_argv=['ssh', 'fixture-user@fixture-host'], remote_workdir='/scratch/10/run')
+    monkeypatch.setattr('labhq.hpc_site.load_profile', lambda name: profile)
+    refs = [f'steps/direct/outputs/figure{i}.png' for i in range(12)]
+    hide = _public_hpc_text(settings, portable_refs=refs)
+    script = existing_symbols + ' '.join(f'/usr/bin/tool{i}' for i in range(12)) + '\n'
+    text = existing_symbols + ' '.join(refs) + '\n'
+    assert hide(script, script=True) == script
+    assert hide(text) == text
+    assert '10' not in hide('user 10')
