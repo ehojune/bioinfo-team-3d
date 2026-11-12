@@ -35,6 +35,10 @@ TEXT_SUFFIXES = frozenset({
     ".py", ".r", ".sh", ".md", ".tsv", ".csv", ".json", ".txt", ".yaml", ".yml",
     ".toml", ".ini", ".cfg", ".xml", ".html", ".js", ".cjs", ".mjs", ".sql",
 })
+_TEXT_COPY_SUFFIXES = TEXT_SUFFIXES | {'.out', '.err', '.log', '.conf', '.config', '.properties', '.env'}
+_TEXT_COPY_NAMES = frozenset({'condarc', '.condarc', 'config', 'makefile', 'dockerfile',
+                             'stdout', 'stderr', 'versions', 'version', 'session_info', 'requirements',
+                             '.bashrc', '.bash_profile', '.zshrc', '.profile', '.rprofile', '.renviron'})
 SCRIPT_COMMANDS = {".r": "Rscript", ".sh": "bash"}
 SCRIPT_SUFFIXES = frozenset({".py", ".r", ".sh"})
 # Outputs that are prose, not data a script must have produced (the grade does not ask a script for them).
@@ -59,11 +63,12 @@ _TEXT_LINE_MAX_CHARS = 1024 * 1024
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _SAFE_SCRIPT_COMPONENT = re.compile(r"[A-Za-z0-9._-]+\Z")
 _WINDOWS_ABS = re.compile(r"(?i)(?<![A-Za-z0-9_])(?:[A-Z]:[\\/])[^\s<>\"'|]+")
+_UNC_ABS = re.compile(r'''(?<![A-Za-z0-9_:/\\])(?:/{2,}|\\{2,})[^/\\\s<>"'`|]+[/\\]+[^\s<>"'`|]+''')
+_LOCAL_URI = re.compile(r'''(?i)\b(?:file|smb|nfs)://[^\s<>"'`|]+''')
 _POSIX_ABS = re.compile(r"(?:^|(?<=[\s=(\[{:>\"'`]))(?P<path>/(?!/|\.\.?/)[^\s<>\"'`|]+)", re.MULTILINE)
 _SYSTEM_OPERAND = re.compile(r'/(?:((?:usr/(?:local/)?)?s?bin)/[A-Za-z0-9_.+-]+|dev/(?:null|stdin|stdout|stderr))\Z')
 _BINARY_PREFIXES = (b'%PDF-', b'\x89PNG', b'\xff\xd8\xff', b'GIF87a', b'GIF89a', b'PK\x03\x04',
-                    b'\x1f\x8b', b'BAM\x01', b'CRAM', b'\x89HDF', b'\x93NUMPY', b'PAR1', b'ARROW1',
-                    b'SQLite format 3\0', b'SIMPLE  =')
+                    b'\x1f\x8b', b'BAM\x01', b'\x89HDF', b'\x93NUMPY', b'ARROW1\0\0', b'SQLite format 3\0')
 REMOTE_RUNNER_NOTE = "runner가 다른 PC라 묶음을 만들지 않음"
 LINK_SCRIPT = "link_inputs.py"
 RERUN_RECEIPT_FILE = "rerun_receipt.json"
@@ -306,7 +311,21 @@ def _path_prefix_pattern(workdir: Any, *, outputs: bool = True) -> re.Pattern[st
 
 
 def _binary_prefix(data: bytes) -> bool:
-    return data.startswith(_BINARY_PREFIXES) or (data.startswith(b'RIFF') and data[8:12] in (b'WEBP', b'WAVE', b'AVI '))
+    return (data.startswith(_BINARY_PREFIXES)
+            or (data.startswith(b'RIFF') and data[8:12] in (b'WEBP', b'WAVE', b'AVI '))
+            or (data.startswith(b'CRAM') and len(data) >= 6 and 1 <= data[4] <= 4 and data[5] <= 9)
+            or (data.startswith(b'SIMPLE  =') and data[29:30] in (b'T', b'F') and data[80:88] == b'BITPIX  '))
+
+
+def _binary_artifact(path: Path, prefix: bytes) -> bool:
+    if _binary_prefix(prefix):
+        return True
+    # Short ASCII prefixes can also be table values; require the container's footer marker.
+    if prefix.startswith((b'PAR1', b'PARE')) and path.stat().st_size >= 12:
+        with path.open(mode='rb') as handle:
+            handle.seek(-4, os.SEEK_END)
+            return handle.read(4) == prefix[:4]
+    return False
 
 
 def _text_lines(path: Path, *, newline=''):
@@ -321,7 +340,7 @@ def _transform_text(path: Path, transform, *, newline='') -> bool | None:
     """Bounded UTF-8 transformation; invalid/binary text leaves the derived copy untouched."""
     with path.open(mode='rb') as handle:
         prefix = handle.read(8192)
-        if b'\0' in prefix or _binary_prefix(prefix):
+        if b'\0' in prefix or _binary_artifact(path, prefix):
             return None
     try:
         with tempfile.TemporaryFile(dir=path.parent) as staged:
@@ -346,7 +365,7 @@ def _rewrite_text(path: Path, workdirs: list[tuple[str, Path]],
     try:
         with path.open(mode='rb') as handle:
             prefix = handle.read(8192)
-            if b'\0' in prefix or _binary_prefix(prefix):
+            if b'\0' in prefix or _binary_artifact(path, prefix):
                 return 0, []
     except OSError:
         return 0, []
@@ -459,6 +478,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
     def hide(text, *, script=False):
         nonlocal portable_count, portable_pattern
         if script:
+            text = _UNC_ABS.sub('<remote-path>', _LOCAL_URI.sub('<remote-path>', text))
             sentinel = '\x01'
             while sentinel in text:
                 sentinel *= 2
@@ -500,6 +520,7 @@ def _public_hpc_text(settings, *, claim_refs=(), portable_refs=()):
                 if token in text:
                     references.append(token)
                     text = text.replace(token, f'{sentinel}{len(references) - 1}{sentinel}')
+        text = _UNC_ABS.sub('<remote-path>', _LOCAL_URI.sub('<remote-path>', text))
         text = _WINDOWS_ABS.sub("<local-path>", transfer.hide_log(text))
         for index, token in enumerate(references):
             text = text.replace(f'{sentinel}{index}{sentinel}', token)
@@ -536,9 +557,11 @@ def _redact_bundle_text(path, hide, *, hash_bound=False, record_fields=()):
     """Content-based UTF-8 detection includes suffixless configs and scheduler .out/.err files."""
     with path.open(mode='rb') as handle:
         prefix = handle.read(8192)
-    if _binary_prefix(prefix):
+    if _binary_artifact(path, prefix):
         return False  # PDFs and other binary containers can start with entirely ASCII metadata
-    text_candidate = path.suffix.casefold() in TEXT_SUFFIXES | {'.out', '.err', '.log', ''}
+    text_candidate = path.suffix.casefold() in _TEXT_COPY_SUFFIXES or path.name.casefold() in _TEXT_COPY_NAMES
+    if not text_candidate:
+        return False  # opaque formats are never guessed to be text from an ASCII/UTF-8 prefix
     if b'\0' in prefix:
         if text_candidate:
             raise ValueError('text artifact contains NUL bytes; public bundle withheld')

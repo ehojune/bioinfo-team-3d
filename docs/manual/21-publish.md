@@ -4,7 +4,7 @@
 
 HPC 사이트 프로필이나 `ssh_host`를 쓰는 요청 묶음은 텍스트 사본에 잡 로그의 경로 가림 규칙을 적용합니다. 확장자 없는 설정, `.out`·`.err`, 운전 기록과 manifest도 검사합니다. 원본은 보존하며 `MANIFEST.tsv`의 `redacted`·`source_sha256`·`source_size`로 변환 사본을 구분합니다. 사본의 크기·hash는 다시 계산합니다. 사이트 경로를 가린 스크립트는 `documented` 등급으로 남기고, 가림이 필요한 hash 고정 최종 checkpoint는 묶음 생성을 거절합니다([검증 범위](../reference/fix-1416.md)).
 
-PDF 등 binary 형식은 원래 bytes를 보존하며 script의 공유 절대경로도 가립니다. 묶음 텍스트는 순차 처리합니다. JSON 16 MiB·한 줄 1M 문자·남은 경로 1만 개/16M 문자 상한을 넘거나 텍스트에 UTF-8 오류·NUL이 있으면 명시 오류로 묶음을 거절합니다.
+가림은 명시된 text 확장자·등록된 설정 이름에 한정하며 미등록 형식은 bytes를 보존합니다. script의 공유·UNC 경로도 가립니다. 텍스트는 순차 처리하며 JSON 16 MiB·한 줄 1M 문자·남은 경로 1만 개/16M 문자 상한이나 UTF-8 오류·NUL은 명시 오류로 묶음을 거절합니다.
 
 Windows selection 거부는 전용 error로 표시합니다. 선행 단계가 실패하면 coverage report를 건너뛰고 진단 artifact를 보존합니다. 성공 실행은 coverage·receipt 검증을 모두 거칩니다.
 

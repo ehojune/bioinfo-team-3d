@@ -1827,12 +1827,14 @@ def test_public_hpc_json_and_hash_bound_checkpoint_fail_closed(tmp_path):
     settings = Settings()
     settings.hpc.ssh_host = 'fixture-user@fixture-host'
     hide = _public_hpc_text(settings)
-    data = {'nested': [r'C:\Users\fixture-user\private.txt'], 'url': 'https://example.org/paper'}
+    data = {'nested': [r'C:\Users\fixture-user\private.txt', r'\\nas\share\private.txt', '//nas/share/private.txt'],
+            'url': 'https://example.org/paper'}
     path = tmp_path / 'metadata.json'
     path.write_text(json.dumps(data), encoding='utf-8')
     assert _redact_bundle_text(path, hide)
     cleaned = json.loads(path.read_text(encoding='utf-8'))
     assert 'fixture-user' not in str(cleaned) and cleaned['url'] == data['url']
+    assert 'nas' not in str(cleaned)
     frozen = tmp_path / 'final_checkpoint.json'
     frozen.write_text(json.dumps({'request_id': 'req_checkpoint', 'draft': {'content': data},
                                   'receipt': None}), encoding='utf-8')
@@ -2488,4 +2490,66 @@ def test_hpc_bundle_keeps_links_to_its_actual_figure_inventory(tmp_path):
     assert 'steps/direct/outputs/figure.png' in report and 'fixture-user' not in report
     assert '/project/private' not in report
     assert bundle_figure_check(bundle)['problems'] == []
+    assert verify_bundle_copy(bundle)['problems'] == []
+
+
+@pytest.mark.parametrize('prefix', ['PAR1\t', 'CRAMP1\t', 'SIMPLE  ='])
+def test_binary_header_detection_does_not_skip_plain_text_prefix_collisions(tmp_path, prefix):
+    from labhq.request_bundle import _redact_bundle_text, _public_hpc_text
+
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    path = tmp_path / 'table.tsv'
+    write(path, prefix + '/scratch/fixture-user/private.txt\n')
+
+    assert _redact_bundle_text(path, _public_hpc_text(settings))
+    assert 'fixture-user' not in path.read_text(encoding='utf-8')
+
+
+def test_binary_container_detection_checks_footer_without_transforming_payload(tmp_path):
+    from labhq.request_bundle import _redact_bundle_text, _public_hpc_text
+
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    path = tmp_path / 'table.parquet'
+    original = b'PAR1' + b'fixture-host\n' * 1000 + b'\xffPAR1'
+    path.write_bytes(original)
+    assert not _redact_bundle_text(path, _public_hpc_text(settings))
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('suffix', ['.ppm', ''])
+@pytest.mark.parametrize('high_pixel', [False, True])
+def test_unknown_binary_formats_are_not_treated_as_utf8_text(tmp_path, suffix, high_pixel):
+    from labhq.request_bundle import _redact_bundle_text, _public_hpc_text
+
+    settings = Settings()
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    path = tmp_path / ('figure' + suffix)
+    pixels = b'fixture-host' * 2500
+    assert len(pixels) == 100 * 100 * 3
+    if high_pixel:
+        pixels = pixels[:-1] + b'\xff'
+    original = b'P6\n100 100\n255\n' + pixels
+    path.write_bytes(original)
+    assert not _redact_bundle_text(path, _public_hpc_text(settings))
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('operand', ['//nas/share/private.vcf', r'\\nas\share\private.vcf', 'file://nas/share/private.vcf'])
+def test_hpc_bundle_redacts_network_paths_and_keeps_public_https_urls(tmp_path, operand):
+    settings, request, task = pending_bundle_fixture(tmp_path, 'req_unc')
+    settings.hpc.ssh_host = 'fixture-user@fixture-host'
+    work = Path(request['results']['direct']['workdir'])
+    relative = 'outputs/scripts/unc.sh'
+    original = '#!/bin/bash\ncat ' + operand + '\necho https://example.org/paper\n'
+    path = work / relative
+    write(path, original)
+    request['results']['direct']['outputs'].append(relative)
+    request['results']['direct']['output_sha256'][relative] = digest(path)
+    bundle = Path(build_request_bundle(request, settings, {'t': task})['path'])
+    copied = (bundle / 'steps/direct' / relative).read_text(encoding='utf-8')
+    assert 'nas' not in copied and 'private.vcf' not in copied
+    assert 'https://example.org/paper' in copied
+    assert path.read_text(encoding='utf-8') == original
     assert verify_bundle_copy(bundle)['problems'] == []
