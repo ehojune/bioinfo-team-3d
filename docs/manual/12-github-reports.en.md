@@ -45,7 +45,7 @@ The beaver editor (`editor`) polishes the README with the `humanizer` and `graph
 | `CITATION.cff` | Written only when the setting `result_storage.authors` (a list of names, empty by default) or the request's `authors` has a name; the request's value wins. Otherwise no file is made and the README says the citation is undecided (no author entered). No author or DOI is invented |
 | `.env.example` | Lists only the `LABHQ_INPUT_*` variables the published scripts read, with empty values. Written only when a script reads such a variable, and holds no personal path. Copy it outside the repository (for example `../inputs.env`), fill in the paths, export it in the shell with `set -a; . ../inputs.env; set +a`, then run; keep no `.env` inside the repository so personal paths are not committed to a public repo. If a variable is not exported, a Python script stops with a `KeyError` naming it, a shell script stops with an error naming it, and an R script carries on with an empty string; if it is exported empty the path is empty. labhq adds no code that reads `.env` |
 
-The report check flags numeric prose without a claim anchor for correction. It excludes headings, tables and code; people must still check conclusions without numbers and whether claims match their evidence. Identifiers or settings containing numbers may also be flagged.
+The report check flags numeric sentences, sentences with recognized conclusion phrases, and each Markdown table data row without a claim anchor. It excludes headings and code. Phrase detection is incomplete and can flag non-conclusions, so people must still check every conclusion and its evidence.
 
 Each GitHub commit message is `kind: path (step x) — request summary` per file (summary up to 60 characters, cleaned for publication). The per-step progress commits (`labhq 진행 <step>: path`) carry no request summary.
 
@@ -59,7 +59,7 @@ In a summary table, a row missing only the last `note`, `notes`, `comment` or `c
 
 Claims in the evidence table come from the ledger. A scientific review issue from the current or an earlier round with the same step and claim is shown with the row, but its resolution is not determined automatically. Check the final conclusion alongside the ledger.
 
-README step and branch summaries mark a displayed ledger claim with a review issue as a historical record with unconfirmed resolution. The web report also marks revision-history sections.
+README step and branch summaries mark review issues as historical with unconfirmed resolution. An issue on another claim in the same step is marked as needing a claim match. Issues without a claim ID are shown separately as unlinked. When no verdict phrase is found, the first abstract paragraph is not used as the answer. The web report asks readers to check review issues and resolution for a stored evidence table.
 
 The PDF cover uses only the report's formal title and research question and wraps automatically. A short paragraph after consecutive figures is checked as the same group, and figures are placed at 80% width. Figures are not re-encoded or resampled. Only the figure preview on the publication card is limited to 1 MB per file and 5 MB in total. If there is no browser, only the PDF is omitted and the reason is left. See the [graphical abstract SVG example](../media/graphical-abstract-example.svg).
 

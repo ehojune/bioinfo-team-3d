@@ -55,8 +55,25 @@ def test_each_numeric_prose_sentence_requires_its_own_anchor():
               "`42`와 DUSP1 및 [자료](https://example.org/123)는 식별자입니다.\n"
               "~~~\n값은 99입니다.\n~~~\n")
     check = check_report(report, {"s1": _ledger()}, artifact_sha256={"s1/a1": "a" * 64})
-    assert len(check["problems"]) == 1
+    assert len(check["problems"]) == 3
     assert "12.3" in check["problems"][0] and "anchor" in check["problems"][0]
+    assert any("A | 7" in problem for problem in check["problems"])
+    assert any("foo | 12.3" in problem for problem in check["problems"])
+
+
+def test_unnumbered_conclusions_and_each_table_row_need_anchors():
+    report = ("가설은 기각됩니다.\n지지 여부는 불확실합니다. [[claim:s1/c1]]\n\n"
+              "| 결과 | 판정 |\n|---|---|\n| A | 증가 |\n| B | 감소 [[claim:s1/c1]] |\n")
+    problems = check_report(report, {"s1": _ledger()}, artifact_sha256={"s1/a1": "a" * 64})["problems"]
+    assert any("가설은 기각" in problem for problem in problems)
+    assert any("A | 증가" in problem for problem in problems)
+    assert not any("B | 감소" in problem for problem in problems)
+    assert not any("지지 여부는 불확실" in problem for problem in problems)
+
+
+def test_commented_out_table_is_not_a_visible_claim():
+    report = '<!--\n| Claim | Value |\n|---|---|\n| hidden | 7 |\n-->\n'
+    assert check_report(report, {})['problems'] == []
 
 
 def test_numeric_units_and_soft_wrapped_sentences():
@@ -340,4 +357,4 @@ def test_review_flags_preserve_original_claims_without_deciding_resolution():
     section = claim_evidence_section(rows)
     assert "Direction reversed" in section and "Counts conflict" in section
     assert "Correct direction" in section and "Reconcile counts" in section
-    assert "General concern" not in section
+    assert "General concern" in section and "claim 연결 미확인" in section

@@ -115,11 +115,15 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
     refusal_reasons = {(str(row.get("step_id")), str(row.get("evidence_id"))): str(row.get("reason") or "")
                        for row in refused if isinstance(row, Mapping)}
     review_by_claim: dict[tuple[str, str], list[str]] = {}
+    unlinked_reviews: list[tuple[str, str]] = []
     for issue in review_issues:
-        if not isinstance(issue, Mapping) or not issue.get("step_id") or not issue.get("claim_id"):
+        if not isinstance(issue, Mapping):
+            continue
+        detail = " → ".join(str(issue.get(field) or "").strip() for field in ("problem", "request")).strip(" →")
+        if not issue.get("step_id") or not issue.get("claim_id"):
+            unlinked_reviews.append((str(issue.get("step_id") or "—"), detail or "내용 미기록"))
             continue
         key = (str(issue["step_id"]), str(issue["claim_id"]))
-        detail = " → ".join(str(issue.get(field) or "").strip() for field in ("problem", "request")).strip(" →")
         review_by_claim.setdefault(key, []).append(detail or "내용 미기록")
     rows = []
     for step_id, ledger in ledgers.items():
@@ -185,6 +189,12 @@ def claim_evidence_rows(ledgers: Mapping[str, Any], *, refused: Iterable[Any] = 
         for sid, evidence_id in sorted(refused_ids):
             if sid == step_id and evidence_id not in evidence and evidence_id not in linked:
                 display({}, evidence_id, "context")
+    for step_id, detail in unlinked_reviews:
+        rows.append({"step_id": step_id, "claim_id": "—", "claim": "claim 연결 미확인",
+                     "claim_status": "검토 지적 · 해결 여부 미확인", "review": detail,
+                     "evidence_id": "—", "relation": "연결 없음", "evidence_status": "미기록", "detail": "",
+                     "source": "출처 미기록", "locator": "미기록", "access": "미판정", "methods": "미기록",
+                     "qc": "미기록", "supplement": "미판정", "lineage": "미판정"})
     return rows
 
 
@@ -291,8 +301,12 @@ def failed_lookup_lines(rows: list[dict[str, str]]) -> list[str]:
     return lines
 
 
-def _unanchored_numeric_sentences(report: str) -> list[str]:
-    """Flag numeric prose for review; this is not a semantic conclusion classifier."""
+_CONCLUSION = re.compile(r"기각|지지(?:되|하|했|됐|여부)|유의(?:하|했|한|성)|증가|감소|"
+                         r"\b(?:reject\w*|support\w*|significant\w*|increas\w*|decreas\w*)\b", re.I)
+
+
+def _unanchored_numeric_sentences(report: str, *, conclusions: bool = False) -> list[str]:
+    """Flag numeric prose or recognizable conclusion language; neither mode proves semantic coverage."""
     text = markdown_body(report)
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.DOTALL)
     text = re.sub(r"(?m)^ {0,3}\[\^[^\]\n]+\]:[^\n]*(?:\n(?: {4}|\t)[^\n]*)*", "", text)
@@ -334,9 +348,27 @@ def _unanchored_numeric_sentences(report: str) -> list[str]:
             sentence = match.group().strip()
             if not sentence or ANCHOR.search(sentence):
                 continue
-            if re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?:[eE][+-]?\d+)?(?:(?:kg|mg|ng|µg|ug|mL|ml|µL|uL|L|h|min|s|mm|cm)(?![A-Za-z0-9_])|(?![A-Za-z0-9_]))", sentence):
+            numeric = re.search(r"(?<![A-Za-z0-9_])\d+(?:[.,]\d+)*(?:[eE][+-]?\d+)?(?:(?:kg|mg|ng|µg|ug|mL|ml|µL|uL|L|h|min|s|mm|cm)(?![A-Za-z0-9_])|(?![A-Za-z0-9_]))", sentence)
+            if (not numeric and _CONCLUSION.search(sentence)) if conclusions else numeric:
                 sentences.append(sentence)
     return sentences
+
+
+def _unanchored_table_rows(report: str) -> list[str]:
+    """Flag each Markdown table data row independently, including unnumbered conclusions."""
+    text = re.sub(r"<!--.*?-->", " ", markdown_body(report), flags=re.DOTALL)
+    lines = text.splitlines()
+    rows = []
+    for i in range(1, len(lines)):
+        if "|" not in lines[i - 1] or not re.fullmatch(
+                r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*", lines[i]):
+            continue
+        j = i + 1
+        while j < len(lines) and "|" in lines[j] and lines[j].strip():
+            if not ANCHOR.search(lines[j]):
+                rows.append(lines[j].strip())
+            j += 1
+    return rows
 
 
 def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
@@ -402,4 +434,8 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
                         "needs [[claim:<step_id>/<claim_id>]]")
     for sentence in _unanchored_numeric_sentences(report or ""):
         problems.append(f"numeric prose needs a claim anchor (review context): {sentence[:200]}")
+    for sentence in _unanchored_numeric_sentences(report or "", conclusions=True):
+        problems.append(f"possible conclusion needs a claim anchor (review context): {sentence[:200]}")
+    for row in _unanchored_table_rows(report or ""):
+        problems.append(f"table row needs a claim anchor (review context): {row[:200]}")
     return {"anchors": len(found), "problems": problems}
