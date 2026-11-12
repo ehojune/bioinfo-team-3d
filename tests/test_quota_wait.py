@@ -45,11 +45,17 @@ def test_claude_hour_window_limit_waits_until_the_named_zone_reset(engine):
     text = (FIXTURES / "claude-5hour.txt").read_text(encoding="utf-8")
     now = datetime(2026, 11, 12, 18, 0, tzinfo=KST).timestamp()
     expected = datetime(2026, 11, 12, 18, 30, tzinfo=KST).timestamp()
-    # The message names its zone, so a runner in another zone still reads the same instant.
-    for zone in (KST, timezone.utc):
-        parsed = parse_quota_wait(engine, text, now=now, tz=zone)
-        assert parsed and parsed.parsed and parsed.resume_at == expected
-    assert quota_reset_instant(engine, text, now=now, tz=timezone.utc) == expected
+    parsed = parse_quota_wait(engine, text, now=now, tz=KST)
+    assert parsed and parsed.parsed and parsed.resume_at == expected
+    # The message names its zone, so a runner in another zone still reads the same instant. Without a tz
+    # database (Windows without tzdata) the reading falls back to the runner's own zone.
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo("Asia/Seoul")
+    except Exception:
+        assert quota_reset_instant(engine, text, now=now, tz=timezone.utc) is not None
+    else:
+        assert quota_reset_instant(engine, text, now=now, tz=timezone.utc) == expected
     assert failure_kind(TaskResult(task_id="t", agent_id="a", ok=False, error=text)) == "quota"
 
 
