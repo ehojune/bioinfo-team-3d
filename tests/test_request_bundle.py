@@ -2205,3 +2205,25 @@ def test_hpc_bundle_site_words_in_file_names_preserve_manifest_inventory(tmp_pat
         assert "fixture-user" not in json.loads((bundle / relative).read_text())["source"]
     assert all(path.read_bytes() == data for path, data in originals.items())
     assert verify_bundle_copy(bundle)["problems"] == []
+
+
+@pytest.mark.parametrize("site_value", ["ab", "cop"])
+def test_hpc_bundle_site_words_preserve_request_id_and_manifest_status(tmp_path, site_value):
+    settings, request, task = pending_bundle_fixture(tmp_path, "req_ab_control")
+    settings.hpc.ssh_host = "fixture-user@fixture-host"
+    settings.hpc.user = site_value
+    work = Path(request["results"]["direct"]["workdir"])
+    relative = "outputs/site_info.txt"
+    path = work / relative
+    write(path, "/scratch/fixture-user/private.txt\n")
+    original = path.read_bytes()
+    request["results"]["direct"]["outputs"].append(relative)
+    request["results"]["direct"]["output_sha256"][relative] = digest(path)
+
+    bundle = Path(build_request_bundle(request, settings, {"t": task})["path"])
+
+    row = manifest_rows(bundle)["steps/direct/" + relative]
+    assert row["status"] == "copied" and row["redacted"] == "yes"
+    assert row["sha256"] == digest(bundle / row["relative_path"])
+    assert row["source_sha256"] == digest(path) and path.read_bytes() == original
+    assert verify_bundle_copy(bundle)["problems"] == []

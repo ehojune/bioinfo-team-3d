@@ -1023,9 +1023,9 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             for row in rows:
                 row['redacted'] = 'yes' if row['relative_path'] in redacted_files else ''
                 # Inventory names identify the unchanged files; hide the descriptive fields only.
-                for key in row:
-                    if key not in ('relative_path', 'step_id'):
-                        row[key] = _public_values(row[key], public_text)
+                for key in ('original_path', 'remaining_absolute_paths'):
+                    if key in row:
+                        row[key] = public_text(row[key])
             for row in input_rows:
                 row['path'] = public_text(row['path'])
             run_records = {step_id: _public_values(run, public_text) for step_id, run in run_records.items()}
@@ -1094,6 +1094,8 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             crate_path = temp / METADATA_FILE
             # Request mapping keys include step IDs and output paths, not free text.
             public_req = _public_values(req, public_text, redact_keys=False) if public_text else req
+            if public_text:
+                public_req['id'] = req.get('id')  # identifier is bound to the bundle directory name
             write_ro_crate(crate_path, public_req, rows, input_rows, run_records, grade, grade_reasons, rerun_receipt)
             rows.append({"relative_path": METADATA_FILE, "size": crate_path.stat().st_size,
                          "sha256": _sha256(crate_path), "step_id": "", "original_path": "",
