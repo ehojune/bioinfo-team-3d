@@ -2447,11 +2447,12 @@ def test_hpc_bundle_preserves_ascii_header_binary_formats(tmp_path, suffix, comp
     assert verify_bundle_copy(bundle)['problems'] == []
 
 
-def test_hpc_bundle_scripts_hide_shared_paths_and_keep_system_executables(tmp_path):
+@pytest.mark.parametrize('suffix', ['.sh', '.bash', '.BASH'])
+def test_hpc_bundle_scripts_hide_shared_paths_and_keep_system_executables(tmp_path, suffix):
     settings, request, task = pending_bundle_fixture(tmp_path, 'req_script_paths')
     settings.hpc.ssh_host = 'fixture-user@fixture-host'
     work = Path(request['results']['direct']['workdir'])
-    relative = 'outputs/scripts/analyze.sh'
+    relative = 'outputs/scripts/analyze' + suffix
     original = ('#!/usr/bin/env bash\n/usr/bin/bcftools view /project/cohort/patient.vcf '
                 '> /scratch/shared/private.tsv\ncat /dev/null\n')
     path = work / relative
@@ -2466,6 +2467,8 @@ def test_hpc_bundle_scripts_hide_shared_paths_and_keep_system_executables(tmp_pa
     assert '#!/usr/bin/env bash' in copied and '/usr/bin/bcftools' in copied and '/dev/null' in copied
     assert path.read_text(encoding='utf-8') == original
     assert manifest_rows(bundle)['steps/direct/' + relative]['redacted'] == 'yes'
+    assert manifest_rows(bundle)['.']['reproducibility_grade'] == 'documented'
+    assert 'bash outputs/scripts/analyze' + suffix in (bundle / 'README.md').read_text(encoding='utf-8')
     assert verify_bundle_copy(bundle)['problems'] == []
 
 

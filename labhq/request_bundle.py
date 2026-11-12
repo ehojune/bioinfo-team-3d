@@ -32,15 +32,15 @@ from .ro_crate import FORMAT_MARKER, METADATA_FILE, write_ro_crate
 
 
 TEXT_SUFFIXES = frozenset({
-    ".py", ".r", ".sh", ".md", ".tsv", ".csv", ".json", ".txt", ".yaml", ".yml",
+    ".py", ".r", ".sh", ".bash", ".md", ".tsv", ".csv", ".json", ".txt", ".yaml", ".yml",
     ".toml", ".ini", ".cfg", ".xml", ".html", ".js", ".cjs", ".mjs", ".sql",
 })
 _TEXT_COPY_SUFFIXES = TEXT_SUFFIXES | {'.out', '.err', '.log', '.conf', '.config', '.properties', '.env'}
 _TEXT_COPY_NAMES = frozenset({'condarc', '.condarc', 'config', 'makefile', 'dockerfile',
                              'stdout', 'stderr', 'versions', 'version', 'session_info', 'requirements',
                              '.bashrc', '.bash_profile', '.zshrc', '.profile', '.rprofile', '.renviron'})
-SCRIPT_COMMANDS = {".r": "Rscript", ".sh": "bash"}
-SCRIPT_SUFFIXES = frozenset({".py", ".r", ".sh"})
+SCRIPT_COMMANDS = {".r": "Rscript", ".sh": "bash", ".bash": "bash"}
+SCRIPT_SUFFIXES = frozenset({".py", ".r", ".sh", ".bash"})
 # Outputs that are prose, not data a script must have produced (the grade does not ask a script for them).
 TEXT_ONLY = frozenset({".md"})  # .txt is a common data format (counts, variant lists): PR #431 review
 DOCUMENT_SUFFIXES = frozenset({".md"})
