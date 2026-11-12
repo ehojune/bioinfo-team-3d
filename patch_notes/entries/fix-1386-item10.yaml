@@ -1,5 +1,9 @@
 pr: 1411
 rows:
+  - sha: "b928d11"
+    at: "2026-11-12 15:14"
+    summary: "doctor가 원격 서버를 조회할 때 token을 보호하고 복구 명령을 안전하게 안내합니다."
+    text: "#1411 P1·P2: 원격 평문 조회 거부, redirect 금지, percent-encoded 복구 경로 검사와 Bash URL quoting을 적용했다. 재현 4건 실패 뒤 web·doctor 회귀 98건 통과."
   - sha: "ebf078e"
     at: "2026-11-12 15:05"
     summary: "다른 runner의 메시지 보류가 전파되지 않게 하고 복구 안내를 웹과 doctor에 표시합니다."
