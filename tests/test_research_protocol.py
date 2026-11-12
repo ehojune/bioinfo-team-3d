@@ -141,6 +141,61 @@ class MiniHub:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("work_kind", ["simple", "research"])
+async def test_recruit_setting_changes_only_planning_instructions(work_kind, tmp_path):
+    from labhq.orchestrator import cso
+
+    captured = []
+    for enabled in (False, True):
+        settings = Settings()
+        settings.gateway.state_dir = str(tmp_path / str(enabled))
+        settings.recruit.enabled = enabled
+        settings.research.enabled = True
+        settings.orchestrator.chief_of_staff_agent = None
+        settings.orchestrator.reviewer_agent = None
+
+        async def stop(task):
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="mock stop")
+
+        hub = MiniHub(settings, stop, mode="plan_only", work_kind=work_kind, text="compare conditions")
+        await Orchestrator(hub).run_request("r")
+        captured.append(next(task for task in hub.calls if task.meta["kind"] == "plan"))
+
+    off, on = captured
+    rules = cso.RESEARCH_RECRUIT_RULES if work_kind == "research" else cso.GENERAL_RECRUIT_RULES
+    assert rules in on.prompt
+    assert off.prompt == on.prompt.replace(rules, cso.RECRUIT_DISABLED_RULE)
+    assert cso.RECRUIT_DISABLED_RULE in off.prompt
+    assert cso.recruit_planning.PLAN_RULE not in off.prompt
+    assert cso.paper_skills.PLAN_RULE not in off.prompt
+    assert off.output_schema == on.output_schema
+    assert "recruit" in off.output_schema["required"]
+    assert "paper_skills" in off.output_schema["properties"]
+
+
+@pytest.mark.asyncio
+async def test_replan_respects_recruit_setting():
+    from labhq.orchestrator.cso import RECRUIT_DISABLED_RULE
+    from test_cso import kinds, replan_hub, replan_plan, result
+
+    captured = []
+    for enabled in (False, True):
+        hub = replan_hub(
+            [{"id": "A", "agent_id": "worker", "instruction": "work", "depends_on": []}],
+            lambda task: result(task, ok=False, error="unavailable"),
+            lambda task: replan_plan([], notes="cannot continue"),
+        )
+        hub.s.recruit.enabled = enabled
+        await Orchestrator(hub).run_request("r")
+        captured.append(kinds(hub, "replan")[0])
+
+    off, on = captured
+    assert off.prompt.count(RECRUIT_DISABLED_RULE) == 1
+    assert off.prompt.replace("\n\n" + RECRUIT_DISABLED_RULE, "") == on.prompt
+    assert off.output_schema == on.output_schema
+
+
+@pytest.mark.asyncio
 async def test_core_device_failure_reaches_cp1_feed_and_execution_record(tmp_path, monkeypatch):
     from labhq.research import semantic_devices
 
