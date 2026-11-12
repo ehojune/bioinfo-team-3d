@@ -1,7 +1,7 @@
 pr: 1396
 rows:
-  - sha: e7d5b928
-    at: "2026-11-12 15:30"
+  - sha: 10b8d4c
+    at: "2026-11-12 15:10"
     summary: Windows 검사 경로를 위해 기존 fixture를 보존했습니다.
     text: 전용 시험은 삭제한 채 fixture 네 개를 원본으로 남겼습니다.
   - sha: b85b416
