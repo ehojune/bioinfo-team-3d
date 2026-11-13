@@ -140,3 +140,26 @@ async def test_empty_and_other_input_sources_use_scoped_profile(tmp_path, monkey
     assert str(runner.ws_root.resolve()) not in ctx.private_paths
     assert str(ctx.workdir / 'inputs') in ctx.private_paths
     assert str(ctx.workdir / 'inputs') not in ctx.native_deny_read_paths
+
+
+@pytest.mark.asyncio
+async def test_empty_environment_producer_keeps_workspace_writable(tmp_path, monkeypatch):
+    monkeypatch.setattr(daemon, 'sys', RuntimeProxy(daemon.sys, platform='win32'))
+    monkeypatch.setattr(codex_mod, '_is_windows', lambda: True)
+    settings = _runner_settings(tmp_path, None)
+    settings.recruit.enabled = True
+    settings.engines.codex.windows_sandbox = 'elevated'
+    settings.engines.codex.isolate_user_config = True
+    runner, seen = _capture_runner(settings, monkeypatch, Engine.codex)
+    sibling = runner.ws_root / '2026-01-01' / 'sibling'
+    sibling.mkdir(parents=True)
+    task = Task(id='one', agent_id='worker', request_id='r', prompt='q',
+                meta={'kind': 'step', 'upstream_artifacts': {}, 'environment_step': True})
+    result = await runner.run_task(task)
+    assert result.ok, result.error
+    ctx = seen['ctx']
+    assert not ctx.read_only_inputs
+    profile = next(v for v in codex_mod.CodexAdapter(settings).sandbox_flags(ctx)
+                   if v.startswith('permissions.labhq_staff='))
+    assert 'extends = ":workspace"' in profile
+    assert f'{codex_mod._toml(str(sibling))} = "deny"' in profile

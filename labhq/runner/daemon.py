@@ -2881,7 +2881,8 @@ class Runner:
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or
                     ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') or
-                     (artifact_contract and sys.platform == 'win32' and agent.engine == Engine.codex) else [])),
+                     (artifact_contract and sys.platform == 'win32' and agent.engine == Engine.codex
+                      and task.meta.get('environment_step') is not True) else [])),
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=engine_settings,
                 private_labels=list(private.labels),
