@@ -46,7 +46,8 @@ PLAN_SCHEMA_SHA = "893287e5f26f5a828f40d9f00b8c480e217865fd24c5857579ca64d76097a
 # still hashes to the previous d2548cdd…, and the schema is unchanged.
 # #798 moves paper conversion after approval; #671 changes only that sentence to parallel/late advice.
 # Normalize that explicit delta to retain both exact earlier baselines and off/on schema separation.
-PLAN_PROMPT_SHA = "6c3ad9f57a50d2a9c6b13750a97910147d954b77dc565208bfad66428ca4351c"
+# #1413 adds shared HPC runtime-estimate guidance; schema and output-type off/on behavior stay unchanged.
+PLAN_PROMPT_SHA = "62b9177fd47fd282cfcd7f3d40b3c560419236245d73cc4128c9b22992804ba8"
 PROMPT_ARGS = dict(request="REQ", roster="ROSTER", capabilities="CAPS", briefing="BRIEF", max_steps=3,
                    question_rule=QUESTION_RULE, lab_scope="LAB", topics_rule=topics.prompt_rule(V))
 
@@ -129,7 +130,7 @@ def test_off_keeps_the_plan_schema_and_prompt_of_main():
     assert prompt.count(phase) == 1
     assert sha(prompt.replace(phase, previous)) == PLAN_PROMPT_SHA
     assert sha(prompt.replace(phase, "labhq prepares them before CP1.")) == (
-        "a7c48eaef68becc0f72e1bd33c76d565a50f204b6aa7d1bc41a195a855e99a68")
+        "a86bb4565bdfee60f75409b963b5f8c414249ddea621c585d1a9ca23be93dff2")
     assert Settings().plan.declare_output_types is False
 
 
