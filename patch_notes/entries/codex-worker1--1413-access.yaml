@@ -1,6 +1,6 @@
 pr: 1426
 rows:
-- sha: b1f987a7
+- sha: '400680d8'
   at: 2026-11-13 15:19
   summary: Windows Codex 입력 파일의 쓰기를 다시 제한합니다.
   text: 입력 읽기를 유지하면서 policy의 Write와 Edit 거부를 복구한다 (#1413).
