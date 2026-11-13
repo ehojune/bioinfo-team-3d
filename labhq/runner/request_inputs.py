@@ -17,9 +17,15 @@ def preflight(references: list[str], projects: list[str], settings, transfer_max
     proof = capture({"reference_dirs": references, "project_dirs": projects}, settings)
     if proof is None:
         return None
-    count = 0
+    count, total, entries = 0, 0, 0
+    children, seen = {}, set()
     try:
         for index, raw in enumerate([*references, *projects], 1):
+            label = f"ref-{index}"
+            children[""] = children.get("", 0) + 1
+            entries += 1
+            if children[""] > MAX_FILES + 1 or entries > MAX_FILES * 16:
+                return None
             original = Path(os.path.expanduser(str(raw))).absolute()
             is_file = original.is_file()
             source = original.parent if is_file else original
@@ -32,12 +38,22 @@ def preflight(references: list[str], projects: list[str], settings, transfer_max
                 if is_file and name != original.name:
                     continue
                 _parts(name)
-                confine(f"ref-{index}/{name}")
+                target = str(confine(f"{label}/{name}"))
+                parent = target.rpartition("/")[0]
+                children[parent] = children.get(parent, 0) + 1
+                entries += 1
+                if (children[parent] > MAX_FILES + 1 or entries > MAX_FILES * 16
+                        or target.casefold() in seen or len(target.split("/")) > (16 if digest == "directory" else 17)):
+                    return None
+                seen.add(target.casefold())
                 if digest != "directory":
                     count += 1
                     found_file = True
-                    if (count > MAX_FILES or (transfer_max_bytes is not None and
-                            (source / name).stat().st_size > transfer_max_bytes)):
+                    size = (source / name).stat().st_size
+                    total += size
+                    if (count > MAX_FILES or size > settings.runner.input_hash_max_file_bytes
+                            or total > settings.runner.input_hash_max_total_bytes
+                            or (transfer_max_bytes is not None and size > transfer_max_bytes)):
                         return None
             if is_file and not found_file:
                 return None

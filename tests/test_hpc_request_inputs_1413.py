@@ -40,6 +40,47 @@ def test_preflight_refuses_more_files_than_stage_accepts(source):
     assert request_inputs.preflight([str(folder / "wanted.txt")], [], settings)
 
 
+def test_preflight_applies_configured_file_and_total_limits(source):
+    settings, folder, _ = source
+    wanted = folder / "wanted.txt"
+    sibling = folder / "sibling.txt"
+    wanted.write_bytes(b"abcd")
+    sibling.write_bytes(b"efgh")
+    settings.runner.input_hash_max_file_bytes = 4
+    settings.runner.input_hash_max_total_bytes = 8
+    assert request_inputs.preflight([str(folder)], [], settings)
+    sibling.write_bytes(b"efghi")
+    assert request_inputs.preflight([str(folder)], [], settings) is None
+    settings.runner.input_hash_max_file_bytes = 5
+    assert request_inputs.preflight([str(folder)], [], settings) is None
+    settings.runner.input_hash_max_total_bytes = 9
+    assert request_inputs.preflight([str(folder)], [], settings)
+
+
+def test_preflight_applies_directory_entry_limit(source):
+    settings, folder, work = source
+    (folder / "wanted.txt").unlink()
+    (folder / "sibling.txt").unlink()
+    for index in range(201):
+        (folder / f"dir-{index}").mkdir()
+    assert request_inputs.preflight([str(folder)], [], settings)
+    request_inputs.stage(work, [str(folder)], [], settings)
+    (folder / "dir-extra").mkdir()
+    assert request_inputs.preflight([str(folder)], [], settings) is None
+
+
+def test_preflight_accounts_for_snapshot_root_depth(source):
+    settings, folder, work = source
+    nested = folder
+    for _ in range(15):
+        nested = nested / "d"
+        nested.mkdir()
+    assert request_inputs.preflight([str(folder)], [], settings)
+    request_inputs.stage(work, [str(folder)], [], settings)
+    (nested / "d").mkdir()
+    assert request_inputs.preflight([str(folder)], [], settings) is None
+
+
 @pytest.mark.parametrize("change", ["alter", "remove", "add", "add_empty_dir"])
 def test_snapshot_changes_are_refused(source, change):
     settings, folder, work = source
