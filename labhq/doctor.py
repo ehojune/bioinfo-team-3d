@@ -1047,11 +1047,6 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
             rows.append(_row("config", "runner.force_engine", "fail", "unknown engine",
                              "Set runner.force_engine to a supported engine or remove it."))
     roster_engines = ({forced.value} if forced else {agent.engine.value for agent in agents}) - {"mock"}
-    if sys.platform == "win32" and "codex" in roster_engines:
-        rows.append(_row("staff", "codex ancestor inputs", "warn",
-                         "Windows Codex 직원은 선행 단계 산출을 받는 단계를 실행할 수 없습니다: "
-                         "현재 sandbox에서 작업 폴더 읽기 예외가 적용되지 않습니다.",
-                         "해당 단계에는 다른 엔진의 직원을 사용하세요."))
     available: dict[str, bool] = {}
     if "cli" in roster_engines:
         cli_agents = [agent for agent in agents if (forced or agent.engine) == Engine.cli]

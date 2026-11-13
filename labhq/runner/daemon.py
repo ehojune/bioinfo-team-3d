@@ -231,6 +231,23 @@ def claude_rule_ready(path: str) -> bool:
     return True
 
 
+def _codex_sibling_denies(root: Path, workdir: Path, active: list[Path]) -> list[str]:
+    """Snapshot existing work folders without denying this or another active Codex folder."""
+    from ..adapters.owned import is_link
+
+    protected = [p.resolve() for p in [workdir, *active]]
+    folders = []
+    for entry in root.iterdir():
+        if is_link(entry) or not entry.is_dir():
+            continue
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.name):
+            folders.extend(p for p in entry.iterdir() if not is_link(p) and p.is_dir())
+        else:
+            folders.append(entry)
+    return [str(p) for p in folders
+            if not any(q == p.resolve() or q.is_relative_to(p.resolve()) for q in protected)]
+
+
 def _can_list(path: str) -> bool:
     try:
         os.listdir(path)
@@ -2261,13 +2278,6 @@ class Runner:
         # inputs (#424); the gateway refuses both first.
         refusal = (refusal or (probation_refusal(agent.id) if not_yet_active(agent) else None)
                    or external_service_refusal(agent, task, self.s))
-        if (sys.platform == "win32" and agent.engine == Engine.codex
-                and task.meta.get("kind") in {"step", "result_correction", "slot_repair"}
-                and isinstance(task.meta.get("upstream_artifacts"), dict)
-                and task.meta["upstream_artifacts"]):
-            refusal = refusal or (
-                "Windows Codex 직원은 선행 단계 산출을 받는 단계를 실행할 수 없습니다: "
-                "현재 sandbox에서 작업 폴더 읽기 예외가 적용되지 않습니다. 다른 엔진의 직원을 사용하세요.")
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal,
                                 **({"cost_usd": 0.0, "cost_known": True} if input_refusal else {}))
@@ -2701,11 +2711,17 @@ class Runner:
             private = await asyncio.to_thread(resolve_private_paths, self.s, keep, open_reads=open_reads, cwd=ws.dir)
             if artifact_contract:
                 # Reuse the existing private/read-root machinery; inputs never become write roots.
+                task_denies = [str(root)]
+                # Include both spellings for junctioned workspaces (#946).
+                input_denies = [str(ws.dir / "inputs"), os.path.realpath(ws.dir / "inputs")]
+                if sys.platform == "win32" and agent.engine == Engine.codex:
+                    active = [ctx.workdir for ctx in self.tool_contexts.values() if ctx.agent.engine == Engine.codex]
+                    task_denies = _codex_sibling_denies(root, ws.dir, active)
+                    # Windows read-deny ACLs override nested read grants. The Codex read-only
+                    # profile below grants writes only to outputs and .tmp, not to inputs.
+                    input_denies = []
                 private = replace(private, paths=tuple(dict.fromkeys([
-                                      *private.paths, str(root), str(ws.dir / "inputs"),
-                                      # Both spellings: with a junctioned root the real inputs path is otherwise
-                                      # not denied and matches the resolved workdir's write allow (#946).
-                                      os.path.realpath(ws.dir / "inputs")])),
+                                      *private.paths, *task_denies, *input_denies])),
                                   labels=(*private.labels, "선행 단계 읽기 전용 입력"), enabled=True,
                                   open_reads=tuple(scoped_open_reads(self.s, [
                                       *private.open_reads, str(ws.dir), *staged_inputs], cwd=ws.dir)))
@@ -2833,7 +2849,8 @@ class Runner:
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or
-                    ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') else [])),
+                    ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') or
+                     (artifact_contract and sys.platform == 'win32' and agent.engine == Engine.codex) else [])),
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=engine_settings,
                 private_labels=list(private.labels),

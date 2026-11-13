@@ -6,5 +6,5 @@ rows:
   text: 선행 산출 제한 검사를 Windows 경계 검사에 등록하고 status 파일에 시간을 넣는다 (#1413).
 - sha: c83960f
   at: 2026-11-13 14:18
-  summary: Windows Codex 직원이 실행할 수 없는 선행 산출 단계를 미리 알려 줍니다.
-  text: 해당 단계를 adapter 실행 전에 차단하고 doctor와 한영 매뉴얼에 제한을 안내한다 (#1413).
+  summary: Windows Codex의 선행 산출 접근 문제를 확인합니다.
+  text: 작업 폴더 접근 오류와 보호 범위를 점검한다 (#1413).

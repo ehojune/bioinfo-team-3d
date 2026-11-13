@@ -30,27 +30,6 @@ def _settings(tmp_path):
                                     "hpc": {"scheduler": "none"}})
 
 
-@pytest.mark.parametrize("platform,engine,forced,expected", [
-    ("win32", "codex", "", True),
-    ("win32", "claude_code", "codex", True),
-    ("win32", "codex", "claude_code", False),
-    ("linux", "codex", "", False),
-    ("win32", "claude_code", "", False),
-])
-def test_doctor_warns_only_for_windows_effective_codex(tmp_path, monkeypatch, platform, engine, forced, expected):
-    settings = _settings(tmp_path)
-    (tmp_path / "agents" / "core" / "worker.yaml").write_text(
-        f"id: worker\nname: Worker\nrole: test\nengine: {engine}\n", encoding="utf-8")
-    settings.runner.force_engine = forced
-    monkeypatch.setattr(doctor, "sys", RuntimeProxy(doctor.sys, platform=platform))
-    report = doctor.collect(settings, dry_run=True, require_roster=True)
-    rows = [row for row in report["checks"] if row["name"] == "codex ancestor inputs"]
-    assert bool(rows) is expected
-    if rows:
-        assert rows[0]["status"] == "warn" and "sandbox" in rows[0]["detail"]
-        assert "다른 엔진" in rows[0]["hint"]
-
-
 @pytest.mark.parametrize("network,dry_run", [(False, False), (True, True)])
 def test_inbox_doctor_skips_network_without_opt_in(tmp_path, monkeypatch, network, dry_run):
     import httpx
