@@ -299,7 +299,14 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
 
     script: the script body (commands; scheduler directives optional). With account switching,
     relative outputs go to hpc_out/; otherwise it runs from your workspace.
-    cores / mem (total, e.g. "32G") / walltime ("HH:MM:SS"). reason: why this job is needed.
+    cores / mem (total, e.g. "32G") / walltime ("HH:MM:SS"). Set walltime explicitly to about twice
+    estimated execution time, excluding queue wait (20 minutes -> "00:40:00"). reason: why this job is
+    needed, estimated runtime and its basis (input size, throughput, tool/core count or a comparable measured
+    run), plus any different margin. The 04:00:00 default is compatibility fallback, not a runtime estimate.
+    If runtime is unknown, say so and obtain missing input/resource information or a small measurement within
+    existing execution approval; this guidance authorizes no new execution. Do not invent an estimate or use
+    a large default or zero/unlimited as one. If the proposed limit exceeds a site or PI limit, propose splitting
+    the work or ask for a decision; never silently clip it. Existing approval and resubmission protections apply.
     inputs: small files your script reads, as paths relative to your workspace (at most 20, 512 KiB each). A cluster
     that does not share files with this machine gets them in the job's work folder under the same relative path; a
     cluster that does share them ignores this list. Larger files are not sent: say so in your reason.

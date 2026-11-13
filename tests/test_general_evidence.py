@@ -137,9 +137,9 @@ async def test_general_report_warns_without_copying_long_tool_output():
 
 
 def test_research_prompt_hash_and_empty_research_result_fields_stay_fixed():
-    # #690 intentionally adds the SVG text/font/no-capture contract to the frozen research step prompt; #669 the install-and-read rule.
+    # #1413 adds HPC runtime guidance; #690 figure and #669 install/read contracts remain.
     assert hashlib.sha256(RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "c6bb88d99f75b5b454145030377a027a9b6518ee5bad0ee791316cb7c5a91e09")
+        "797be69d0ebac6dbf47b5a1d3e5fd14709b95f527c70012a515421eb17f0a903")
     dumped = TaskResult(task_id="t", agent_id="worker", ok=True, structured={"version": 2}).model_dump(mode="json")
     assert "general_sections" not in dumped and "evidence_path_warnings" not in dumped and "tool_errors" not in dumped
 

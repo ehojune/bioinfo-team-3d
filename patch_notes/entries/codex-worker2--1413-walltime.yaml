@@ -1,0 +1,14 @@
+pr: 1425
+rows:
+  - sha: "1599fd2"
+    at: "2026-11-13 11:25"
+    summary: "계획 검사에도 새 시간 제한 안내를 반영했습니다."
+    text: "일반·연구 계획과 paper-timing snapshot 네 값을 대조해 갱신했다. schema·OFF/ON 단언·정규화는 유지했으며 관련 회귀 110 passed (#1425)"
+  - sha: "31bd097"
+    at: "2026-11-13 11:12"
+    summary: "시간 제한 안내 변경에 맞춰 검사 기준을 갱신했습니다."
+    text: "중복 research prompt snapshot과 Windows source digest를 갱신했다. 보호 node·cohort는 그대로이며 관련 회귀 324 passed·6 skipped, profile 회귀 70 passed (#1425)"
+  - sha: "0981928"
+    at: "2026-11-13 11:01"
+    summary: "잡 시간 제한을 예상 실행 소요와 근거에 맞춰 정하도록 안내합니다."
+    text: "도구·계획·직원 prompt에 대기 제외 약 2배 HH:MM:SS·추정 불가·승인 범위 안내, 4시간 기본값과 보호 유지. 관련 707 passed·7 skipped, 실제 큐 효과 미검증 (#1413 7번)"

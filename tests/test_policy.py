@@ -498,6 +498,14 @@ def test_hpc_thresholds():
     assert core_hours(4, "1-00:00:00") == 96
 
 
+@pytest.mark.parametrize("threshold,expected", [(0, True), (10, False), (9.9, True)])
+def test_estimated_walltime_keeps_core_hour_approval_boundary(threshold, expected):
+    p = _policy()
+    p.approvals.hpc_core_hours_threshold = threshold
+    assert core_hours(2, "05:00:00") == 10
+    assert hpc_needs_approval(2, "05:00:00", p) is expected
+
+
 
 @pytest.mark.parametrize("tool,command", [
     ("Bash", "python analysis.py 2>/dev/null"), ("Bash", "git status >/dev/null 2>&1"),
