@@ -264,11 +264,7 @@ def _codex_sibling_denies(root: Path, workdir: Path, active: list[Path]) -> list
     for entry in root.iterdir():
         if is_link(entry) or not entry.is_dir():
             continue
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.name):
-            for child in entry.iterdir():
-                collect(child)
-        else:
-            collect(entry)
+        collect(entry)
     return [str(p) for p in folders]
 
 

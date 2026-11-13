@@ -609,6 +609,33 @@ def _claude_staff_row(settings: Settings, agents: list[AgentSpec], forced: Engin
     return _row("staff", "claude staff config", "warn", "직원 전용 설정 폴더에 로그인 없음", f"로그인: {login}")
 
 
+def _workspace_sandbox_acl_row(settings: Settings) -> dict | None:
+    """Inspect the root DACL only; never change it or expose its entries."""
+    if os.name != "nt":
+        return None
+    root = settings.path(settings.runner.workspace_root)
+    guard_test_path(root)
+    if not root.exists():
+        return _row("staff", "codex workspace ACL", "skip", "작업 루트가 없어 ACL 확인 생략", "")
+    script = r'''$ErrorActionPreference = 'Stop'
+$sid = (New-Object System.Security.Principal.NTAccount($env:COMPUTERNAME, 'CodexSandboxUsers')).Translate([System.Security.Principal.SecurityIdentifier])
+$acl = Get-Acl -LiteralPath $env:LABHQ_ACL_CHECK_PATH
+$rules = $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])
+$read = [int64]([System.Security.AccessControl.FileSystemRights]::ReadData -bor [System.Security.AccessControl.FileSystemRights]::ReadAttributes -bor [System.Security.AccessControl.FileSystemRights]::ReadExtendedAttributes -bor [System.Security.AccessControl.FileSystemRights]::ReadPermissions)
+if (@($rules | Where-Object { $_.IdentityReference -eq $sid -and $_.AccessControlType -eq 'Deny' -and (([int64]$_.FileSystemRights -band $read) -ne 0) }).Count) { 'DENY' } else { 'CLEAR' }
+'''
+    code, output = _probe(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+                          {**os.environ, "LABHQ_ACL_CHECK_PATH": str(root)})
+    if code != 0 or output not in {"DENY", "CLEAR"}:
+        return _row("staff", "codex workspace ACL", "warn", "작업 루트의 Codex 읽기 거부를 확인하지 못함",
+                    "작업 루트의 ACL을 확인하세요. labhq는 권한을 변경하지 않습니다.")
+    if output == "DENY":
+        return _row("staff", "codex workspace ACL", "warn", "작업 루트에 Codex sandbox 읽기 거부가 남아 있음",
+                    "요청을 중지한 뒤 runner.workspace_root를 새 빈 폴더로 바꾸고 runner를 다시 시작하세요. "
+                    "기존 폴더의 권한은 변경하지 않습니다.")
+    return _row("staff", "codex workspace ACL", "ok", "작업 루트에 Codex sandbox 읽기 거부 없음", "")
+
+
 def _sandbox_homes_row(settings: Settings, agent: AgentSpec, seen: set[Path]) -> list[dict]:
     """The runner account's own Codex home is elevated too (#382). Checked even when the staff preflight failed: a
     stale staff home is exactly what that other home causes."""
@@ -981,6 +1008,8 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
     rows.append(_github_token_row(settings, dry_run))
     rows.extend(_instance_rows(settings))
     rows.extend(_disk_rows(settings))
+    if acl_row := _workspace_sandbox_acl_row(settings):
+        rows.append(acl_row)
     markers = parent_claude_markers(dict(os.environ))
     rows.append(_row("staff", "claude_parent_session_env", "warn" if markers else "ok",
                      f"부모 Claude 세션 마커 {len(markers)}개를 직원 subprocess에서 제거"
