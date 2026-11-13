@@ -14,6 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:21 | [`091bcca`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/091bcca) | **입력 없는 Codex 환경 생성 단계가 가상환경을 만듭니다.**<br>작업 폴더 쓰기를 유지하면서 다른 작업 폴더 읽기는 제한한다 (#1413). |
+| 16:12 | [`baac05a`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/baac05a) | **작업 준비 정리 중 초기 거절 동작을 보존합니다.**<br>runner 초기화 전에 거절하는 경로와 기존 상태 검사 회귀를 복구한다 (#1413). |
+| 15:56 | [`8d535f8`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/8d535f8) | **Windows Codex 작업 준비와 중첩 폴더 보호를 보완합니다.**<br>준비 중인 작업을 등록하고 비활성 중첩 폴더도 읽기 거부에 포함한다 (#1413). |
+| 15:30 | [`5ac759d`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/5ac759d) | **Linux 검사 환경을 Ubuntu 22.04로 고정합니다.**<br>pytest 전체 검사와 Python 버전 구성은 유지하고 시스템 명령 경로가 달라진 환경을 피한다 (#1413). |
+| 15:19 | [`400680d`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/400680d) | **Windows Codex 입력 파일의 쓰기를 다시 제한합니다.**<br>입력 읽기를 유지하면서 policy의 Write와 Edit 거부를 복구한다 (#1413). |
+| 14:55 | [`033b732`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/033b732) | **Windows Codex 직원이 선행 산출을 다시 읽습니다.**<br>다른 작업 폴더 읽기와 입력 쓰기를 제한하면서 자기 작업과 선행 입력을 읽는다 (#1413). |
+| 14:28 | [`9634981`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/9634981) | **Windows 검사 목록과 작업 기록 이름을 바로잡습니다.**<br>선행 산출 제한 검사를 Windows 경계 검사에 등록하고 status 파일에 시간을 넣는다 (#1413). |
+| 14:18 | [`c83960f`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/c83960f) | **Windows Codex의 선행 산출 접근 문제를 확인합니다.**<br>작업 폴더 접근 오류와 보호 범위를 점검한다 (#1413). |
 | 11:25 | [`1599fd2`](https://github.com/ehojune/bioinfo-team-3d/pull/1425/commits/1599fd2) | **계획 검사에도 새 시간 제한 안내를 반영했습니다.**<br>일반·연구 계획과 paper-timing snapshot 네 값을 대조해 갱신했다. schema·OFF/ON 단언·정규화는 유지했으며 관련 회귀 110 passed (#1425) |
 | 11:12 | [`31bd097`](https://github.com/ehojune/bioinfo-team-3d/pull/1425/commits/31bd097) | **시간 제한 안내 변경에 맞춰 검사 기준을 갱신했습니다.**<br>중복 research prompt snapshot과 Windows source digest를 갱신했다. 보호 node·cohort는 그대로이며 관련 회귀 324 passed·6 skipped, profile 회귀 70 passed (#1425) |
 | 11:01 | [`0981928`](https://github.com/ehojune/bioinfo-team-3d/pull/1425/commits/0981928) | **잡 시간 제한을 예상 실행 소요와 근거에 맞춰 정하도록 안내합니다.**<br>도구·계획·직원 prompt에 대기 제외 약 2배 HH:MM:SS·추정 불가·승인 범위 안내, 4시간 기본값과 보호 유지. 관련 707 passed·7 skipped, 실제 큐 효과 미검증 (#1413 7번) |

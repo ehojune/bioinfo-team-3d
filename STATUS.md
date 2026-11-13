@@ -4,6 +4,19 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1413 Windows Codex 선행 산출 복구
+
+- 작업 루트 대신 시작 시점의 다른 작업 폴더를 거부한다. 실행 중인 같은 runner의 Codex 작업 폴더는 제외한다.
+- Windows Codex의 입력은 read-only profile로 보호하고 `outputs`·`.tmp`만 쓴다. 개인·인증·gateway 거부는 유지한다.
+- 입력의 policy Write/Edit 거부를 native read-deny와 분리해 유지한다.
+- 임시 루트의 실제 adapter에서 자기 폴더·staged input 읽기, 기존 형제 읽기 거부, inputs 쓰기 거부를 확인했다. 실행 뒤 보호 deny도 확인했다.
+- 분리 후 실제 adapter에서도 같은 네 조건을 확인했다. 기존 보호 경로 deny는 15/15이고 ACL 전체는 전후 동일하지 않았다.
+- 동시 실행과 새 폴더의 한계는 한영 매뉴얼에 적었다. trial·HPC는 실행하지 않았다. 최종 CI와 리뷰는 PR에서 확인한다.
+- Linux pytest runner를 Ubuntu 22.04로 고정하고 CI 시험의 기대값과 mock을 갱신했다. 기존 22개 실패 항목은 WSL 22.04와 CI 3.10에서 통과했다.
+- 폴더 생성 전에 준비 상태를 등록하고 종료·실패·취소 시 해제한다. 중첩된 비활성 작업 폴더도 deny에 포함한다. mock 회귀만 확인했으며 실제 겹침 실행은 미검증이다.
+- 초기 CI에서 정리 wrapper가 초기화 전 거절 경로와 기존 함수 이름 검사를 깨뜨려 수정했다. 관련 회귀 150 passed, 10 skipped; 최종 CI는 PR에서 확인한다.
+- 입력 없는 환경 생성 단계는 workspace 쓰기를 유지한다. 기존 형제 폴더 deny와 실제 입력이 있는 단계의 read-only 처리는 유지한다. 관련 회귀 126 passed, 10 skipped.
+
 # #1413 7번 — HPC 시간 선택 안내
 
 - `hpc_submit` 설명과 일반·연구·재계획·단계 prompt에 실행 소요·근거·약 2배 `HH:MM:SS` 제한을 안내한다. 대기 시간은 제외하며 추정 불가·기존 승인 범위·사이트/PI 제한 초과도 다룬다.
