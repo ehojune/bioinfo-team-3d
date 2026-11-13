@@ -13,10 +13,48 @@ def _render() -> str:
     return " ".join(STEP_PROMPT.format(request="REQ", step_id="s1", instruction="INSTR").split())
 
 
+@pytest.mark.parametrize("template", [cso.PLAN_PROMPT, cso.RESEARCH_PLAN_PROMPT,
+                                     cso.RESEARCH_CP2_PLAN_PROMPT, cso.REPLAN_PROMPT,
+                                     cso.STEP_PROMPT, cso.RESEARCH_STEP_PROMPT])
+def test_rendered_prompts_carry_runtime_estimates_and_existing_execution_limits(template):
+    from collections import defaultdict
+
+    text = template.format_map(defaultdict(lambda: "fixture"))
+    assert text.count(cso.HPC_WALLTIME_RULE) == 1
+    for rule in ("excluding queue wait", "input size, throughput, tool/core count",
+                 "pass that estimate and its basis to the worker", "actual inputs and resources",
+                 "HH:MM:SS", "about twice", "20 minutes -> 00:40:00", "2 hours 30 minutes -> 05:00:00",
+                 "hpc_submit.reason", "If runtime is unknown", "existing execution approval",
+                 "authorizes no new execution", "zero/unlimited", "never silently clip",
+                 "approval and resubmission protections still apply"):
+        assert rule in text
+
+
+@pytest.mark.asyncio
+async def test_walltime_guidance_reaches_dispatched_plan_and_worker():
+    from tests.test_cso import STEPS, FakeHub, result
+
+    calls = []
+
+    async def dispatch(task):
+        calls.append(task)
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": STEPS})
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.orchestrator.reviewer_agent = None
+    await cso.Orchestrator(hub).run_request("r")
+    assert hub.requests["r"]["status"] == "done"
+    plan_and_steps = [t for t in calls if t.meta["kind"] in {"plan", "step"}]
+    assert {t.meta["kind"] for t in plan_and_steps} == {"plan", "step"}
+    assert all(cso.HPC_WALLTIME_RULE in t.prompt for t in plan_and_steps)
+
+
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #690 adds the SVG text/font/no-capture figure contract to every execution step; #669 adds the install-and-read rule.
+    # #1413 adds HPC runtime guidance; #690 and #669 figure and install/read contracts remain.
     assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
-        "86628071066d3b371bc21d66f583f4163b18305482d3688918cd5f4b798bf9a0")
+        "0d16889dad570a8670acfb67dfdfe9320ceccc03dfc702d28605da5ea2e8b168")
     assert "If an HPC job runs the analysis" in STEP_PROMPT
 
 
@@ -38,9 +76,9 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 
 
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
-    # #690 adds the SVG text/font/no-capture figure contract to the frozen research lane; #669 the install-and-read rule.
+    # #1413 adds HPC runtime guidance; the frozen lane keeps the figure and install/read contracts.
     assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "c6bb88d99f75b5b454145030377a027a9b6518ee5bad0ee791316cb7c5a91e09")
+        "797be69d0ebac6dbf47b5a1d3e5fd14709b95f527c70012a515421eb17f0a903")
     assert "If an HPC job runs the analysis" in cso.RESEARCH_STEP_PROMPT
 
 

@@ -130,6 +130,18 @@ def test_helpers():
     assert "umask 007" in build_script("echo hi", "/w/hpc_out", umask="007")
 
 
+@pytest.mark.parametrize("scheduler", ["sge", "pbs", "slurm"])
+@pytest.mark.parametrize("walltime", ["00:40:00", "05:00:00", "90:00", "1-02:00:00"])
+def test_explicit_walltime_reaches_each_scheduler(scheduler, walltime):
+    backend = Scheduler(HpcSettings(scheduler=scheduler))
+    args = backend.submit_args("/w/j.sh", "estimate", 1, "4G", walltime, None, "/w/o", "/w/e")
+    expected = normalize_walltime(walltime)
+    if scheduler == "slurm":
+        assert f"--time={expected}" in args
+    else:
+        assert any(f"{'h_rt' if scheduler == 'sge' else 'walltime'}={expected}" in arg for arg in args)
+
+
 def test_scheduler_user_resolves_without_user_env(monkeypatch):
     for name in ("USERNAME", "USER", "LOGNAME", "LNAME"):
         monkeypatch.delenv(name, raising=False)

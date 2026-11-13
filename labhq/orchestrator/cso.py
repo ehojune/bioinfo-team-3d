@@ -751,7 +751,19 @@ Rules:
 """
 
 
-PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
+HPC_WALLTIME_RULE = (
+    "HPC walltime: estimate execution time, excluding queue wait, from input size, throughput, tool/core count "
+    "or a comparable measured run. In each HPC step's instruction, pass that estimate and its basis to the worker; "
+    "before submission, update it for the actual inputs and resources. Set walltime explicitly in HH:MM:SS to "
+    "about twice the estimate (20 minutes -> 00:40:00; 2 hours 30 minutes -> 05:00:00), and record the estimate, "
+    "basis and any different margin in hpc_submit.reason. The 04:00:00 default is compatibility fallback, not an "
+    "estimate. If runtime is unknown, say so and obtain the missing input/resource information or a small "
+    "measurement within existing execution approval; this rule authorizes no new execution. Do not invent an "
+    "estimate or use a large default or zero/unlimited as one. If the proposed limit exceeds a site or PI limit, "
+    "propose splitting the work or ask for a decision; never silently clip it. Existing approval and resubmission "
+    "protections still apply.")
+
+PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + HPC_WALLTIME_RULE + "\n\n" + """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
 {roster}
@@ -806,7 +818,7 @@ CLAIM_IDS_PLAN_RULE = ("A step's result can state only the claims in that step's
                        "the request asks for hypotheses, mechanisms or a grade-by-grade summary as findings, declare a "
                        "claim_id for each of them in the step that produces it.")
 
-RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
+RESEARCH_PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + HPC_WALLTIME_RULE + "\n\n" + recruit_planning.PLAN_RULE + "\n\n" + paper_skills.PLAN_RULE + "\n\n" + """Create a frozen research contract for the PI's request. Do not execute or analyze.
 
 Team roster (use these agent ids exactly, never an orchestration role):
 {roster}
@@ -959,7 +971,7 @@ earlier environment step's lock covers exactly what you used; packages you insta
 If an HPC job runs the analysis, put the same version and package-list commands inside its job script so the compute
 environment, not only the runner login environment, writes the record under outputs/env/.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions.
-""" + FIGURE_OUTPUT_RULE
+""" + FIGURE_OUTPUT_RULE + "\n\n" + HPC_WALLTIME_RULE
 
 STEP_PROMPT = RESEARCH_STEP_PROMPT + """
 
@@ -1119,7 +1131,7 @@ Request: {request}
 Team results:
 {results}"""
 
-REPLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + """Re-plan only the unfinished part of the PI's request. You do not analyze anything yourself.
+REPLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + HPC_WALLTIME_RULE + "\n\n" + """Re-plan only the unfinished part of the PI's request. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
 {roster}

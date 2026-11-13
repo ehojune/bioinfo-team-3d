@@ -81,6 +81,30 @@ def _mcp(monkeypatch, tmp_path, scheduler, *, threshold, broker_reply=None):
 
 # ---------- 1. directives the core-hour estimate cannot see ----------
 
+@pytest.mark.parametrize("walltime", [None, "00:40:00", "05:00:00"])
+async def test_walltime_guidance_preserves_default_and_explicit_submission(monkeypatch, tmp_path, walltime):
+    hpc, run, seen = _mcp(monkeypatch, tmp_path, "slurm", threshold=100)
+    reason = "fixture: 20 minutes from a comparable input; 2x margin"
+    kwargs = {} if walltime is None else {"walltime": walltime}
+    reply = json.loads(await hpc.hpc_submit("sleep 1", "estimate", reason=reason, **kwargs))
+    assert reply["submitted"] and len(run.calls) == 1
+    assert [path for path, _ in seen] == ["/jobs/submit"]
+    assert seen[0][1]["walltime"] == (walltime or "04:00:00")
+    assert seen[0][1]["reason"] == reason
+    assert f"--time={walltime or '04:00:00'}" in run.calls[0]
+
+
+async def test_mcp_tool_description_exposes_walltime_guidance():
+    import labhq.tools.hpc_mcp as hpc
+
+    tool = next(t for t in await hpc.server.list_tools() if t.name == "hpc_submit")
+    schema = getattr(tool, "input_schema", None) or tool.inputSchema  # mcp>=2 rename
+    assert schema["properties"]["walltime"]["default"] == "04:00:00"
+    for rule in ("HH:MM:SS", "about twice", "excluding queue wait", "estimated runtime and its basis",
+                 "If runtime is unknown", "existing execution approval", "never silently clip"):
+        assert rule in tool.description
+
+
 @pytest.mark.parametrize("scheduler,directive", [
     ("slurm", "#SBATCH --array=1-1000"), ("slurm", "#SBATCH --exclusive"), ("slurm", "#SBATCH --gres=gpu:8"),
     ("slurm", "#PBS -l nodes=10:ppn=32"),  # sbatch also reads #PBS lines unless --ignore-pbs
