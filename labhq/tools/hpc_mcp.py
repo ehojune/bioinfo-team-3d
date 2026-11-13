@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import stat
 import time
 from contextlib import ExitStack
@@ -272,6 +273,71 @@ def _prepare_job_files(workdir: Path, script_path: Path, logs: Path, body: str,
 SHELL_SUFFIXES = {".sh", ".bash"}
 
 
+def nested_output_write(script: str) -> bool:
+    """Best-effort check of simple literal shell destinations, not a shell interpreter."""
+    def nested(word: str) -> bool:
+        if len(word) >= 2 and word[0] == word[-1] and word[0] in "'\"":
+            word = word[1:-1]
+        if any(c in word for c in "$`*?[]{}\\"):
+            return False
+        while word.startswith("./"):
+            word = word[2:]
+        if any(part in {".", ".."} for part in word.split("/")):
+            return False
+        return word == "outputs" or word.startswith("outputs/")
+
+    known_cwd = True
+    for line in script.splitlines():
+        if "<<" in line:
+            return False  # Here-document contents are not shell commands.
+        if "$(" in line or "`" in line:
+            known_cwd = False
+            continue
+        lexer = shlex.shlex(line, posix=False, punctuation_chars="|&;<>")
+        lexer.whitespace_split = True
+        lexer.commenters = "#"
+        try:
+            words = list(lexer)
+        except ValueError:
+            continue
+        commands = []
+        current = []
+        for word in words + [";"]:
+            if word in {";", "&&", "||", "|", "&"}:
+                commands.append(current)
+                current = []
+            else:
+                current.append(word)
+        for cmd in commands:
+            if not cmd:
+                continue
+            if not known_cwd:
+                continue
+            if any(word in {">", ">>", "&>"} and i + 1 < len(cmd) and nested(cmd[i + 1])
+                   for i, word in enumerate(cmd)):
+                return True
+            name = cmd[0]
+            # Unknown options can consume an input argument or change which operands are destinations.
+            # Do not infer writes from them (for example, cp -t DIR SOURCE or touch -r REFERENCE FILE).
+            simple_flags = {"cp": "aRfnipruvT", "mv": "finuvT", "install": "CDpsvT",
+                            "mkdir": "pv", "touch": "acm", "tee": "ai"}
+            options = [word for word in cmd[1:] if word.startswith("-") and word != "--"]
+            simple = name in simple_flags and all(word.startswith("-") and not word.startswith("--") and
+                         all(char in simple_flags[name] for char in word[1:]) for word in options)
+            args = [word for word in cmd[1:] if not word.startswith("-")]
+            if name == "cd" and args and nested(args[0]):
+                return True
+            if name in {"cd", "pushd", "popd"}:
+                if name != "cd" or args != ["."]:
+                    known_cwd = False
+                continue
+            if simple and name in {"cp", "mv", "install"} and len(args) >= 2 and nested(args[-1]):
+                return True
+            if simple and name in {"mkdir", "touch", "tee"} and any(nested(arg) for arg in args):
+                return True
+    return False
+
+
 def crlf_shell_inputs(workdir: Path, inputs: list[str]) -> list[str]:
     """The shell scripts among ``inputs`` that have CRLF line endings (#1331). A script written on Windows with
     PowerShell or a CRLF editor runs on the cluster's bash as `cmd\r`, which fails with a confusing error long after the
@@ -316,6 +382,9 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     mode = os.environ.get("LABHQ_EXECUTION_MODE", "")
     if mode == "local":
         raise tool_failure("this request selected local execution; HPC submission is disabled")
+    if mode == "hpc" and nested_output_write(script):
+        raise tool_failure("The job already starts in outputs/. Remove the leading outputs/ from the literal "
+                           "write destination or cd target and submit again.")
     if S.hpc.scheduler == "slurm" and (option := slurm_cluster_directive(script)):
         raise tool_failure(f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
                            "remove -M/--clusters and submit again")

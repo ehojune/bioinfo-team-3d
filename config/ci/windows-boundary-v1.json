@@ -162,6 +162,7 @@
     "tests/test_hpc_followups.py",
     "tests/test_hpc_job_script_lf_1331.py",
     "tests/test_hpc_login_budget_1295.py",
+    "tests/test_hpc_nested_1413.py",
     "tests/test_hpc_remote_data.py",
     "tests/test_hpc_session_1299.py",
     "tests/test_hpc_session_wiring_1295.py",
