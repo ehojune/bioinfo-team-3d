@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1423 Windows Codex 설치 선택과 sandbox 기록
+
+- Windows 앱 자동 선택은 CLI와 helper 두 개가 함께 있는 폴더만 사용하고, 선택한 폴더를 직원 프로세스 PATH에 추가합니다.
+- doctor는 설치 식별값이 일치하는 과거 셸 성공만 표시하고, 이후 setup 실패나 옛 기록은 경고합니다.
+- 관련 네 test 파일: 248 passed, 1 skipped. Windows subprocess reader의 UTF-8 decode 경고가 있었습니다.
+- 리뷰 후 npm launcher 파일도 식별하고 runner 사이 기록 잠금을 추가했습니다. 관련 test 파일 재실행: 50 passed.
+- 실제 직원 셸·UAC·운영 보호는 이 배정에서 실행하지 않았습니다.
+
 # #1421 환경 폴더 입력 기록 (claude-worker2, 11-13)
 
 **결론**: 단계에 열린 Python·conda 환경을 입력 기록에 폴더 한 행으로 적습니다. 그래서 manifest가 1 MiB 인계 한도를 넘지 않습니다. 한도는 그대로입니다.

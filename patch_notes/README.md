@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:43 | [`42b0757`](https://github.com/ehojune/bioinfo-team-3d/pull/1424/commits/42b0757) | **실행기 파일이 바뀌거나 여러 runner가 기록을 갱신할 때 과거 성공이 잘못 표시될 가능성을 줄였습니다.**<br>npm launcher 변경도 설치 식별에 반영하고 runner 프로세스 사이 sandbox 기록 잠금을 추가합니다. |
+| 10:35 | [`914c041`](https://github.com/ehojune/bioinfo-team-3d/pull/1424/commits/914c041) | **Windows 직원 실행에서 준비 도구가 빠진 설치를 피하고 오래된 성공 기록의 오판을 줄였습니다.**<br>Windows Codex 앱의 완전한 설치 묶음을 선택하고 sandbox 성공 기록을 설치와 후속 실패에 맞춰 판정합니다. |
 | 01:05 | [`43198ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1422/commits/43198ba) | manual 08 한영 INPUTS.tsv 행에 환경 폴더 한 행(environment), 보호 경로 안 환경, 입력 폴더 안쪽 환경은 아직 파일별 (#1421, PR #1422 리뷰 P1) |
 | 01:02 | [`1e4fd62`](https://github.com/ehojune/bioinfo-team-3d/pull/1422/commits/1e4fd62) | restricted·private 판정을 환경 분류보다 먼저 해 보호 경로 안 환경은 이름 없는 보호 행으로, 시험 1건 (#1421, PR #1422 리뷰 P1) |
 | 00:47 | [`ff46bd6`](https://github.com/ehojune/bioinfo-team-3d/pull/1422/commits/ff46bd6) | **앞 단계가 만든 Python 환경으로 분석하는 단계가 다음 단계로 결과를 넘기지 못하던 문제를 고쳤습니다. 단계에 열린 가상환경·conda 환경은 입력 기록에 폴더 한 줄로 적고, 인계가 거절되면 어느 기록이 얼마나 커서인지 알려 줍니다.**<br>daemon이 runner 검증 .venv grant와 pyvenv.cfg·conda-meta/ 표식 폴더를 input_files에 skipped=environment 한 행으로, step_inputs.environment_folder, _json 거절 문구에 파일명·크기, 1 MiB 한도 유지, 시험 3건 (#1421) |
