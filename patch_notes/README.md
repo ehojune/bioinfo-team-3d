@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:27 | [`31dd2f7`](https://github.com/ehojune/bioinfo-team-3d/pull/1429/commits/31dd2f7) | **HPC 잡이 결과를 중첩 폴더에 잘못 쓴 경우 수정 기회를 줍니다.**<br>전체 HPC 잡의 리터럴 중첩 쓰기 보조 검사와 검증된 누락 산출의 동일 직원 1회 수정을 추가한다 (#1413). |
 | 00:12 | [`820655f`](https://github.com/ehojune/bioinfo-team-3d/commit/820655f) | **Windows 설치 테스트에서 ACL 검사를 격리합니다.**<br>init 테스트의 CLI 차단을 유지하면서 ACL 진단만 대체한다 (#1413). |
 
 ## 2026-11-13
