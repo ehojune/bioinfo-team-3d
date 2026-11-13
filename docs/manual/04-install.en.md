@@ -18,7 +18,7 @@ Prerequisites: Python ≥ 3.10, Git, and the staff CLIs you configure installed 
 
 On POSIX use `./labhq.sh init` and `./labhq.sh -c config/labhq.yaml doctor`.
 
-On Windows, a Codex step with ancestor artifacts denies reads from other work folders present at startup. Concurrent Codex work folders and folders created later are excluded from this protection. When Codex staff runs overlap, sibling-folder read denial is not guaranteed to last throughout the run (#1413).
+On Windows, a Codex step with ancestor artifacts denies reads from other work folders present at startup. Codex work folders being prepared or run by the same runner, and folders created later, are excluded from this protection. When Codex staff runs overlap, sibling-folder read denial is not guaranteed to last throughout the run (#1413).
 
 `labhq init` copies the example config, generates a random gateway token, and asks for the HPC and bioinfo-agent paths.
 New configs enable `research.enabled`, `research.evidence_checkpoint`, the `bulk_tumor_normal@3` and `single_cell_de@3` packs, and `plan.declare_output_types: true` (#613). Paper2Agent hiring defaults to off (`recruit.enabled: false`, #1336). Live semantic devices, actions, A/B and new device reports have been removed; legacy `semantics` and `research.semantic_report` keys are accepted without execution. Vocabulary, EDAM and input-fit checks remain. `REFERENCE_BEHAVIOUR` in `labhq/init_defaults.py` defines these defaults, checked against the example config and `init` by `tests/test_init_defaults.py`. Personal tokens, paths and names are excluded. `pipeline_pr` consent, `dev_log.repo` and `BIOINFO_AGENT_DIR` are requested or discovered. Existing configs are not migrated automatically.

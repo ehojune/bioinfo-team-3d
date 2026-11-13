@@ -1,4 +1,6 @@
 """Windows Codex work-folder protection, with mock adapters."""
+import asyncio
+from pathlib import Path
 import pytest
 
 from labhq.models import Engine, Task
@@ -18,6 +20,61 @@ def test_snapshot_excludes_own_and_active_codex_folders(tmp_path):
     for folder in (own, active, sibling, older):
         folder.mkdir(parents=True)
     assert set(_codex_sibling_denies(tmp_path, own, [active])) == {str(sibling), str(older)}
+
+
+def test_nested_workspaces_keep_inactive_siblings_denied(tmp_path):
+    own = tmp_path / 'hpc' / 'r1' / 'steps' / 's1'
+    active = tmp_path / 'hpc' / 'r1' / 'steps' / 's2'
+    inactive = tmp_path / 'hpc' / 'r1' / 'steps' / 's3'
+    other = tmp_path / 'hpc' / 'r2' / 'steps' / 's1'
+    for folder in (own, active, inactive, other):
+        folder.mkdir(parents=True)
+    denies = [Path(p) for p in _codex_sibling_denies(tmp_path, own, [active])]
+    assert all(not any(folder == p or folder.is_relative_to(p) for p in denies) for folder in (own, active))
+    assert all(any(folder == p or folder.is_relative_to(p) for p in denies) for folder in (inactive, other))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('outcome', ['success', 'failure', 'cancel'])
+async def test_preparing_folder_registered_before_creation_and_cleaned(tmp_path, monkeypatch, outcome):
+    monkeypatch.setattr(daemon, 'sys', RuntimeProxy(daemon.sys, platform='win32'))
+    settings = _runner_settings(tmp_path, None)
+    settings.recruit.enabled = True
+    runner, _ = _capture_runner(settings, monkeypatch, Engine.codex)
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = daemon._settled_thread
+
+    async def paused(fn, *args, **kwargs):
+        if fn is TaskWorkspace:
+            entered.set()
+            await release.wait()
+            if outcome == 'failure':
+                raise RuntimeError('fixture failure')
+        return await original(fn, *args, **kwargs)
+
+    monkeypatch.setattr(daemon, '_settled_thread', paused)
+    task = asyncio.create_task(runner.run_task(Task(id='one', agent_id='worker', request_id='r', prompt='q',
+                                                   meta={'kind': 'step', 'upstream_artifacts': {}})))
+    await asyncio.wait_for(entered.wait(), 10)
+    preparing = list(runner._preparing_codex_workdirs.values())
+    assert len(preparing) == 1 and not preparing[0].exists()
+    preparing[0].mkdir(parents=True)
+    sibling = preparing[0].parent / 'sibling'
+    sibling.mkdir()
+    assert str(preparing[0]) not in _codex_sibling_denies(runner.ws_root, sibling, preparing)
+    if outcome == 'cancel':
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    elif outcome == 'failure':
+        release.set()
+        with pytest.raises(RuntimeError, match='fixture failure'):
+            await task
+    else:
+        release.set()
+        result = await task
+        assert result.ok, result.error
+    assert not runner._preparing_codex_workdirs
 
 
 @pytest.mark.asyncio

@@ -600,7 +600,7 @@ def test_workflow_preserves_all_required_gates_and_pins_checkout():
     workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / cs.WORKFLOW).read_text(encoding="utf-8"))
     jobs = workflow["jobs"]
     assert jobs["pytest"]["strategy"]["matrix"]["python-version"] == ["3.10", "3.12"]
-    assert jobs["pytest"]["runs-on"] == "ubuntu-latest"
+    assert jobs["pytest"]["runs-on"] == "ubuntu-22.04"
     assert jobs["pytest-windows"]["runs-on"] == jobs["clean-install"]["runs-on"] == "windows-latest"
     windows = jobs["pytest-windows"]["steps"]
     assert any(s.get("with", {}).get("python-version") == "3.12" for s in windows)

@@ -237,15 +237,26 @@ def _codex_sibling_denies(root: Path, workdir: Path, active: list[Path]) -> list
 
     protected = [p.resolve() for p in [workdir, *active]]
     folders = []
+    def collect(path: Path) -> None:
+        if is_link(path) or not path.is_dir():
+            return
+        resolved = path.resolve()
+        if any(resolved == q or resolved.is_relative_to(q) for q in protected):
+            return
+        if any(q.is_relative_to(resolved) for q in protected):
+            for child in path.iterdir():
+                collect(child)
+        else:
+            folders.append(path)
     for entry in root.iterdir():
         if is_link(entry) or not entry.is_dir():
             continue
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.name):
-            folders.extend(p for p in entry.iterdir() if not is_link(p) and p.is_dir())
+            for child in entry.iterdir():
+                collect(child)
         else:
-            folders.append(entry)
-    return [str(p) for p in folders
-            if not any(q == p.resolve() or q.is_relative_to(p.resolve()) for q in protected)]
+            collect(entry)
+    return [str(p) for p in folders]
 
 
 def _can_list(path: str) -> bool:
@@ -425,6 +436,7 @@ class Runner:
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
         self.tool_contexts: dict[str, Any] = {}
+        self._preparing_codex_workdirs: dict[asyncio.Task, Path] = {}
         self.submitting: dict[str, set[asyncio.Future]] = {}  # submit commands running, by task (#214 review)
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
@@ -2239,6 +2251,12 @@ class Runner:
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
+        try:
+            return await self._run_task_with_preparing(task, workdir_override, paper_skill_build=paper_skill_build)
+        finally:
+            self._preparing_codex_workdirs.pop(asyncio.current_task(), None)
+
+    async def _run_task_with_preparing(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
         if getattr(self, "process_boundary", None) is not None:
             refusal = await self._refuse_process_boundary(task)
             if refusal is not None:
@@ -2307,6 +2325,9 @@ class Runner:
                 Event(type="task.result", data={**result.model_dump(mode="json"),
                                                 "control": self.controls.finish(task.id)}, **base)])
             return result
+        if sys.platform == "win32" and agent.engine == Engine.codex:
+            # Register on the event loop before any thread can create the workspace.
+            self._preparing_codex_workdirs[asyncio.current_task()] = workspace_dir
         reused = await asyncio.to_thread(os.path.lexists, workspace_dir)  # file system work stays off the loop (#606)
         if whole_hpc:
             await asyncio.to_thread(self.ws_root.mkdir, parents=True, exist_ok=True)
@@ -2716,7 +2737,7 @@ class Runner:
                 # Include both spellings for junctioned workspaces (#946).
                 input_denies = [str(ws.dir / "inputs"), os.path.realpath(ws.dir / "inputs")]
                 if sys.platform == "win32" and agent.engine == Engine.codex:
-                    active = [ctx.workdir for ctx in self.tool_contexts.values() if ctx.agent.engine == Engine.codex]
+                    active = list(self._preparing_codex_workdirs.values())
                     task_denies = _codex_sibling_denies(root, ws.dir, active)
                     # Keep input denies in the policy gate, but not native read-deny ACLs:
                     # Windows ACLs override nested read grants. The read-only profile below

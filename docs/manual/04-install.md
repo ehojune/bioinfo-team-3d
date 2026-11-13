@@ -20,7 +20,7 @@ PowerShell:
 
 POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 씁니다.
 
-Windows Codex의 선행 산출 단계는 시작 시 존재하는 다른 작업 폴더를 읽지 못하게 막습니다. 동시에 실행 중인 Codex 작업 폴더와 실행 중 새로 생긴 폴더는 이 보호에서 제외됩니다. 여러 Codex 직원이 겹쳐 실행되면 형제 폴더 읽기 거부가 실행 내내 유지된다고 보장하지 않습니다 (#1413).
+Windows Codex의 선행 산출 단계는 시작 시 존재하는 다른 작업 폴더를 읽지 못하게 막습니다. 같은 runner에서 준비하거나 실행 중인 Codex 작업 폴더와 이후 새로 생긴 폴더는 이 보호에서 제외됩니다. 여러 Codex 직원이 겹쳐 실행되면 형제 폴더 읽기 거부가 실행 내내 유지된다고 보장하지 않습니다 (#1413).
 
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
 새 설정은 `research.enabled`·`research.evidence_checkpoint`, 분야 팩 `bulk_tumor_normal@3`·`single_cell_de@3`, `plan.declare_output_types: true`로 시작합니다(#613). Paper2Agent 채용은 기본 off입니다(`recruit.enabled: false`, #1336). live 의미 장치·액션·A/B와 새 장치 보고서는 제거했으며, 옛 `semantics`·`research.semantic_report` 키는 읽어도 실행하지 않습니다. 어휘·EDAM·input-fit 검사는 유지합니다. 기본값은 `labhq/init_defaults.py`의 `REFERENCE_BEHAVIOUR`이고 `tests/test_init_defaults.py`가 예시 설정·`init` 결과와 대조합니다. 개인 토큰·경로·이름은 포함하지 않습니다. `pipeline_pr` 동의, `dev_log.repo`, `BIOINFO_AGENT_DIR`은 묻거나 찾습니다. 기존 설정은 자동으로 옮기지 않습니다.
