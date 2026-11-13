@@ -641,8 +641,8 @@ def _sandbox_version_rows(settings: Settings, agent: AgentSpec, codex_now: dict,
         if dry_run:
             rows.append(_row("staff", "codex sandbox version", "skip", "probe skipped: dry-run", ""))
             continue
-        status, detail = codex_sandbox.check(home, codex_now["version"])
         command = codex_now["command"]
+        status, detail = codex_sandbox.check(home, codex_now["version"], command)
         rows.append(_row("staff", "codex sandbox version", status, detail,
                          codex_sandbox.setup_hint(home, command, env)))
     return rows
@@ -1097,7 +1097,7 @@ def collect(settings: Settings, *, requested_config: str | None = None, network:
                              command=resolved)
             choice = codex_app_choice(env) if spec.bin.strip().lower() in ("", "auto") else None
             if choice and choice["path"] == resolved[0]:
-                detail += (f"; auto: 앱 폴더 {choice['folder']} 선택 (codex.exe 있는 폴더 {choice['candidates']}개 중 " +
+                detail += (f"; auto: 앱 폴더 {choice['folder']} 선택 (helper가 있는 폴더 {choice['candidates']}개 중 " +
                            ("판본이 가장 높은 폴더)" if choice["by"] == "version" else "판본 비교 불가, 가장 최근 폴더)"))
         minimum_row = _minimum_version_row(name, code, raw, dry_run=dry_run)
         status = "skip" if dry_run else "ok" if code == 0 else "warn"

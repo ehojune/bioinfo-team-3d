@@ -522,6 +522,8 @@ def _app(tmp_path, monkeypatch):
         directory.mkdir(parents=True)
         exe = directory / "codex.exe"
         exe.touch()
+        for helper in base.CODEX_WINDOWS_HELPERS:
+            (directory / helper).touch()
         os.utime(exe, (exe_mtime, exe_mtime))
         os.utime(directory, (directory_mtime, directory_mtime))
     incomplete = root / "incomplete"

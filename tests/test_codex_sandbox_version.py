@@ -63,6 +63,7 @@ async def test_version_recorded_once_after_successful_elevated_run(tmp_path, mon
     events = []
     ctx = _ctx(tmp_path, settings, events)
     ctx.started_command, ctx.commands_ran = [settings.engines.codex.bin], True
+    ctx.started_command_identity = codex_sandbox.command_identity(ctx.started_command)
     env = get_adapter(Engine.codex, settings).staff_env(ctx)
     watch = codex_sandbox.SandboxWatch()
     ok = TaskResult(task_id=ctx.task.id, agent_id="engineer", ok=True)
@@ -114,7 +115,7 @@ async def test_repeated_setup_error_alerts_the_pi_once_with_the_command(tmp_path
     command = notices[0]["detail"]["command"]
     assert 'windows.sandbox="elevated"' in command and "-s workspace-write" in command
     assert "$env:CODEX_HOME" in command and "$env:TEMP" in command and "Test-Path" in command
-    assert not (home / codex_sandbox.OK_FILE).exists()
+    assert codex_sandbox.read_ok(home)["state"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -141,6 +142,9 @@ def _doctor_settings(tmp_path, monkeypatch, version):
                                         "gateway": {"state_dir": str(tmp_path / "gateway")},
                                         "hpc": {"scheduler": "none"}})
     home = _home(tmp_path)
+    exe = tmp_path / "doctor-codex.exe"
+    exe.touch()
+    settings.engines.codex.bin = str(exe)
     settings.engines.codex.env = {"CODEX_HOME": str(home)}
     monkeypatch.setattr(doctor.shutil, "which", lambda *a, **kw: "available")
     monkeypatch.setattr(doctor, "_resolve_command", lambda cmd, env, engine: cmd)
@@ -154,7 +158,8 @@ def _sandbox_row(settings):
 
 def test_doctor_ok_when_recorded_version_matches(tmp_path, monkeypatch, windows):
     settings, home = _doctor_settings(tmp_path, monkeypatch, "0.159.0")
-    codex_sandbox.record_ok(home, "0.159.0", "codex.exe")
+    cmd = [settings.engines.codex.bin]
+    codex_sandbox.record_ok(home, "0.159.0", "codex.exe", codex_sandbox.command_identity(cmd))
     row = _sandbox_row(settings)
     assert row["status"] == "ok" and "0.159.0" in row["detail"]
 
@@ -183,6 +188,7 @@ def test_hint_shows_app_path_generically(tmp_path):
     exe = local / "OpenAI" / "Codex" / "bin" / "abc123" / "codex.exe"
     hint = codex_sandbox.setup_hint(tmp_path / "home", str(exe), {"LOCALAPPDATA": str(local)})
     assert '& "$env:LOCALAPPDATA/OpenAI/Codex/bin/abc123/codex.exe" exec' in hint
+    assert '$env:PATH = "$env:LOCALAPPDATA/OpenAI/Codex/bin/abc123;$env:PATH"' in hint
     assert str(tmp_path) not in hint
 
 
@@ -194,6 +200,8 @@ def _app_folders(tmp_path, monkeypatch, versions):
         directory.mkdir(parents=True)
         if version is not False:
             (directory / "codex.exe").touch()
+            for name in base.CODEX_WINDOWS_HELPERS:
+                (directory / name).touch()
         os.utime(directory, (mtime, mtime))
     monkeypatch.setattr(base, "_app_version", lambda exe: versions[exe.parent.name][1])
     return root, {"LOCALAPPDATA": str(tmp_path / "Local")}
@@ -224,6 +232,59 @@ def test_auto_bin_with_only_empty_folders_uses_path(tmp_path, monkeypatch):
     _, env = _app_folders(tmp_path, monkeypatch, {"gone": (900, False)})
     monkeypatch.setattr(base.shutil, "which", lambda name, **_: None)
     assert base._resolve_command(["auto"], env, "codex")[0] == "codex"
+
+
+def test_auto_skips_incomplete_newer_app_and_refuses_it_on_path(tmp_path, monkeypatch):
+    root, env = _app_folders(tmp_path, monkeypatch, {
+        "complete": (100, "codex-cli 0.159.0"), "incomplete": (200, "codex-cli 0.160.0")})
+    (root / "incomplete" / base.CODEX_WINDOWS_HELPERS[0]).unlink()
+    assert base._resolve_command(["auto"], env, "codex")[0] == str(root / "complete" / "codex.exe")
+    assert base.codex_app_choice(env)["candidates"] == 1
+    monkeypatch.setattr(base.shutil, "which", lambda name, **_: str(root / "incomplete" / "codex.exe"))
+    with pytest.raises(ValueError, match="incomplete"):
+        base._resolve_command([str(root / "incomplete" / "codex.exe")], env, "codex")
+
+
+def test_helper_path_is_child_only_and_uses_selected_bundle(tmp_path, monkeypatch):
+    root, env = _app_folders(tmp_path, monkeypatch, {"selected": (100, "codex-cli 0.159.0")})
+    env["PATH"] = "original-path"
+    child = base.codex_helper_env(env, [str(root / "selected" / "codex.exe")])
+    assert child["PATH"] == str(root / "selected") + os.pathsep + "original-path"
+    assert env["PATH"] == "original-path"
+
+
+def test_same_version_different_install_and_legacy_record_warn(tmp_path, monkeypatch, windows):
+    settings, home = _doctor_settings(tmp_path, monkeypatch, "0.159.0")
+    first = [settings.engines.codex.bin]
+    codex_sandbox.record_ok(home, "0.159.0", "codex.exe", codex_sandbox.command_identity(first))
+    second = tmp_path / "other" / "codex.exe"
+    second.parent.mkdir()
+    second.touch()
+    settings.engines.codex.bin = str(second)
+    assert _sandbox_row(settings)["status"] == "warn"
+    codex_sandbox.record_ok(home, "0.159.0", "codex.exe")
+    assert _sandbox_row(settings)["status"] == "warn"
+
+
+@pytest.mark.asyncio
+async def test_setup_failure_invalidates_previous_success(tmp_path, monkeypatch, windows):
+    settings, home = _doctor_settings(tmp_path, monkeypatch, "0.159.0")
+    command = [settings.engines.codex.bin]
+    codex_sandbox.record_ok(home, "0.159.0", "codex.exe", codex_sandbox.command_identity(command))
+    assert _sandbox_row(settings)["status"] == "ok"
+    ctx = _ctx(tmp_path, settings, [])
+    env = get_adapter(Engine.codex, settings).staff_env(ctx)
+    failed = TaskResult(task_id=ctx.task.id, agent_id="engineer", ok=False, error_kind="sandbox_setup_required")
+    await codex_sandbox.SandboxWatch().after_run(settings, ctx, env, failed, ctx.emit)
+    row = _sandbox_row(settings)
+    assert row["status"] == "warn" and "실패" in row["detail"]
+    ctx.started_command, ctx.commands_ran = command, True
+    ctx.started_command_identity = codex_sandbox.command_identity(command)
+    ctx.started_at = codex_sandbox.read_ok(home)["failed_at"] - 1
+    monkeypatch.setattr(codex_sandbox, "_probe", lambda argv, env: (0, "codex-cli 0.159.0"))
+    ok = TaskResult(task_id=ctx.task.id, agent_id="engineer", ok=True)
+    await codex_sandbox.SandboxWatch().after_run(settings, ctx, env, ok, ctx.emit)
+    assert _sandbox_row(settings)["status"] == "warn"  # older in-flight run cannot erase the failure
 
 
 def test_version_order():
@@ -268,6 +329,8 @@ async def test_runner_records_and_alerts_through_its_task_results(tmp_path, monk
             result = outcomes.pop(0)
             if result.ok:  # what run() reports when the sandbox started a command
                 ctx.started_command, ctx.commands_ran = [settings.engines.codex.bin], True
+                ctx.started_command_identity = codex_sandbox.command_identity(ctx.started_command)
+                ctx.started_at = time.time()
             return result.model_copy(update={"task_id": ctx.task.id})
 
         def staff_env(self, ctx):
@@ -302,6 +365,7 @@ async def test_record_names_the_build_that_ran_not_a_fresh_resolution(tmp_path, 
     monkeypatch.setattr(codex_sandbox, "_probe", lambda argv, env: (0, builds[argv[0]]))
     ctx = _ctx(tmp_path, settings, [])
     ctx.started_command, ctx.commands_ran = [str(old)], True
+    ctx.started_command_identity = codex_sandbox.command_identity(ctx.started_command)
     env = get_adapter(Engine.codex, settings).staff_env(ctx)
     ok = TaskResult(task_id=ctx.task.id, agent_id="engineer", ok=True)
     await codex_sandbox.SandboxWatch().after_run(settings, ctx, env, ok, ctx.emit)
@@ -351,6 +415,24 @@ async def test_adapter_run_reports_its_launcher_and_whether_a_command_ran(tmp_pa
     assert result.ok
     assert ctx.started_command == [sys.executable, str(script)]
     assert ctx.commands_ran is command_ran
+
+
+@pytest.mark.asyncio
+async def test_adapter_passes_helper_environment_to_child(tmp_path, monkeypatch):
+    script = tmp_path / "fake_codex.py"
+    script.write_text('import json, os\nprint(json.dumps({"type": "item.completed", "item": '
+                      '{"type": "agent_message", "text": os.environ.get("LABHQ_TEST_HELPER_ENV", "missing")}}))\n'
+                      'print(json.dumps({"type": "turn.completed", "usage": {}}))\n', encoding="utf-8")
+    settings = Settings()
+    settings.engines.codex.bin = sys.executable
+    settings.engines.codex.prefix_args = [str(script)]
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    settings.engines.codex.env = {"CODEX_HOME": str(home)}
+    monkeypatch.setattr(base, "codex_helper_env", lambda env, launcher: {**env, "LABHQ_TEST_HELPER_ENV": "applied"})
+    ctx = _ctx(tmp_path, settings, [])
+    result = await get_adapter(Engine.codex, settings).run(ctx)
+    assert result.ok and result.text == "applied"
 
 
 async def _command_failure(tmp_path, output):

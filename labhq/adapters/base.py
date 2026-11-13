@@ -266,6 +266,32 @@ def _is_windows() -> bool:
 
 _VERSION_TEXT = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z]+(?:\.[0-9A-Za-z]+)*))?")
 _APP_VERSIONS: dict[tuple[str, int, int], str | None] = {}
+CODEX_WINDOWS_HELPERS = ("codex-windows-sandbox-setup.exe", "codex-command-runner.exe")
+
+
+def _complete_codex_app(executable: Path) -> bool:
+    return executable.is_file() and all((executable.parent / name).is_file() for name in CODEX_WINDOWS_HELPERS)
+
+
+def _is_codex_app(executable: Path, env: dict[str, str]) -> bool:
+    local = env.get("LOCALAPPDATA")
+    if not local or executable.name.lower() != "codex.exe":
+        return False
+    try:
+        executable.resolve().relative_to((Path(local) / "OpenAI" / "Codex" / "bin").resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def codex_helper_env(env: dict[str, str], launcher: list[str]) -> dict[str, str]:
+    """Give this child only the helper directory belonging to its selected native executable."""
+    if _is_windows() and launcher and Path(launcher[0]).name.lower() == "codex.exe":
+        exe = Path(launcher[0])
+        if _complete_codex_app(exe):
+            env = dict(env)
+            env["PATH"] = str(exe.parent) + os.pathsep + env.get("PATH", "")
+    return env
 
 
 def version_key(text: str | None) -> tuple | None:
@@ -298,9 +324,8 @@ def _app_version(executable: Path) -> str | None:
 
 
 def codex_app_choice(env: dict[str, str]) -> dict | None:
-    """The Codex app folder `bin: auto` runs (#328). Only a folder holding codex.exe counts: an update replaces the
-    hash folder and can leave the old one without it. Among those, the highest `--version`; when any version cannot
-    be compared, the newest folder (directory mtime, never the name)."""
+    """Choose a complete Codex app bundle for `bin: auto`; updates can leave incomplete folders behind.
+    Prefer the highest `--version`, or the newest directory mtime when versions cannot all be compared."""
     local = env.get("LOCALAPPDATA")
     if not _is_windows() or not local:
         return None
@@ -309,7 +334,7 @@ def codex_app_choice(env: dict[str, str]) -> dict | None:
         for directory in (Path(local) / "OpenAI" / "Codex" / "bin").iterdir():
             try:
                 executable = directory / "codex.exe"
-                if directory.is_dir() and executable.is_file():
+                if directory.is_dir() and _complete_codex_app(executable):
                     candidates.append((directory.stat().st_mtime_ns, executable))
             except OSError:
                 continue
@@ -335,6 +360,9 @@ def _resolve_command(cmd: list[str], env: dict[str, str], engine: str) -> list[s
     if engine == "codex" and requested.strip().lower() in ("", "auto"):
         requested = _codex_app_executable(env) or "codex"
     executable = shutil.which(requested, path=env.get("PATH")) or requested
+    if engine == "codex" and _is_windows() and _is_codex_app(Path(executable), env) and not _complete_codex_app(Path(executable)):
+        raise ValueError("codex: selected Windows app installation is incomplete (sandbox helpers missing); "
+                         "install a complete bundle or set engines.codex.bin to one")
     if Path(executable).suffix.lower() not in (".cmd", ".bat"):
         return [executable, *cmd[1:]]
     shim = Path(executable)
@@ -558,6 +586,8 @@ class RunContext:
     # Set by run(), runner-local: the launcher it started (executable plus prefix args, resolved) and whether the
     # engine reported a shell command that exited 0. The Codex sandbox record reads both (#328).
     started_command: list[str] | None = None
+    started_command_identity: str | None = None
+    started_at: float | None = None
     commands_ran: bool = False
     # Set by the runner when the PI halts the task (#59 ①). A hooked Claude run stops itself at its next tool call;
     # after halt_grace_s (0 for engines without hooks) run() ends the CLI, keeping the session id.
@@ -1047,7 +1077,7 @@ class AgentAdapter(ABC):
                           error=st.error, error_kind=getattr(st, "error_kind", None))
 
     async def run(self, ctx: RunContext) -> TaskResult:
-        ctx.started_command, ctx.commands_ran = None, False
+        ctx.started_command, ctx.started_command_identity, ctx.started_at, ctx.commands_ran = None, None, None, False
         boundary_refusal = ctx.process_boundary.refusal(ctx.task)
         if boundary_refusal is not None:
             return boundary_refusal
@@ -1117,6 +1147,10 @@ class AgentAdapter(ABC):
         refused = self.prompt_pointer_error(ctx)
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
+        if self.engine == "codex":
+            env = codex_helper_env(env, launcher)
+            from ..runner.codex_sandbox import command_identity
+            ctx.started_command_identity = command_identity(launcher)
         await ctx.awrite_meta("command.txt", shlex.join(short(a, 200) if len(a) > 200 else a for a in cmd))
         await ctx.emit("agent.log", {"level": "debug", "text": f"$ {ctx.agent.engine.value} ({len(cmd)} args)"})
 
@@ -1131,6 +1165,7 @@ class AgentAdapter(ABC):
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
                               error="halted before the CLI started", session_id=ctx.task.resume_session_id)
         bench_spawn_id = object() if ctx.bench_observer is not None else None
+        ctx.started_at = time.time()
         try:
             group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                           if os.name == "nt" else {"start_new_session": True})
