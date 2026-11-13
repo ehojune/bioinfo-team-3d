@@ -1,6 +1,6 @@
 pr: 1426
 rows:
-- sha: c83960fd
+- sha: c83960f
   at: 2026-11-13 14:18
   summary: Windows Codex 직원이 실행할 수 없는 선행 산출 단계를 미리 알려 줍니다.
   text: 해당 단계를 adapter 실행 전에 차단하고 doctor와 한영 매뉴얼에 제한을 안내한다 (#1413).
