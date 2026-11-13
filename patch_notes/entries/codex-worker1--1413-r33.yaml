@@ -1,0 +1,10 @@
+pr: null
+rows:
+- sha: 50a7a06
+  at: 2026-11-13 23:50
+  summary: Codex 작업 폴더 보호 목록을 줄이고 남은 읽기 거부를 진단합니다.
+  text: 비활성 날짜를 묶어 거부하고 Windows doctor가 작업 루트 ACL을 확인한다 (#1413).
+- sha: 820655f
+  at: 2026-11-14 00:12
+  summary: Windows 설치 테스트에서 ACL 검사를 격리합니다.
+  text: init 테스트의 CLI 차단을 유지하면서 ACL 진단만 대체한다 (#1413).

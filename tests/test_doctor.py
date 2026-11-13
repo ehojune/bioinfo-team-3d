@@ -30,6 +30,27 @@ def _settings(tmp_path):
                                     "hpc": {"scheduler": "none"}})
 
 
+@pytest.mark.parametrize("code,output,status", [(0, "DENY", "warn"), (0, "CLEAR", "ok"),
+                                                 (1, "error", "warn"), (None, "", "warn")])
+def test_workspace_acl_check_is_read_only_and_reports_unknown(tmp_path, monkeypatch, code, output, status):
+    settings = _settings(tmp_path)
+    root = settings.path(settings.runner.workspace_root)
+    root.mkdir()
+    monkeypatch.setattr(doctor, "os", RuntimeProxy(doctor.os, name="nt"))
+    calls = []
+    def probe(argv, env):
+        calls.append((argv, env))
+        return code, output
+    monkeypatch.setattr(doctor, "_probe", probe)
+    row = doctor._workspace_sandbox_acl_row(settings)
+    assert row["status"] == status
+    assert calls[0][1]["LABHQ_ACL_CHECK_PATH"] == str(root)
+    assert "Get-Acl" in calls[0][0][-1] and "Set-Acl" not in calls[0][0][-1]
+    assert str(root) not in str(row)
+    if output == "DENY":
+        assert "runner.workspace_root" in row["hint"]
+
+
 @pytest.mark.parametrize("network,dry_run", [(False, False), (True, True)])
 def test_inbox_doctor_skips_network_without_opt_in(tmp_path, monkeypatch, network, dry_run):
     import httpx
