@@ -128,7 +128,7 @@ WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다�
 
 ### 요청 전체를 HPC 또는 이 PC에서 실행하기
 
-온라인 runner에 내장 scheduler·HPC 도구와 요청 전체를 맡을 worker가 있으면 브리핑 뒤 CP1 전에 실행 위치를 묻습니다(#578). direct 요청은 지정 직원만 확인합니다. 지원 worker가 없으면 질문 없이 local로 정하고, 질문에 답하지 않으면 처리 단계를 시작하지 않습니다. CLI 답변은 `labhq approve <id> --note "1: a"`(HPC) 또는 `"1: b"`(이 PC)입니다.
+온라인 runner에 내장 scheduler·HPC 도구와 요청 전체를 맡을 worker가 있으면 CP1 전에 실행 위치를 묻습니다(#578). 기존 경로 입력이 있으면 브리핑 전에 묻고 검사합니다. direct 요청은 지정 직원만 확인합니다. 지원 worker가 없으면 질문 없이 local로 정하고, 질문에 답하지 않으면 처리 단계를 시작하지 않습니다. CLI 답변은 `labhq approve <id> --note "1: a"`(HPC) 또는 `"1: b"`(이 PC)입니다.
 
 | 선택 | 실행·데이터 위치 | 시간·비용 |
 |---|---|---|
@@ -138,6 +138,7 @@ WSL을 설정하지 않은 설치에서 `doctor`는 선택 기능이 꺼졌다�
 - 선택은 요청 기록·CP1 카드·보고서 부록에 남고 재시작 뒤에도 유지됩니다. HPC/local 혼합이나 선택한 runner 밖의 HPC 계획은 거부합니다. WSL 선택은 위의 요청별 runner 고정을 따릅니다.
 - HPC 원본은 `hpc/<request>/steps/<step>/`에 나눠 둡니다. 잡은 해당 단계의 `outputs/`에서 실행하며 앞 단계 입력은 hash를 확인한 `data/<producer>/<source-task>/` 복사본만 읽습니다. 요청 묶음은 별도로 만듭니다.
 - 직원은 스크립트를 준비·제출하고 허용된 요약만 읽습니다. HPC 단계 완료에는 제출 기록이 필요합니다. 공유 계정(`submit_prefix`)의 상위 폴더 접근 권한은 운영자가 준비하며 입력 링크 차단은 유지합니다.
-- 기존 project·경로 참고 입력과 runner 환경 binding은 scheduler용 snapshot이 없어 HPC에서 거부합니다. 저장된 precedent 본문은 CSO 계획과 local 단계만 읽고, HPC 단계에는 붙이지 않습니다. 그래서 precedent 본문이 있다고 HPC 요청을 거부하지는 않습니다(#1336). configured project 입력이 있는 직원·외부 HPC MCP만 쓰는 직원은 요청 전체 HPC 선택 대상이 아닙니다.
+- 기존 project·경로 참고 입력은 선택한 runner에서 경로와 내용을 검사하고, PI가 확인한 hash에 묶어 snapshot으로 전달합니다. 입력은 최대 200개 파일이며 변경·복사·검증 실패 시 처리나 제출을 멈춥니다. 원격 shell 전송은 파일당 512 KiB까지이며 구형 runner는 사전 검사를 지원하지 않아 거부합니다. runner 환경 binding과 직원에 설정된 project 입력은 여전히 HPC에서 거부합니다. precedent 본문은 CSO 계획과 local 단계만 읽습니다(#1336).
+- Slurm `pinned_nodes`는 허용 후보 중 정확히 한 노드만 요청합니다. 충돌하는 배치 옵션·cluster 환경변수·`submit_prefix`는 거부하며 자원이 부족해도 범위를 넓혀 재제출하지 않습니다.
 
 계획·제출 검사이며 CLI 전체를 격리하는 sandbox는 아닙니다. 실제 HPC·계정 전환·OS 격리는 UNVERIFIED입니다. [구조](08-structure.md) · [검증 근거](../reference/hpc-step-workspaces-578.md).

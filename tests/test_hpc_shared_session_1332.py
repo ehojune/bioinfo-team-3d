@@ -81,6 +81,17 @@ def test_conflicting_pin_never_submits(setup_submit, tmp_path, backend, options,
 def test_wrapper_options_are_preserved_outside_placement_parsing(setup_submit, tmp_path, backend, runner):
     prefix = ["runuser", "-p", "-w", "PATH", "-u", "fixture", "--"]
     settings, scheduler, script = setup_submit(backend, submit_prefix=prefix)
+    if backend == "slurm":
+        if runner:
+            result = asyncio.run(submit_job(settings, scheduler, tmp_path, {"script": str(script)},
+                                            AsyncMock(return_value={"approved": True})))
+            assert "submit_prefix" in result["error"] and not result.get("submitted")
+        else:
+            with pytest.raises(RuntimeError, match="submit_prefix"):
+                scheduler.submit(str(script), "job")
+        scheduler._run.assert_not_called()
+        # Without a node pin, the prior wrapper behavior remains supported.
+        settings, scheduler, script = setup_submit(backend, pin=False, submit_prefix=prefix)
     if runner:
         result = asyncio.run(submit_job(settings, scheduler, tmp_path, {"script": str(script)},
                                         AsyncMock(return_value={"approved": True})))
@@ -91,7 +102,7 @@ def test_wrapper_options_are_preserved_outside_placement_parsing(setup_submit, t
     assert args[:len(prefix)] == prefix
     assert args[len(prefix)] == ("sbatch" if backend == "slurm" else "qsub")
     if backend == "slurm":
-        assert "--partition=batch" in args and "--nodelist=node01" in args
+        assert "--nodelist=node01" not in args
     else:
         assert args[args.index("-q") + 1] == "batch@node01"
 

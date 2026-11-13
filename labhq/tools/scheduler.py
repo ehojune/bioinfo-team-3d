@@ -65,7 +65,7 @@ MAYBE_SUBMITTED = ("; the job may have been submitted, check hpc_queue before re
                    "Do not resubmit until the PI reconciles the scheduler jobs; "
                    "an empty hpc_queue only describes tracked jobs and does not prove submission failed")
 # Script lines a scheduler reads as options. sbatch also reads #PBS and #BSUB unless --ignore-pbs is given.
-DIRECTIVE_PREFIXES = ("#SBATCH", "#PBS", "#BSUB", "#$")
+DIRECTIVE_PREFIXES = ("#SBATCH", "#SLURM", "#PBS", "#BSUB", "#$")
 # The only variables scheduler commands receive (#172). A job submitted with -V or -v (SGE, PBS) copies qsub's
 # environment, and the MCP process holding qsub also holds the broker token and engine credentials.
 COMMAND_ENV = re.compile(
@@ -152,14 +152,29 @@ def script_directives(body: str, prefixes: tuple[str, ...] | None = None) -> lis
 
 def slurm_cluster_directive(body: str) -> str | None:
     """First option in an #SBATCH line that picks another cluster, or None."""
-    for line in script_directives(body, ("#SBATCH",)):
+    for line in script_directives(body, ("#SBATCH", "#SLURM")):
+        prefix = "#SBATCH" if line.startswith("#SBATCH") else "#SLURM"
         try:
-            tokens = shlex.split(line[len("#SBATCH"):], comments=True, posix=True)
+            tokens = shlex.split(line[len(prefix):], comments=True, posix=True)
         except ValueError:
             return "<malformed directive>"  # fail closed before sbatch interprets it differently
         if option := slurm_cluster_option(tokens):
             return option
+        # sbatch uses getopt_long: unambiguous prefixes such as --clust are also accepted.
+        for token in tokens:
+            flag = token.split("=", 1)[0]
+            if flag.startswith("--") and len(flag) > 2 and "--clusters".startswith(flag):
+                return token
     return None
+
+
+def slurm_heterogeneous_directive(body: str) -> bool:
+    """A later heterogeneous component has its own options and cannot inherit a single-node pin safely."""
+    for line in script_directives(body, ("#SBATCH", "#SLURM")):
+        prefix = "#SBATCH" if line.startswith("#SBATCH") else "#SLURM"
+        if re.match(r"\s*(?:hetjob|packjob)(?:\s|$)", line[len(prefix):], re.I):
+            return True
+    return False
 
 
 def build_script(body: str, workdir: str, *, umask: str | None = None) -> str:
@@ -453,12 +468,24 @@ class Scheduler:
         if self.cfg.scheduler == "none":
             raise RuntimeError(f"{operation} not supported for scheduler=none (HPC disabled)")
 
-    def _run(self, args: list[str]) -> subprocess.CompletedProcess:
+    def _run(self, args: list[str], *, guard_slurm_cluster: bool = False) -> subprocess.CompletedProcess:
         self._require_enabled("command execution")
         from ..hpc_session import remaining_s
 
         remaining_s(self.cfg.command_timeout_s)
         session = self.session()
+        env = command_env()
+        if guard_slurm_cluster:
+            if session is None and not self.cfg.ssh_host:
+                if any(key.upper() in {"SBATCH_CLUSTERS", "SLURM_CLUSTERS"} for key in env):
+                    raise RuntimeError("Pinned Slurm submission refuses SBATCH_CLUSTERS or SLURM_CLUSTERS")
+            else:
+                # Check in the very shell that starts sbatch, not in the local SSH client's environment.
+                # An account-switch wrapper could change the environment after this check and is rejected below.
+                guard = ('if [ "${SBATCH_CLUSTERS+x}" = x ] || [ "${SLURM_CLUSTERS+x}" = x ]; '
+                         'then echo "Pinned Slurm submission refuses cluster environment" >&2; exit 97; fi; '
+                         'exec "$@"')
+                args = ["sh", "-c", guard, "labhq-slurm-guard", *args]
         if session is not None:  # one shell for everything: a command is a line sent to it, not a login (#1295 C)
             from ..hpc_session import CommandTimeout
 
@@ -485,7 +512,7 @@ class Scheduler:
                 budget.admit(args[0])
             args = ["ssh", "-o", "BatchMode=yes", self.cfg.ssh_host, shlex.join(args)]
         done = subprocess.run(args, capture_output=True, text=True, timeout=remaining_s(self.cfg.command_timeout_s),
-                              env=command_env())
+                              env=env)
         if self.cfg.ssh_host:
             done.redact = self._redactor(None)  # ssh's own error text names the host and the user
         return done
@@ -523,6 +550,8 @@ class Scheduler:
         # A pin also applies on shared filesystems and profiles without a connect command.
         profile = load_profile(self.cfg.site_profile) if self.cfg.site_profile else None
         pinned = profile is not None and bool(profile.queue or profile.pinned_nodes)
+        if self.cfg.scheduler == "slurm" and profile is not None and profile.pinned_nodes and self.cfg.submit_prefix:
+            raise RuntimeError("Pinned Slurm nodes cannot use submit_prefix: its environment cannot be verified")
         name = sanitize_job_name(name)
         wt = normalize_walltime(walltime)
         if self.cfg.scheduler == "sge":
@@ -559,7 +588,10 @@ class Scheduler:
             return f"mock-{abs(hash((script, name))) % 10**6}"
         cmd = "sbatch" if self.cfg.scheduler == "slurm" else "qsub"
         try:
-            p = self._run(self.submit_args(script, name, cores, mem, walltime, queue, stdout, stderr))
+            args = self.submit_args(script, name, cores, mem, walltime, queue, stdout, stderr)
+            # Decide from the actual argv, so a profile changed between two reads cannot disable the guard.
+            guarded = self.cfg.scheduler == "slurm" and any(arg.startswith("--nodelist=") for arg in args)
+            p = self._run(args, guard_slurm_cluster=True) if guarded else self._run(args)
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(f"{cmd} timed out after {self.cfg.command_timeout_s}s{MAYBE_SUBMITTED}") from e
         except Exception as e:

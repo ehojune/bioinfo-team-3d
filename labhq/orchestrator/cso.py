@@ -3391,12 +3391,78 @@ class Orchestrator:
         await persist_request(self.hub, rid)
         return "answered", entry
 
+    async def _hpc_input_gate(self, rid: str) -> bool:
+        """Observe request inputs on the selected runner and bind an explicit approval to their content."""
+        req = self.hub.requests[rid]
+        location = req.get("execution_location") or {}
+        descriptor = {"reference_dirs": list(reference_meta(req).get("reference_dirs") or []),
+                      "project_dirs": list(req.get("project_dirs") or [])}
+        if location.get("mode") != "hpc":
+            return True
+        prior = req.get("hpc_input_approval")
+        if prior and (not isinstance(prior, dict) or prior.get("descriptor") != descriptor):
+            return False
+        if not any(descriptor.values()):
+            return not prior
+        runner_id = location.get("runner_id")
+        agents = hub_agents(self.hub, rid)
+        agent_id = next((aid for aid, agent in agents.items()
+                         if hub_runner(self.hub, aid, rid) == runner_id
+                         and agent.get("whole_request_hpc") is True and agent.get("hpc_tools")
+                         and "hpc" in (agent.get("builtin_mcp") or [])), None)
+        if (not agent_id or runner_id not in getattr(self.hub, "runners", {}) or
+                getattr(self.hub, "runner_capabilities", {}).get(runner_id, {}).get("hpc_input_preflight") is not True):
+            return False
+
+        async def observe() -> str | None:
+            task = Task(agent_id=agent_id, request_id=rid, prompt="",
+                        meta={"kind": "hpc_input_preflight", "execution_location": location, **descriptor})
+            result = await self.hub.dispatch(task)
+            structured = result.structured if result.ok and isinstance(result.structured, dict) else {}
+            proof = structured.get("proof")
+            if structured.get("runner_id") != runner_id or not isinstance(proof, dict):
+                return None
+            from ..wsl_paths import message_paths
+            expected = message_paths({"references": [], **descriptor}, "windows")
+            body = {key: value for key, value in proof.items() if key != "sha256"}
+            digest = hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            if proof.get("descriptor") != expected or proof.get("sha256") != digest:
+                return None
+            return digest
+
+        digest = await observe()
+        if not digest:
+            return False
+        if prior:
+            return (isinstance(prior, dict) and prior.get("sha256") == digest
+                    and prior.get("descriptor") == descriptor and prior.get("runner_id") == runner_id
+                    and bool(prior.get("approval_id")))
+        # A previously approved or started plan predates this binding; do not silently adopt it.
+        if req.get("results") or (req.get("research_contract") or {}).get("approval"):
+            return False
+        decision = await self.hub.request_approval(
+            kind="question", request_id=rid,
+            summary="HPC 요청 입력의 확인된 내용으로 진행할까요?",
+            detail={"why_blocked": "확인한 입력의 복사본을 HPC 작업에 전달하려면 승인이 필요합니다.",
+                    "runner_id": runner_id, "input_sha256": digest, **descriptor})
+        approval_id = decision.get("approval_id") or decision.get("id")
+        if not decision.get("approved") or not approval_id or await observe() != digest:
+            return False
+        req["hpc_input_approval"] = {"descriptor": descriptor, "runner_id": runner_id,
+                                     "sha256": digest, "approval_id": approval_id}
+        self.hub.save_request(rid)
+        return True
+
     async def _choose_execution(self, rid: str) -> bool:
         req = self.hub.requests[rid]
         if req.get("execution_location"):
+            if not await self._hpc_input_gate(rid):
+                await self._finish(rid, "HPC request-input snapshot preflight or approval failed", {}, ok=False)
+                return False
             problems = execution_policy.input_errors(
                 {**reference_meta(req), "project_dirs": req.get("project_dirs"),
-                 "precedent_texts": precedent_texts.rows(req.get("analysis_precedents"))}, req["execution_location"])
+                 "precedent_texts": precedent_texts.rows(req.get("analysis_precedents"))}, req["execution_location"],
+                req.get("hpc_input_approval"))
             if problems:
                 await self._finish(rid, "; ".join(problems), {}, ok=False)
                 return False
@@ -3417,9 +3483,13 @@ class Orchestrator:
             req["execution_location"] = {"mode": mode, "source": "PI 선택",
                                          "approval_id": decision.get("approval_id") or decision.get("id"),
                                          **({"runner_id": host, "workspace": rid} if mode == "hpc" else {})}
+        if not await self._hpc_input_gate(rid):
+            await self._finish(rid, "HPC request-input snapshot preflight or approval failed", {}, ok=False)
+            return False
         problems = execution_policy.input_errors(
             {**reference_meta(req), "project_dirs": req.get("project_dirs"),
-             "precedent_texts": precedent_texts.rows(req.get("analysis_precedents"))}, req["execution_location"])
+             "precedent_texts": precedent_texts.rows(req.get("analysis_precedents"))}, req["execution_location"],
+            req.get("hpc_input_approval"))
         if problems:
             await self._finish(rid, "; ".join(problems), {}, ok=False)
             return False
@@ -4152,15 +4222,27 @@ class Orchestrator:
         rid = task.request_id or ""
         location = self.hub.requests.get(rid, {}).get("execution_location")
         if location:
+            request_row = self.hub.requests.get(rid) or {}
+            if location.get("mode") == "hpc" and not await self._hpc_input_gate(rid):
+                raise ValueError("HPC request-input snapshot preflight or approval failed")
             task = task.model_copy(update={"meta": {**task.meta, "execution_location": location}})
             if location.get("mode") == "hpc" and "precedent_texts" in task.meta:
                 # Scheduler jobs never read stored precedent texts; the step goes without them (#1336).
                 task = task.model_copy(update={"meta": {key: value for key, value in task.meta.items()
                                                         if key != "precedent_texts"}})
-            request_row = self.hub.requests.get(rid) or {}
+            approved = request_row.get("hpc_input_approval")
+            if location.get("mode") == "hpc" and approved:
+                descriptor = approved["descriptor"]
+                if any(task.meta.get(key) and task.meta[key] != descriptor[key]
+                       for key in ("reference_dirs", "project_dirs")):
+                    raise ValueError("task inputs differ from the approved request-input snapshot")
+                if task.meta.get("kind") in {"step", "direct"}:
+                    task = task.model_copy(update={"meta": {**task.meta, **descriptor,
+                                                            "hpc_input_approval": approved}})
             problems = execution_policy.input_errors(
                 {**task.meta, **reference_meta(request_row),
-                 "project_dirs": task.meta.get("project_dirs") or request_row.get("project_dirs")}, location)
+                 "project_dirs": task.meta.get("project_dirs") or request_row.get("project_dirs")}, location,
+                approved)
             if problems:
                 raise ValueError("; ".join(problems))
             if task.meta.get("kind") in {"step", "direct"}:
@@ -5474,7 +5556,8 @@ class Orchestrator:
         choice = self.hub.requests.get(rid, {}).get("execution_location")
         request_row = self.hub.requests.get(rid) or {}
         problems = execution_policy.input_errors(
-            {**reference_meta(request_row), "project_dirs": request_row.get("project_dirs")}, choice)
+            {**reference_meta(request_row), "project_dirs": request_row.get("project_dirs")}, choice,
+            request_row.get("hpc_input_approval"))
         problems += execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid))
         if problems:
             raise ValueError("; ".join(problems))
@@ -7241,7 +7324,9 @@ class Orchestrator:
             self._seed_cost(rid, req)
             (await self._drop_unsent_holds(rid))
         try:
-            if ((req.get("execution_location") or {}).get("mode") == "hpc"
+            if (((req.get("execution_location") or {}).get("mode") == "hpc"
+                 or (not req.get("execution_location") and
+                     (req.get("project_dirs") or reference_meta(req).get("reference_dirs"))))
                     and not await self._choose_execution(rid)):
                 return  # saved input compatibility precedes briefing, precedent and every local model turn
             research_pilot = bool(self.hub.s.research.enabled)

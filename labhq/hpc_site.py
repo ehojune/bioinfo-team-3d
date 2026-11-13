@@ -411,8 +411,36 @@ def pin_submit(profile: SiteProfile | None, scheduler: str, args: list[str], que
         raise SiteProfileError(f"큐·노드 고정은 {scheduler} scheduler에서 지원하지 않아 제출하지 않습니다")
     *head, script = args
     flags, kept, index = _PLACE_FLAGS[scheduler], [], 0
+    node_count_seen = False
     while index < len(head):
         word = head[index]
+        if scheduler == "slurm" and profile.pinned_nodes:
+            from .settings import SBATCH_VALUE_SHORT
+            # These change where sbatch stops parsing or what it submits, bypassing appended pins.
+            if word == "--" or word == "--wrap" or word.startswith("--wrap="):
+                raise SiteProfileError("Pinned Slurm nodes cannot use -- or --wrap")
+            if word.startswith("-") and not word.startswith("--"):
+                for position, letter in enumerate(word[1:]):
+                    if position and letter in "NpwFxM":
+                        raise SiteProfileError("Pinned Slurm nodes cannot use bundled placement options")
+                    if letter in SBATCH_VALUE_SHORT:
+                        break  # the rest is this option's value, not more options
+            flag = word.split("=", 1)[0]
+            if (flag.startswith("--") and len(flag) > 2 and any(
+                    long_flag.startswith(flag) and long_flag != flag
+                    for long_flag in ("--nodes", "--nodelist", "--nodefile", "--clusters", "--partition",
+                                      "--exclude", "--wrap"))):
+                raise SiteProfileError("Pinned Slurm nodes cannot use abbreviated placement options")
+            nodes_option = _split_flag(word, ("--nodes", "-N"))
+            if nodes_option:
+                _, value = nodes_option
+                words = [word] if value is not None else head[index:index + 2]
+                value = value if value is not None else (head[index + 1] if index + 1 < len(head) else "")
+                if node_count_seen or value not in {"1", "1-1"}:
+                    raise SiteProfileError("Pinned Slurm nodes require a single node; check " + " ".join(words))
+                node_count_seen = True  # replace this option with the single canonical pin below
+                index += len(words)
+                continue
         found = _split_flag(word, flags)
         if found is None:
             kept.append(word)
@@ -443,7 +471,7 @@ def _pin_args(queues: list[str], nodes: list[str], scheduler: str) -> list[str]:
     """``queues`` is the narrower of what was asked and what the profile pins."""
     if scheduler == "slurm":
         out = [f"--partition={','.join(queues)}"] if queues else []
-        return out + ([f"--nodelist={','.join(nodes)}"] if nodes else [])
+        return out + (["--nodes=1", f"--nodelist={','.join(nodes)}"] if nodes else [])
     if nodes:  # SGE names queue and host together: queue@host, one list
         return ["-q", ",".join(f"{q}@{node}" for q in (queues or ["*"]) for node in nodes)]
     return ["-q", ",".join(queues)]

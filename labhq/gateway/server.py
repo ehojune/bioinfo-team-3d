@@ -1894,6 +1894,9 @@ class Hub:
     @staticmethod
     def _matches_recovery(task: Task, entry: dict) -> bool:
         kind = task.meta.get("kind")
+        # A proof is a fresh observation, not a completed processing result to adopt after restart.
+        if kind == "hpc_input_preflight":
+            return False
         prior_meta = (entry.get("payload") or {}).get("meta") or {}
         entry_step = entry.get("step_id")
         if kind == "direct" and entry_step == "direct":  # records written before control-phase recovery
@@ -3785,6 +3788,13 @@ class Hub:
         async with self.runner_locks[runner_id]:
             if self.runners.get(runner_id) is not ws:
                 raise RunnerNotSent(f"runner {runner_id} connection was replaced")
+            task = msg.get("task") if msg.get("type") == "task.dispatch" else None
+            meta = task.get("meta") if isinstance(task, dict) else None
+            if isinstance(meta, dict) and meta.get("kind") == "hpc_input_preflight":
+                location = meta.get("execution_location") or {}
+                if (location.get("runner_id") != runner_id or
+                        self.runner_capabilities.get(runner_id, {}).get("hpc_input_preflight") is not True):
+                    raise RunnerNotSent("runner cannot perform a no-model HPC input preflight")
             try:
                 await ws.send_text(payload)
             except Exception as exc:

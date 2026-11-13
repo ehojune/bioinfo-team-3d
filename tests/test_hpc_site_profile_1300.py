@@ -418,8 +418,24 @@ def test_no_pin_leaves_the_submission_alone():
 
 def test_slurm_pin_adds_partition_and_nodes_before_the_script():
     profile = site.SiteProfile(name="lab", queue="part", pinned_nodes=["n1", "n2"])
-    assert site.pin_submit(profile, "slurm", SBATCH) == [*SBATCH[:-1], "--partition=part", "--nodelist=n1,n2", "run.sh"]
-    assert site.pin_submit(profile, "slurm", SBATCH, "part")[-3:] == ["--partition=part", "--nodelist=n1,n2", "run.sh"]
+    assert site.pin_submit(profile, "slurm", SBATCH) == [*SBATCH[:-1], "--partition=part", "--nodes=1", "--nodelist=n1,n2", "run.sh"]
+    assert site.pin_submit(profile, "slurm", SBATCH, "part")[-4:] == ["--partition=part", "--nodes=1", "--nodelist=n1,n2", "run.sh"]
+
+
+@pytest.mark.parametrize("extra", [["--nodes=2"], ["--nodes", "2"], ["-N2"], ["-N", "1-2"], ["-N"],
+                                   ["-N1", "--nodes=1"], ["-vN2"], ["-vwother"], ["--"], ["--wrap=hostname"],
+                                   ["--clust=other"], ["--nodeli=n3"], ["--part=other"]])
+def test_slurm_pin_refuses_conflicting_node_counts(extra):
+    profile = site.SiteProfile(name="lab", pinned_nodes=["n1", "n2"])
+    with pytest.raises(site.SiteProfileError):
+        site.pin_submit(profile, "slurm", [*SBATCH[:-1], *extra, "run.sh"])
+
+
+def test_slurm_single_node_pin_normalizes_an_explicit_single_node_request():
+    profile = site.SiteProfile(name="lab", pinned_nodes=["n1"])
+    assert site.pin_submit(profile, "slurm", [*SBATCH[:-1], "-N", "1", "run.sh"])[-3:] == [
+        "--nodes=1", "--nodelist=n1", "run.sh"]
+    assert "-JNode" in site.pin_submit(profile, "slurm", [*SBATCH[:-1], "-JNode", "run.sh"])
 
 
 @pytest.mark.parametrize("extra", [["--partition=other"], ["-p", "part"], ["-pother"], ["--nodelist=n3"], ["-w", "n1"],

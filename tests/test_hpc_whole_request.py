@@ -25,7 +25,7 @@ def hub_for(dispatch, scheduler="mock", online=True, tools=True):
     hub.agents["worker"].update(runner_id="cluster", hpc_tools=tools, whole_request_hpc=tools,
                                 builtin_mcp=["hpc"] if tools else [])
     hub.agent_runner = {"worker": "cluster"}
-    hub.runner_capabilities = {"cluster": {"scheduler": scheduler}}
+    hub.runner_capabilities = {"cluster": {"scheduler": scheduler, "hpc_input_preflight": True}}
     hub.runners = {"cluster": object()} if online else {}
     return hub
 
@@ -614,7 +614,10 @@ async def test_hpc_choice_and_dispatch_follow_request_pinned_runner_view():
 @pytest.mark.parametrize("field", ["project_dirs", "references"])
 @pytest.mark.parametrize("mode", ["hpc", "local"])
 async def test_existing_request_paths_refuse_hpc_before_processing_but_preserve_local(field, mode):
-    hub = hub_for(lambda task: None)
+    async def refuse_preflight(task):
+        assert task.meta.get("kind") == "hpc_input_preflight"
+        return result(task, ok=False, error="unverifiable")
+    hub = hub_for(refuse_preflight)
     hub.requests["r"][field] = ["/existing/input"] if field == "project_dirs" else [
         {"kind": "path", "value": "/existing/input"}]
 
@@ -624,7 +627,7 @@ async def test_existing_request_paths_refuse_hpc_before_processing_but_preserve_
     hub.request_approval = answer
     accepted = await Orchestrator(hub)._choose_execution("r")
     assert accepted is (mode == "local")
-    assert hub.calls == []
+    assert [task.meta["kind"] for task in hub.calls] == (["hpc_input_preflight"] if mode == "hpc" else [])
     if mode == "hpc":
         assert hub.requests["r"]["status"] == "failed"
         assert "request-input snapshot" in hub.requests["r"]["report"]
@@ -632,21 +635,25 @@ async def test_existing_request_paths_refuse_hpc_before_processing_but_preserve_
 
 
 async def test_saved_hpc_choice_with_unstaged_request_input_never_starts_dag():
-    hub = hub_for(lambda task: None)
+    async def refuse_preflight(task):
+        assert task.meta.get("kind") == "hpc_input_preflight"
+        return result(task, ok=False, error="unverifiable")
+    hub = hub_for(refuse_preflight)
     hub.requests["r"].update(project_dirs=["/existing/input"],
         execution_location={"mode": "hpc", "runner_id": "cluster", "source": "PI 선택"})
     with pytest.raises(ValueError, match="request-input snapshot"):
         await Orchestrator(hub).run_dag("r", "test", [{"id": "s1", "agent_id": "worker",
             "execution": "hpc", "instruction": "process inputs", "depends_on": []}], {})
     assert not await Orchestrator(hub)._choose_execution("r")
-    assert not hub.calls and not hub.approvals
+    assert [task.meta["kind"] for task in hub.calls] == ["hpc_input_preflight"] and not hub.approvals
 
 
 @pytest.mark.parametrize("field", ["project_dirs", "references"])
 @pytest.mark.parametrize("resume", [False, True])
 async def test_saved_hpc_inputs_refuse_before_briefing_or_precedent(field, resume):
     async def never(task):
-        raise AssertionError("saved HPC inputs must refuse before any local model turn")
+        assert task.meta.get("kind") == "hpc_input_preflight", "no local model turn may start"
+        return result(task, ok=False, error="unverifiable")
 
     hub = hub_for(never)
     hub.s.orchestrator.chief_of_staff_agent = "cso"
@@ -656,11 +663,11 @@ async def test_saved_hpc_inputs_refuse_before_briefing_or_precedent(field, resum
     orch = Orchestrator(hub)
     await orch.run_request("r", resume=resume)
     assert req["status"] == "failed" and "request-input snapshot" in req["report"]
-    assert not hub.calls and not hub.approvals
+    assert [task.meta["kind"] for task in hub.calls] == ["hpc_input_preflight"] and not hub.approvals
     with pytest.raises(ValueError, match="request-input snapshot"):
         await orch.run_step(Task(agent_id="cso", request_id="r", prompt="brief",
                                  meta={"kind": "briefing"}))
-    assert not hub.calls
+    assert all(task.meta["kind"] == "hpc_input_preflight" for task in hub.calls)
 
 
 @pytest.mark.parametrize("source", ["staff", "project_dirs", "reference_dirs"])
