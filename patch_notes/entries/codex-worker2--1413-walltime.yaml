@@ -1,5 +1,9 @@
 pr: 1425
 rows:
+  - sha: "31bd097"
+    at: "2026-11-13 11:12"
+    summary: "시간 제한 안내 변경에 맞춰 검사 기준을 갱신했습니다."
+    text: "중복 research prompt snapshot과 Windows source digest를 갱신했다. 보호 node·cohort는 그대로이며 관련 회귀 324 passed·6 skipped, profile 회귀 70 passed (#1425)"
   - sha: "0981928"
     at: "2026-11-13 11:01"
     summary: "잡 시간 제한을 예상 실행 소요와 근거에 맞춰 정하도록 안내합니다."
