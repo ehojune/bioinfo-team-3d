@@ -40,7 +40,10 @@ def source(root, step='fetch', request='r'):
                     'output_sha256': {'outputs/table.tsv': hashlib.sha256(b'gene\nfixture\n').hexdigest()}}
 
 
-async def run_step(tmp_path, monkeypatch, engine=Engine.claude_code, mutate=None, reuse=None):
+async def run_step(tmp_path, monkeypatch, engine=Engine.claude_code, mutate=None, reuse=None, *, platform='linux'):
+    from labhq.runner import daemon
+    from tests.support.time_proxy import RuntimeProxy
+    monkeypatch.setattr(daemon, 'sys', RuntimeProxy(daemon.sys, platform=platform))
     settings = _runner_settings(tmp_path, None)
     root = Path(settings.runner.workspace_root)
     root.mkdir(exist_ok=True)

@@ -20,6 +20,8 @@ PowerShell:
 
 POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 씁니다.
 
+Windows의 Codex 직원은 선행 단계 산출을 받는 단계를 실행하기 전에 차단됩니다. 현재 sandbox에서 자기 작업 폴더의 읽기 예외가 적용되지 않으므로 해당 단계에는 다른 엔진을 쓰세요. doctor도 이 제한을 경고합니다 (#1413).
+
 `labhq init`은 예시 설정을 복사해 gateway token을 무작위로 만들고 HPC·bioinfo-agent 경로를 묻습니다.
 새 설정은 `research.enabled`·`research.evidence_checkpoint`, 분야 팩 `bulk_tumor_normal@3`·`single_cell_de@3`, `plan.declare_output_types: true`로 시작합니다(#613). Paper2Agent 채용은 기본 off입니다(`recruit.enabled: false`, #1336). live 의미 장치·액션·A/B와 새 장치 보고서는 제거했으며, 옛 `semantics`·`research.semantic_report` 키는 읽어도 실행하지 않습니다. 어휘·EDAM·input-fit 검사는 유지합니다. 기본값은 `labhq/init_defaults.py`의 `REFERENCE_BEHAVIOUR`이고 `tests/test_init_defaults.py`가 예시 설정·`init` 결과와 대조합니다. 개인 토큰·경로·이름은 포함하지 않습니다. `pipeline_pr` 동의, `dev_log.repo`, `BIOINFO_AGENT_DIR`은 묻거나 찾습니다. 기존 설정은 자동으로 옮기지 않습니다.
 bioinfo-agent 폴더는 `--bioinfo-agent <폴더>`, 이미 있는 `BIOINFO_AGENT_DIR`, `D:/bioinfo-agent`·`~/bioinfo-agent` 같은 흔한 위치, WSL의 `/mnt/d/bioinfo-agent` 순으로 찾습니다. 못 찾으면 묻고(`--yes`면 묻지 않음) 끝내 모르면 "bioinfo-agent 연결 안 됨 — …"을 알리고 연결 없이 설정을 씁니다. 찾거나 받은 경로는 상대 경로여도 절대 경로로 바꿔 저장합니다(직원 task는 자기 작업 폴더 기준으로 상대 경로를 읽어 연결이 깨지기 때문입니다). `doctor`의 `bioinfo-agent` 행이 연결 여부를 warn으로 알리고, 상대 경로로 적힌 설정도 warn합니다.

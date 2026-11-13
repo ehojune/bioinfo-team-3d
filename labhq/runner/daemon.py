@@ -2261,6 +2261,13 @@ class Runner:
         # inputs (#424); the gateway refuses both first.
         refusal = (refusal or (probation_refusal(agent.id) if not_yet_active(agent) else None)
                    or external_service_refusal(agent, task, self.s))
+        if (sys.platform == "win32" and agent.engine == Engine.codex
+                and task.meta.get("kind") in {"step", "result_correction", "slot_repair"}
+                and isinstance(task.meta.get("upstream_artifacts"), dict)
+                and task.meta["upstream_artifacts"]):
+            refusal = refusal or (
+                "Windows Codex 직원은 선행 단계 산출을 받는 단계를 실행할 수 없습니다: "
+                "현재 sandbox에서 작업 폴더 읽기 예외가 적용되지 않습니다. 다른 엔진의 직원을 사용하세요.")
         if refusal:  # the gateway refuses first; this holds for any other sender and after force_engine
             result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refusal,
                                 **({"cost_usd": 0.0, "cost_known": True} if input_refusal else {}))
