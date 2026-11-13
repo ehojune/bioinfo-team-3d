@@ -2,7 +2,6 @@ import os
 import shlex
 import shutil
 import subprocess
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -80,7 +79,7 @@ def test_remote_guard_executes_or_refuses_before_command(pinned, monkeypatch, na
     assert pinned.submit("run.sh", "job") == "123"
     command = shlex.split(captured[0])
     # Replace sbatch with a harmless marker process; run the generated guard itself.
-    command[4:] = [sys.executable, "-c", "print('ran')"]
+    command[4:] = ["sh", "-c", "printf ran"]
     env = {k: v for k, v in os.environ.items() if k not in {"SBATCH_CLUSTERS", "SLURM_CLUSTERS"}}
     if name:
         env[name] = "other"
