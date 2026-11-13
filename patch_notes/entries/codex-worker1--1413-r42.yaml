@@ -1,5 +1,9 @@
 pr: 1430
 rows:
+- sha: 9d10d98
+  at: 2026-11-14 06:20
+  text: 원격 전송 파일 크기 상한을 사전 검사에 반영한다 (#1413).
+  summary: 전송할 수 없는 큰 입력은 승인 전에 알려 줍니다.
 - sha: ab0c72c
   at: 2026-11-14 06:11
   text: runner capability 기대값과 Windows shell fixture의 실행 명령을 갱신한다 (#1413).
