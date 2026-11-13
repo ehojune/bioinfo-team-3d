@@ -28,6 +28,18 @@ def test_only_the_selected_file_is_copied(source):
     request_inputs.verify(work, result)
 
 
+def test_preflight_refuses_more_files_than_stage_accepts(source):
+    settings, folder, work = source
+    for index in range(198):  # fixture already contains two files
+        (folder / f"file-{index}.txt").write_text("x")
+    assert request_inputs.preflight([str(folder)], [], settings)
+    request_inputs.stage(work, [str(folder)], [], settings)
+    (folder / "extra.txt").write_text("x")
+    assert request_inputs.preflight([str(folder)], [], settings) is None
+    # A file reference copies only that file, even when its parent contains many siblings.
+    assert request_inputs.preflight([str(folder / "wanted.txt")], [], settings)
+
+
 @pytest.mark.parametrize("change", ["alter", "remove", "add", "add_empty_dir"])
 def test_snapshot_changes_are_refused(source, change):
     settings, folder, work = source
@@ -93,6 +105,30 @@ async def test_runner_preflight_has_no_adapter_and_binds_the_runner(source, monk
     assert result.ok and result.structured["proof"]["sha256"]
     task.meta["execution_location"]["runner_id"] = "other"
     assert not (await runner.run_task(task)).ok
+
+
+async def test_oversized_preflight_never_opens_approval(source):
+    from labhq.orchestrator.cso import Orchestrator
+    from labhq.runner.daemon import Runner
+    from tests.test_hpc_whole_request import hub_for
+
+    settings, folder, _ = source
+    settings.hpc.scheduler = "mock"
+    for index in range(199):
+        (folder / f"file-{index}.txt").write_text("x")
+    runner = Runner(settings)
+    hub = hub_for(runner.run_task)
+    hub.agent_runner["worker"] = settings.runner.id
+    hub.agents["worker"]["runner_id"] = settings.runner.id
+    hub.runners = {settings.runner.id: object()}
+    hub.runner_capabilities = {settings.runner.id: {"scheduler": "mock", "hpc_input_preflight": True}}
+    hub.requests["r"].update(project_dirs=[str(folder)],
+                             execution_location={"mode": "hpc", "runner_id": settings.runner.id})
+    async def approve(**card):
+        pytest.fail("oversized inputs must be refused before approval")
+    hub.request_approval = approve
+    assert not await Orchestrator(hub)._hpc_input_gate("r")
+    assert "hpc_input_approval" not in hub.requests["r"]
 
 
 async def test_approval_is_bound_to_fresh_runner_input(source):

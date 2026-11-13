@@ -2108,14 +2108,15 @@ class Runner:
 
         if task.meta.get("kind") == "hpc_input_preflight":
             # This internal task observes inputs on the selected runner without starting an adapter or a job.
-            from ..research.input_proof import capture
+            from .request_inputs import preflight
             location = task.meta.get("execution_location") or {}
             descriptor = {key: task.meta.get(key) or [] for key in ("reference_dirs", "project_dirs")}
             valid = (location.get("mode") == "hpc" and location.get("runner_id") == self.s.runner.id
                      and self.s.hpc.scheduler != "none" and bool(task.request_id)
                      and all(isinstance(value, list) and all(isinstance(p, str) for p in value)
                              for value in descriptor.values()))
-            proof = await asyncio.to_thread(capture, descriptor, self.s) if valid else None
+            proof = (await asyncio.to_thread(preflight, descriptor["reference_dirs"], descriptor["project_dirs"], self.s)
+                     if valid else None)
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=proof is not None,
                                 structured={"runner_id": self.s.runner.id, "proof": proof},
                                 error=None if proof is not None else "request-input snapshot preflight failed",

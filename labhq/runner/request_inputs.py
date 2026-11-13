@@ -12,6 +12,39 @@ from ..research.input_proof import capture, _logical_path
 from .step_inputs import MAX_FILES, _copy, _folder, _parts
 
 
+def preflight(references: list[str], projects: list[str], settings) -> dict | None:
+    """Prove the inputs and refuse a file inventory that the snapshot stage cannot copy."""
+    proof = capture({"reference_dirs": references, "project_dirs": projects}, settings)
+    if proof is None:
+        return None
+    count = 0
+    try:
+        for index, raw in enumerate([*references, *projects], 1):
+            original = Path(os.path.expanduser(str(raw))).absolute()
+            is_file = original.is_file()
+            source = original.parent if is_file else original
+            root = _logical_path(source)
+            found_file = False
+            for row_root, name, digest in proof["files"]:
+                if row_root != root or name == ".":
+                    continue
+                name = name.removeprefix("./")
+                if is_file and name != original.name:
+                    continue
+                _parts(name)
+                confine(f"ref-{index}/{name}")
+                if digest != "directory":
+                    count += 1
+                    found_file = True
+                    if count > MAX_FILES:
+                        return None
+            if is_file and not found_file:
+                return None
+    except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+        return None
+    return proof
+
+
 def stage(workdir: Path, references: list[str], projects: list[str], settings, expected_sha256=None) -> dict:
     """Create fresh snapshots only after the existing input policy proves each source.
 
