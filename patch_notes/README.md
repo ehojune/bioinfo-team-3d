@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:25 | [`1599fd2`](https://github.com/ehojune/bioinfo-team-3d/pull/1425/commits/1599fd2) | **계획 검사에도 새 시간 제한 안내를 반영했습니다.**<br>일반·연구 계획과 paper-timing snapshot 네 값을 대조해 갱신했다. schema·OFF/ON 단언·정규화는 유지했으며 관련 회귀 110 passed (#1425) |
+| 11:12 | [`31bd097`](https://github.com/ehojune/bioinfo-team-3d/pull/1425/commits/31bd097) | **시간 제한 안내 변경에 맞춰 검사 기준을 갱신했습니다.**<br>중복 research prompt snapshot과 Windows source digest를 갱신했다. 보호 node·cohort는 그대로이며 관련 회귀 324 passed·6 skipped, profile 회귀 70 passed (#1425) |
+| 11:01 | [`0981928`](https://github.com/ehojune/bioinfo-team-3d/pull/1425/commits/0981928) | **잡 시간 제한을 예상 실행 소요와 근거에 맞춰 정하도록 안내합니다.**<br>도구·계획·직원 prompt에 대기 제외 약 2배 HH:MM:SS·추정 불가·승인 범위 안내, 4시간 기본값과 보호 유지. 관련 707 passed·7 skipped, 실제 큐 효과 미검증 (#1413 7번) |
 | 10:43 | [`42b0757`](https://github.com/ehojune/bioinfo-team-3d/pull/1424/commits/42b0757) | **실행기 파일이 바뀌거나 여러 runner가 기록을 갱신할 때 과거 성공이 잘못 표시될 가능성을 줄였습니다.**<br>npm launcher 변경도 설치 식별에 반영하고 runner 프로세스 사이 sandbox 기록 잠금을 추가합니다. |
 | 10:35 | [`914c041`](https://github.com/ehojune/bioinfo-team-3d/pull/1424/commits/914c041) | **Windows 직원 실행에서 준비 도구가 빠진 설치를 피하고 오래된 성공 기록의 오판을 줄였습니다.**<br>Windows Codex 앱의 완전한 설치 묶음을 선택하고 sandbox 성공 기록을 설치와 후속 실패에 맞춰 판정합니다. |
 | 01:05 | [`43198ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1422/commits/43198ba) | manual 08 한영 INPUTS.tsv 행에 환경 폴더 한 행(environment), 보호 경로 안 환경, 입력 폴더 안쪽 환경은 아직 파일별 (#1421, PR #1422 리뷰 P1) |
