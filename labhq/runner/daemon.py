@@ -2500,6 +2500,7 @@ class Runner:
                         continue
                     extra_dirs.append(str(upstream))
             upstream_steps = task.meta.get("upstream_steps")
+            native_deny_read_paths = None
             if artifact_contract:
                 artifacts = task.meta["upstream_artifacts"]
                 steps = upstream_steps if isinstance(upstream_steps, dict) else {}
@@ -2717,9 +2718,10 @@ class Runner:
                 if sys.platform == "win32" and agent.engine == Engine.codex:
                     active = [ctx.workdir for ctx in self.tool_contexts.values() if ctx.agent.engine == Engine.codex]
                     task_denies = _codex_sibling_denies(root, ws.dir, active)
-                    # Windows read-deny ACLs override nested read grants. The Codex read-only
-                    # profile below grants writes only to outputs and .tmp, not to inputs.
-                    input_denies = []
+                    # Keep input denies in the policy gate, but not native read-deny ACLs:
+                    # Windows ACLs override nested read grants. The read-only profile below
+                    # grants writes only to outputs and .tmp.
+                    native_deny_read_paths = list(dict.fromkeys([*private.paths, *task_denies]))
                 private = replace(private, paths=tuple(dict.fromkeys([
                                       *private.paths, *task_denies, *input_denies])),
                                   labels=(*private.labels, "선행 단계 읽기 전용 입력"), enabled=True,
@@ -2855,6 +2857,7 @@ class Runner:
                 claude_settings=engine_settings,
                 private_labels=list(private.labels),
                 private_paths=list(private.paths),
+                native_deny_read_paths=native_deny_read_paths,
                 private_enabled=private.enabled,
                 private_open_reads=list(private.open_reads),
                 denied_links=list(denied_links),

@@ -552,6 +552,8 @@ class RunContext:
     private_labels: list[str] = field(default_factory=list)
     # The active paths themselves; while any is set Claude pre-approves no shell command and no outside read.
     private_paths: list[str] = field(default_factory=list)
+    # When set, native read-denies differ from policy paths (e.g. readable, unwritable inputs).
+    native_deny_read_paths: list[str] | None = None
     # Private paths on (not an explicit `policy.private_paths: []`), even with no active path: the same narrowing
     # holds so the gate's registry check sees every shell command (PR #327).
     private_enabled: bool = False

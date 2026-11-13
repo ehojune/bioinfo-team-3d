@@ -2,12 +2,13 @@
 import pytest
 
 from labhq.models import Engine, Task
+from labhq.adapters import codex as codex_mod
 from labhq.runner import daemon
 from labhq.runner.daemon import _codex_sibling_denies
 from labhq.runner.workspace import TaskWorkspace
 from tests.support.time_proxy import RuntimeProxy
 from tests.test_private_paths import _capture_runner, _runner_settings
-from tests.test_step_inputs_665 import run_step
+from tests.test_step_inputs_665 import gate, run_step
 
 
 def test_snapshot_excludes_own_and_active_codex_folders(tmp_path):
@@ -24,7 +25,20 @@ async def test_windows_codex_step_keeps_own_folder_and_denies_sibling(tmp_path, 
     runner, ctx, sibling = await run_step(tmp_path, monkeypatch, Engine.codex, platform='win32')
     assert str(runner.ws_root.resolve()) not in ctx.private_paths
     assert str(sibling) in ctx.private_paths
-    assert str(ctx.workdir / 'inputs') not in ctx.private_paths
+    assert str(ctx.workdir / 'inputs') in ctx.private_paths
+    assert str(ctx.workdir / 'inputs') not in ctx.native_deny_read_paths
+    assert str(sibling) in ctx.native_deny_read_paths
+    target = ctx.workdir / 'inputs' / 'fetch' / 'table.tsv'
+    assert gate(ctx, 'Read', {'file_path': str(target)}).action == 'allow'
+    assert gate(ctx, 'Write', {'file_path': str(target), 'content': 'x'}).action == 'deny'
+    assert gate(ctx, 'Edit', {'file_path': str(target), 'old_string': 'x', 'new_string': 'y'}).action == 'deny'
+    monkeypatch.setattr(codex_mod, '_is_windows', lambda: True)
+    ctx.settings.engines.codex.windows_sandbox = 'elevated'
+    profile = next(v for v in codex_mod.CodexAdapter(ctx.settings).sandbox_flags(ctx)
+                   if v.startswith('permissions.labhq_staff='))
+    assert 'extends = ":read-only"' in profile
+    assert f'{codex_mod._toml(str(ctx.workdir / "inputs"))} = "deny"' not in profile
+    assert f'{codex_mod._toml(str(sibling))} = "deny"' in profile
     assert ctx.read_only_inputs
     assert str(ctx.workdir) in ctx.private_open_reads
 
@@ -67,4 +81,5 @@ async def test_empty_and_other_input_sources_use_scoped_profile(tmp_path, monkey
     ctx = seen['ctx']
     assert ctx.read_only_inputs
     assert str(runner.ws_root.resolve()) not in ctx.private_paths
-    assert str(ctx.workdir / 'inputs') not in ctx.private_paths
+    assert str(ctx.workdir / 'inputs') in ctx.private_paths
+    assert str(ctx.workdir / 'inputs') not in ctx.native_deny_read_paths

@@ -92,8 +92,11 @@ async def test_verified_paper_read_composes_with_dag_protection_and_native_write
                 profile = next(v for v in codex_mod.CodexAdapter(ctx.settings).sandbox_flags(ctx)
                                if v.startswith('permissions.labhq_staff='))
                 assert 'extends = ":read-only"' in profile
-                assert f'{codex_mod._toml(str(target))} = "read"' in profile
-                assert f'{codex_mod._toml(str(target.parent.parent))} = "deny"' in profile
+                if ctx.native_deny_read_paths is None:
+                    assert f'{codex_mod._toml(str(target))} = "read"' in profile
+                    assert f'{codex_mod._toml(str(target.parent.parent))} = "deny"' in profile
+                else:
+                    assert f'{codex_mod._toml(str(target.parent.parent))} = "deny"' not in profile
                 for folder in (target, target.parent, target.parent.parent, ctx.workdir):
                     assert f'{codex_mod._toml(str(folder))} = "write"' not in profile
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, text='no attribution')
