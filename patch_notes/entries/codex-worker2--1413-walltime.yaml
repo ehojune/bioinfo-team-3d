@@ -1,7 +1,7 @@
 pr: 1425
 rows:
-  - sha: "59901f0"
-    at: "2026-11-13 11:30"
+  - sha: "1599fd2"
+    at: "2026-11-13 11:25"
     summary: "계획 검사에도 새 시간 제한 안내를 반영했습니다."
     text: "일반·연구 계획과 paper-timing snapshot 네 값을 대조해 갱신했다. schema·OFF/ON 단언·정규화는 유지했으며 관련 회귀 110 passed (#1425)"
   - sha: "31bd097"
