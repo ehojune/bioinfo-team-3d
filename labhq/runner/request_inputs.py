@@ -12,7 +12,7 @@ from ..research.input_proof import capture, _logical_path
 from .step_inputs import MAX_FILES, _copy, _folder, _parts
 
 
-def preflight(references: list[str], projects: list[str], settings) -> dict | None:
+def preflight(references: list[str], projects: list[str], settings, transfer_max_bytes=None) -> dict | None:
     """Prove the inputs and refuse a file inventory that the snapshot stage cannot copy."""
     proof = capture({"reference_dirs": references, "project_dirs": projects}, settings)
     if proof is None:
@@ -36,7 +36,8 @@ def preflight(references: list[str], projects: list[str], settings) -> dict | No
                 if digest != "directory":
                     count += 1
                     found_file = True
-                    if count > MAX_FILES:
+                    if (count > MAX_FILES or (transfer_max_bytes is not None and
+                            (source / name).stat().st_size > transfer_max_bytes)):
                         return None
             if is_file and not found_file:
                 return None

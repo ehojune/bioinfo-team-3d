@@ -131,6 +131,28 @@ async def test_oversized_preflight_never_opens_approval(source):
     assert "hpc_input_approval" not in hub.requests["r"]
 
 
+async def test_remote_transfer_size_limit_precedes_approval(source, monkeypatch):
+    from types import SimpleNamespace
+    from labhq.hpc_transfer import Limits
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    settings, folder, _ = source
+    settings.hpc.scheduler = "mock"
+    path = folder / "wanted.txt"
+    runner = Runner(settings)
+    monkeypatch.setattr(runner.scheduler, "transfer", lambda: SimpleNamespace(limits=Limits()))
+    task = Task(agent_id="worker", request_id="r", prompt="", meta={
+        "kind": "hpc_input_preflight", "reference_dirs": [str(path)],
+        "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}})
+    path.write_bytes(b"x" * (512 * 1024))
+    assert (await runner.run_task(task)).ok
+    path.write_bytes(b"x" * (512 * 1024 + 1))
+    assert not (await runner.run_task(task)).ok
+    monkeypatch.setattr(runner.scheduler, "transfer", lambda: None)
+    assert (await runner.run_task(task)).ok  # the transport's per-file limit does not apply to a shared filesystem
+
+
 async def test_approval_is_bound_to_fresh_runner_input(source):
     from labhq.orchestrator.cso import Orchestrator
     from labhq.runner.daemon import Runner

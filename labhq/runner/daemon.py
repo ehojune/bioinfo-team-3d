@@ -2115,8 +2115,13 @@ class Runner:
                      and self.s.hpc.scheduler != "none" and bool(task.request_id)
                      and all(isinstance(value, list) and all(isinstance(p, str) for p in value)
                              for value in descriptor.values()))
-            proof = (await asyncio.to_thread(preflight, descriptor["reference_dirs"], descriptor["project_dirs"], self.s)
-                     if valid else None)
+            try:
+                transfer = self.scheduler.transfer() if valid else None  # configuration only; connection remains lazy
+                limit = transfer.limits.upload_max_bytes if transfer is not None else None
+                proof = (await asyncio.to_thread(preflight, descriptor["reference_dirs"], descriptor["project_dirs"],
+                                                 self.s, limit) if valid else None)
+            except (RuntimeError, OSError, ValueError, AttributeError):
+                proof = None  # an unreadable transfer configuration cannot approve an input
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=proof is not None,
                                 structured={"runner_id": self.s.runner.id, "proof": proof},
                                 error=None if proof is not None else "request-input snapshot preflight failed",
