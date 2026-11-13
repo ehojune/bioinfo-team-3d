@@ -4,6 +4,8 @@
 
 **Output paths in a whole-HPC request:** A job already starts in the step's `outputs/` directory. Write `result.tsv` rather than `outputs/result.tsv` in the job script. The best-effort submission check looks for simple literal `>`, `>>`, `&>`, the last destination of `cp`, `mv`, and `install`, and destinations of `mkdir`, `touch`, `tee`, and `cd outputs`. It does not reject input reads. Options that take arguments, variables, invoked scripts, here-documents, and paths after a working-directory change can escape this check, so passing it does not certify the script.
 
+Existing path inputs are checked on the selected runner and sent as snapshots after PI approval. Changes, missing files or failed transfer verification stop submission. [Inputs and node selection](04-install.en.md#running-a-whole-request-on-hpc-or-this-pc).
+
 If a required output is missing and the corresponding extra-nested path is safely verified, the same employee receives one repair attempt. Outputs are not moved and existing checks remain in force. If a restart interrupts that repair, another attempt may be withheld to prevent duplicate execution.
 
 ```bash

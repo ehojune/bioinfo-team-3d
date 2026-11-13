@@ -903,7 +903,7 @@ class Runner:
 
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
-        capabilities = {"scheduler": self.s.hpc.scheduler,
+        capabilities = {"scheduler": self.s.hpc.scheduler, "hpc_input_preflight": True,
                         "runtime_env": ("wsl" if self.s.runner.environment == "wsl" else
                                         "windows" if sys.platform == "win32" else "linux"),
                         "workspace_root": str(self.s.path(self.s.runner.workspace_root)),
@@ -2106,6 +2106,24 @@ class Runner:
 
         self._result_queued.discard(task.id)  # a new run of this id
 
+        if task.meta.get("kind") == "hpc_input_preflight":
+            # This internal task observes inputs on the selected runner without starting an adapter or a job.
+            from ..research.input_proof import capture
+            location = task.meta.get("execution_location") or {}
+            descriptor = {key: task.meta.get(key) or [] for key in ("reference_dirs", "project_dirs")}
+            valid = (location.get("mode") == "hpc" and location.get("runner_id") == self.s.runner.id
+                     and self.s.hpc.scheduler != "none" and bool(task.request_id)
+                     and all(isinstance(value, list) and all(isinstance(p, str) for p in value)
+                             for value in descriptor.values()))
+            proof = await asyncio.to_thread(capture, descriptor, self.s) if valid else None
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=proof is not None,
+                                structured={"runner_id": self.s.runner.id, "proof": proof},
+                                error=None if proof is not None else "request-input snapshot preflight failed",
+                                cost_usd=0.0, cost_known=True)
+            await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                  request_id=task.request_id, data=result.model_dump(mode="json")))
+            return result
+
         if task.meta.get("kind") in {"recruit_check", "plan_recruit"}:
             from ..recruit.planning import run_task
             result = await run_task(self, task)
@@ -2292,6 +2310,17 @@ class Runner:
         input_refusal = ("HPC request inputs require a verified scheduler-readable request-input snapshot"
                          if whole_hpc and (agent.project_dirs or task.meta.get("project_dirs")
                                            or task.meta.get("reference_dirs")) else None)
+        input_approval = task.meta.get("hpc_input_approval")
+        if input_refusal and not agent.project_dirs and isinstance(input_approval, dict):
+            from ..research.input_proof import capture
+            from ..wsl_paths import message_paths
+            descriptor = {key: task.meta.get(key) or [] for key in ("reference_dirs", "project_dirs")}
+            if (input_approval.get("approval_id") and input_approval.get("runner_id") == self.s.runner.id
+                    and message_paths(input_approval.get("descriptor"), "windows") ==
+                    message_paths(descriptor, "windows")):
+                proof = await asyncio.to_thread(capture, descriptor, self.s)
+                if proof and proof.get("sha256") == input_approval.get("sha256"):
+                    input_refusal = None
         if whole_hpc and task.meta.get("precedent_texts"):
             # Scheduler jobs never read precedent texts; drop them instead of refusing the step (#1336).
             task.meta = {key: value for key, value in task.meta.items() if key != "precedent_texts"}
@@ -2642,6 +2671,35 @@ class Runner:
             self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs, read_only=read_only)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
+            if whole_hpc and (task.meta.get("reference_dirs") or task.meta.get("project_dirs") or agent.project_dirs):
+                if refused:
+                    raise ValueError("HPC request input was refused by the reference path policy")
+                from .request_inputs import stage as stage_request_inputs
+                snapshot = await asyncio.to_thread(stage_request_inputs, ws.dir, task.meta.get("reference_dirs") or [],
+                    [*agent.project_dirs, *(task.meta.get("project_dirs") or [])], self.s,
+                    input_approval["sha256"])
+                transfer = self.scheduler.transfer()
+                if transfer is not None:
+                    from ..hpc_transfer import upload_request_snapshot
+                    from ..hpc_login_budget import request_scope
+                    def upload_request():
+                        with request_scope(task.request_id):
+                            return upload_request_snapshot(transfer, ws.dir / snapshot["root"], snapshot, task.request_id)
+                    remote_snapshot = await asyncio.to_thread(upload_request)
+                    base = transfer.path(remote_snapshot["data"])
+                    remote_inputs = {**task.meta.get("hpc_remote_inputs", {}), "request-inputs": remote_snapshot}
+                else:
+                    if self.s.hpc.submit_prefix or sys.platform == "win32":
+                        raise ValueError("HPC request inputs need a scheduler-readable snapshot transport")
+                    base = str(ws.dir / snapshot["root"])
+                    remote_inputs = task.meta.get("hpc_remote_inputs", {})
+                mapping = "\n".join(f"{row['original']}: {base}/{row['path']}" for row in snapshot["roots"])
+                task = ws.task = task.model_copy(update={"context": task.context +
+                    "\n\nUse only these verified request-input snapshots for scheduler jobs:\n" + mapping,
+                    "meta": {**task.meta, "hpc_request_snapshot": snapshot, "hpc_remote_inputs": remote_inputs}})
+                source_projects = {str(self.s.path(d)) for d in task.meta.get("project_dirs") or []}
+                extra_dirs = [directory for directory in extra_dirs if directory not in source_projects]
+                read_dirs = []  # request sources were admitted for copying, not as direct employee read grants
             read_dirs, environment_env, environment_note = self._apply_environment_grants(
                 task, read_dirs, read_only=read_only)
             if environment_note:
@@ -3554,7 +3612,9 @@ class Runner:
             remote_data = None
             if location.get("mode") == "hpc" and ws.task.request_id:
                 remote_data = {"request_id": ws.task.request_id,
-                               "inputs": ws.task.meta.get("hpc_remote_inputs", {})}
+                               "inputs": ws.task.meta.get("hpc_remote_inputs", {}),
+                               "request_snapshot": ws.task.meta.get("hpc_request_snapshot"),
+                               "request_input_approval": ws.task.meta.get("hpc_input_approval")}
             result = await submit_job(self.s, self.scheduler, ws.dir, body, approve, gate, record,
                                       remote_data=remote_data)
         if result.get("error") and (stop := self._login_limit(body.get("request_id"))):

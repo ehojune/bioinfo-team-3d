@@ -16,7 +16,8 @@ from typing import AsyncContextManager, Awaitable, Callable
 from ..hpc_transfer import TransferError, job_spec, remote_script, upload_job
 from ..policy import core_hours, hpc_needs_approval
 from ..settings import Settings
-from ..tools.scheduler import Scheduler, sanitize_job_name, script_directives, slurm_cluster_directive
+from ..tools.scheduler import (Scheduler, sanitize_job_name, script_directives, slurm_cluster_directive,
+                               slurm_heterogeneous_directive)
 
 Approve = Callable[[dict], Awaitable[dict]]
 Record = Callable[[dict], Awaitable[None]]
@@ -122,7 +123,10 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     # Validate the site's submission pin before approval or any remote upload. Scheduler.submit checks again at send.
     if s.hpc.scheduler != "mock" and hasattr(scheduler, "submit_args"):
         try:
-            scheduler.submit_args(str(spath), name, cores, mem, walltime, queue, "/dev/null", "/dev/null")
+            argv = scheduler.submit_args(str(spath), name, cores, mem, walltime, queue, "/dev/null", "/dev/null")
+            if (s.hpc.scheduler == "slurm" and any(a.startswith("--nodelist=") for a in argv)
+                    and slurm_heterogeneous_directive(text)):
+                return {"error": "Pinned Slurm nodes cannot use heterogeneous job directives"}
         except Exception as e:
             return {"error": str(e)}
     # Without a shared file system (the profile names a remote_workdir) the script crosses the session shell and runs in
@@ -134,6 +138,13 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     try:
         transfer = scheduler.transfer() if hasattr(scheduler, "transfer") else None
         if transfer is not None:
+            snapshot = (remote_data or {}).get("request_snapshot")
+            if snapshot:
+                remote_snapshot = (remote_data.get("inputs") or {}).get("request-inputs")
+                if (not isinstance(remote_snapshot, dict) or remote_snapshot.get("strict_snapshot") is not True
+                        or remote_snapshot.get("files") != snapshot.get("files")
+                        or remote_snapshot.get("directories") != snapshot.get("directories")):
+                    return {"error": "remote request-input snapshot is missing or differs; the job was not submitted"}
             spec = job_spec(str(body.get("task_id") or ""), spath.stem,
                             remote_data.get("request_id") if remote_data else None)
             if remote_data:
@@ -170,9 +181,29 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         if not unchanged:  # the PI approved what they were shown, not a later edit
             return {"error": f"{spath.name} changed while waiting for the PI; it was not submitted"}
     logs = spath.parent / "logs"
+
+    async def request_input_error() -> str | None:
+        if not remote_data or not remote_data.get("request_snapshot"):
+            return None
+        from ..research.input_proof import capture
+        from .request_inputs import verify as verify_request_inputs
+        try:
+            approval = remote_data["request_input_approval"]
+            if not approval.get("approval_id") or approval.get("runner_id") != s.runner.id:
+                raise ValueError("request input approval is missing")
+            observed = await asyncio.to_thread(capture, approval["descriptor"], s)
+            if not observed or observed.get("sha256") != approval.get("sha256"):
+                raise ValueError("request input differs from the approved preflight")
+            await asyncio.to_thread(verify_request_inputs, workdir, remote_data["request_snapshot"])
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+            return f"request input snapshot failed verification: {error}; the job was not submitted"
+        return None
+
     async with (gate() if gate else contextlib.nullcontext(True)) as running:
         if not running:
             return {"error": "the task ended while waiting for the PI; the job was not submitted"}
+        if error := await request_input_error():
+            return {"error": error}
         script_arg, out_arg, err_arg = str(spath), str(logs / f"{spath.stem}.out"), str(logs / f"{spath.stem}.err")
         if spec:
             try:  # nothing is submitted until the far side holds exactly these bytes
@@ -181,6 +212,15 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
                 return {"error": f"the job could not be put on the cluster: {e}; the job was not submitted"}
             script_arg, out_arg, err_arg = (transfer.path(spec["script"]), transfer.path(spec["logs"][0]),
                                             transfer.path(spec["logs"][1]))
+        if error := await request_input_error():
+            return {"error": error}
+        if spec and remote_data and remote_data.get("request_snapshot"):
+            from ..hpc_transfer import verify_remote_data
+            try:
+                for manifest in remote_data.get("inputs", {}).values():
+                    await asyncio.to_thread(verify_remote_data, transfer, manifest, remote_data["request_id"])
+            except Exception as error:  # fail closed on an unreadable or changed remote snapshot
+                return {"error": f"remote input verification failed: {error}; the job was not submitted"}
         try:
             job_id = await asyncio.to_thread(scheduler.submit, script_arg, name, cores, mem, walltime, queue,
                                              out_arg, err_arg)

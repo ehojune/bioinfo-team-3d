@@ -125,7 +125,7 @@ Each staff member has exactly one responsible runner. If a task is running or it
 
 ### Running a whole request on HPC or this PC
 
-An online runner with a built-in scheduler, HPC tools and an eligible processing worker prompts for the run location after briefing and before CP1 (#578). A direct request checks only its named staff member. Without an eligible worker, local is selected without asking; an unanswered prompt starts no processing steps. CLI answers are `labhq approve <id> --note "1: a"` (HPC) or `"1: b"` (this PC).
+An online runner with a built-in scheduler, HPC tools and an eligible processing worker prompts for the run location before CP1 (#578). With existing path inputs, it asks and checks them before briefing. A direct request checks only its named staff member. Without an eligible worker, local is selected without asking; an unanswered prompt starts no processing steps. CLI answers are `labhq approve <id> --note "1: a"` (HPC) or `"1: b"` (this PC).
 
 | Choice | Execution and data location | Time and cost |
 |---|---|---|
@@ -135,6 +135,7 @@ An online runner with a built-in scheduler, HPC tools and an eligible processing
 - The choice stays in the request record, CP1 card and report appendix across restarts. Mixed HPC/local plans and HPC plans using another runner are refused. WSL follows the request-specific runner pinning above.
 - HPC originals are separated under `hpc/<request>/steps/<step>/`. Jobs run in that step's `outputs/`; prior-step inputs are read only from hash-verified `data/<producer>/<source-task>/` copies. The request bundle is created separately.
 - Staff prepare and submit scripts and read permitted summaries only. Completing an HPC step requires a submission record. Operators prepare parent-folder access for shared accounts (`submit_prefix`); input-link restrictions remain.
-- Existing project/path-reference inputs and runner environment bindings are refused on HPC because scheduler-readable snapshots are unavailable. Stored precedent texts are read by the CSO plan and local steps only and are not attached to HPC steps, so they no longer refuse an HPC request (#1336). Staff with configured project inputs, or only an external HPC MCP, are ineligible for whole-request HPC.
+- Existing project/path-reference inputs are checked on the selected runner and copied as snapshots bound to a PI-approved hash. Processing or submission stops if inputs change or copying or verification fails. Remote shell transfer is limited to 512 KiB per file; older runners without preflight support are refused. Runner environment bindings and staff-configured project inputs remain unsupported on HPC. Stored precedent texts are read by the CSO plan and local steps only (#1336).
+- Slurm `pinned_nodes` requests exactly one node from the allowed candidates. Conflicting placement options, cluster environment variables and `submit_prefix` are refused; insufficient resources do not widen or retry the request.
 
 These are plan and submission checks, not a sandbox for the entire CLI. Real HPC, account switching and OS isolation are UNVERIFIED. [Structure](08-structure.en.md) · [Verification evidence](../reference/hpc-step-workspaces-578.md).

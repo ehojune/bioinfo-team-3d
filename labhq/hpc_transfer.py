@@ -543,7 +543,7 @@ with contextlib.ExitStack() as stack:
    s=os.stat(name,dir_fd=base,follow_symlinks=False)
    path=prefix+name
    # Before the name rule: __pycache__ and .venv would otherwise read as "name not allowed" (#1369 review).
-   if stat.S_ISDIR(s.st_mode) and name not in ('.','..') and (name=='__pycache__' or env(base,name)):
+   if not cfg.get('strict_snapshot') and stat.S_ISDIR(s.st_mode) and name not in ('.','..') and (name=='__pycache__' or env(base,name)):
     skipped.append({'path':path,'reason':'environment folder'}); continue
    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*',name):
     skipped.append({'path':path,'reason':'name not allowed'}); continue
@@ -590,6 +590,11 @@ with contextlib.ExitStack() as stack:
    try: os.unlink(temporary,dir_fd=j)
    except FileNotFoundError: pass
  else:
+  if cfg.get('strict_snapshot'):
+   actual_dirs=[]
+   actual_files=[path for path,_,_ in walk(data,actual_dirs)]
+   if skipped or set(actual_files)!={row['path'] for row in cfg['files']} or set(actual_dirs)!=set(cfg.get('directories',[])):
+    raise ValueError('remote input inventory changed')
   for row in cfg['files']:
    parts=row['path'].split('/')
    with folder(data,'/'.join(parts[:-1])) as parent:
@@ -670,6 +675,25 @@ def verify_remote_data(transfer: Transfer, manifest: dict, request_id: str) -> s
     transfer.upload_bytes(f"{folder}/remote-data.py", REMOTE_DATA_HELPER.encode())
     _remote_data_command(transfer, folder, "verify", config)
     return transfer.path(manifest["data"])
+
+
+def upload_request_snapshot(transfer: Transfer, local_root: Path, snapshot: dict, request_id: str) -> dict:
+    """Transfer an already admitted snapshot to a fresh request folder and verify every byte."""
+    spec = job_spec("request", "request", request_id)
+    transfer.make_fresh_dir(spec["dir"])
+    transfer.ensure_dir(spec["work"])
+    for directory in snapshot["directories"]:
+        transfer.ensure_dir(f"{spec['work']}/{confine(directory)}")
+    for row in snapshot["files"]:
+        name = str(confine(row["path"]))
+        sent = transfer.upload_file(Path(local_root) / name, f"{spec['work']}/{name}", root=Path(local_root))
+        if sent["sha256"] != row["sha256"] or sent["bytes"] != row["bytes"]:
+            raise HashMismatch("request snapshot changed during transfer")
+    manifest = {"request_id": request_id, "data": spec["work"], "files": snapshot["files"],
+                "directories": snapshot["directories"], "bytes": sum(row["bytes"] for row in snapshot["files"]),
+                "strict_snapshot": True}
+    verify_remote_data(transfer, manifest, request_id)
+    return manifest
 
 
 def remote_script(text: str, remote_work: str) -> str:

@@ -57,15 +57,20 @@ def plan_rule(choice):
             "never read sibling workspaces. Different steps may declare identical output names. "
             "Runner-root .venv environment_binding(s) are unsupported on HPC and will be refused before dispatch. "
             "Keep any job-local environment under this step's outputs/ and record its versions there. "
-            "Existing project/reference files also require a scheduler-readable request-input snapshot; "
-            "such requests are refused before processing until that snapshot contract exists. "
+            "Existing project/reference inputs require an approved, scheduler-readable request-input snapshot; "
+            "use only the verified paths supplied by the runner, never the originals. "
             "Stored precedent full texts inform the CSO plan only and are not staged to HPC steps. "
             "The CSO report and request bundle collect results only at the end.")
 
 
-def input_errors(metadata, choice):
+def input_errors(metadata, choice, approved_input=None):
     # Precedent full texts are not refused: scheduler jobs never read them, so HPC steps simply go without (#1336).
     if choice and choice.get("mode") == "hpc" and (metadata.get("project_dirs") or metadata.get("reference_dirs")):
+        approved = approved_input if isinstance(approved_input, dict) else {}
+        descriptor = {key: metadata.get(key) or [] for key in ("reference_dirs", "project_dirs")}
+        if (approved.get("descriptor") == descriptor and approved.get("runner_id") == choice.get("runner_id")
+                and approved.get("approval_id") and re.fullmatch(r"[0-9a-f]{64}", str(approved.get("sha256") or ""))):
+            return []
         return ["HPC request inputs require a verified scheduler-readable request-input snapshot; "
                 "processing refused before dispatch"]
     return []

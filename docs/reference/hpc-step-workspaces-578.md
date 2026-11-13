@@ -18,8 +18,8 @@
 - bundle은 해당 run의 engine/model을 우선한다. 단계 절대 링크와 기록된 data snapshot 링크를 실제 묶음 파일로 바꾼다. model은 RO-Crate software identity hash에 반영된다.
 - HPC 환경 binding과 예약된 환경 lock 단계는 검증된 scheduler용 snapshot이 없어 dispatch 전에 거부한다. runner도 binding이 든 HPC task를 비용 없이 거부한다. 기존 local 환경 계약은 유지한다.
 - HPC 선택·계획 검증은 요청별 roster와 runner view를 따른다. WSL에 pin된 요청이 native owner의 capability를 쓰지 않는다.
-- 기존 요청 project/path-reference 입력은 scheduler snapshot이 없어 HPC 선택 뒤 어떤 처리 단계도 보내지 않는다. 저장된 HPC 선택도 다시 확인한다. runner는 직원 project 입력까지 포함해 작업 폴더·잡을 만들기 전에 비용 없이 거부한다. local 선택은 유지하며 조상 산출의 검증된 data 전달은 허용한다.
-- 저장된 HPC 선택은 `run_request` 입구에서 검사해 briefing·precedent도 시작하지 않는다. 공통 `run_step`도 같은 요청 입력을 대조하므로 개별 호출로 우회하지 않는다. entry·resume·accounting 회귀 334 passed/5 skipped.
+- 요청 project/path-reference 입력은 선택 runner가 briefing 전 무모델 preflight로 검사한다. PI 승인 hash와 원본을 다시 대조해 단계 snapshot을 만들고, 전송본·제출 전 원본과 snapshot을 검증한다. 불일치·누락·검증 실패는 중단하며 직원에 설정된 project 입력은 계속 거부한다.
+- 저장된 HPC 선택도 `run_request` 입구에서 새 preflight를 실행한다. 복구 시 preflight 결과는 재사용하지 않으며 일반 완료 처리 작업의 복구는 유지한다. Slurm 고정 후보에는 `--nodes=1`을 함께 지정하고 충돌 옵션과 cluster 환경변수를 거부한다.
 - runner는 configured project 입력이 없는 내장 scheduler 직원만 `whole_request_hpc: true`로 알린다. 경로는 roster에 내보내지 않는다. gateway는 이 capability가 true인 직원만 선택·계획에 허용한다. 일반 HPC 도구 지원 여부는 별도이며 capability 누락을 지원으로 추정하지 않는다. 관련 회귀 340 passed/7 skipped.
 - 마지막 eligibility 변경 뒤 실제 gateway 왕복 mock E2E 13 passed. 실제 모델·HPC 계정 전환은 실행하지 않았다.
 
