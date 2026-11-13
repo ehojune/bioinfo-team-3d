@@ -12,6 +12,7 @@ import contextlib
 import contextvars
 import copy
 from dataclasses import replace
+from functools import wraps
 import inspect
 import json
 import logging
@@ -229,6 +230,18 @@ def claude_rule_ready(path: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _cleanup_preparing_codex(fn):
+    @wraps(fn)
+    async def wrapped(self, *args, **kwargs):
+        try:
+            return await fn(self, *args, **kwargs)
+        finally:
+            preparing = getattr(self, "_preparing_codex_workdirs", None)
+            if preparing is not None:
+                preparing.pop(asyncio.current_task(), None)
+    return wrapped
 
 
 def _codex_sibling_denies(root: Path, workdir: Path, active: list[Path]) -> list[str]:
@@ -2250,13 +2263,8 @@ class Runner:
         return (f"큰 원자료(수 GB 이상)는 작업 폴더가 아니라 {resolved}{free} 아래에 받으세요. "
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
+    @_cleanup_preparing_codex
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
-        try:
-            return await self._run_task_with_preparing(task, workdir_override, paper_skill_build=paper_skill_build)
-        finally:
-            self._preparing_codex_workdirs.pop(asyncio.current_task(), None)
-
-    async def _run_task_with_preparing(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
         if getattr(self, "process_boundary", None) is not None:
             refusal = await self._refuse_process_boundary(task)
             if refusal is not None:
