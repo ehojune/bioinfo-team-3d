@@ -29,6 +29,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: folder))
     monkeypatch.setattr(wizard.shutil, "which", lambda *a, **kw: None)
     monkeypatch.setattr(doctor, "_probe", lambda *a: (_ for _ in ()).throw(AssertionError("unexpected CLI")))
+    monkeypatch.setattr(doctor, "_workspace_sandbox_acl_row", lambda settings: None)
     monkeypatch.setattr(wizard, "_hpc_query", lambda argv: None)
     monkeypatch.setattr(wizard, "_hpc_backend", lambda hpc: Scheduler(hpc))
     monkeypatch.chdir(tmp_path)
