@@ -2674,7 +2674,11 @@ class Runner:
                         f"{task.context}\n\n[Upstream inputs not linked]\n{note}")})
             # Reference paths are readable but never write roots: not in LABHQ_EXTRA_ROOTS, Claude denies edits.
             # Every folder this run may write: a read-only run writes only its own workspace.
-            self._start_disk_watch(task, agent, workspace_dir, () if read_only else extra_dirs, read_only=read_only)
+            source_projects = ({str(self.s.path(d)) for d in task.meta.get("project_dirs") or []}
+                               if whole_hpc else set())
+            watched_extra_dirs = [directory for directory in extra_dirs if directory not in source_projects]
+            self._start_disk_watch(task, agent, workspace_dir, () if read_only else watched_extra_dirs,
+                                   read_only=read_only)
             read_dirs, skipped, refused = self._reference_dirs(task, [str(ws.dir), *extra_dirs],
                                                                needs_rules=agent.engine == Engine.claude_code)
             if whole_hpc and (task.meta.get("reference_dirs") or task.meta.get("project_dirs") or agent.project_dirs):
@@ -2703,7 +2707,6 @@ class Runner:
                 task = ws.task = task.model_copy(update={"context": task.context +
                     "\n\nUse only these verified request-input snapshots for scheduler jobs:\n" + mapping,
                     "meta": {**task.meta, "hpc_request_snapshot": snapshot, "hpc_remote_inputs": remote_inputs}})
-                source_projects = {str(self.s.path(d)) for d in task.meta.get("project_dirs") or []}
                 extra_dirs = [directory for directory in extra_dirs if directory not in source_projects]
                 read_dirs = []  # request sources were admitted for copying, not as direct employee read grants
             read_dirs, environment_env, environment_note = self._apply_environment_grants(

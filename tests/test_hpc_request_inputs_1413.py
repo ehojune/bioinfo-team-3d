@@ -422,7 +422,8 @@ async def test_fresh_request_preflights_before_direct_and_resume_refuses_drift(s
     assert [task.meta["kind"] for task in hub.calls] == ["hpc_input_preflight"]
 
 
-async def test_runner_stages_approved_inputs_before_adapter(tmp_path, monkeypatch):
+@pytest.mark.parametrize("field", ["reference_dirs", "project_dirs"])
+async def test_runner_stages_approved_inputs_before_adapter(tmp_path, monkeypatch, field):
     from labhq.adapters.mock import MockAdapter
     from labhq.models import AgentSpec, Engine, Task, TaskResult
     from labhq.research.input_proof import capture
@@ -436,12 +437,17 @@ async def test_runner_stages_approved_inputs_before_adapter(tmp_path, monkeypatc
     folder.mkdir()
     (folder / "input.txt").write_text("approved")
     settings.runner.reference_roots = [str(folder)]
-    descriptor = {"reference_dirs": [str(folder)], "project_dirs": []}
+    descriptor = {"reference_dirs": [], "project_dirs": []}
+    descriptor[field] = [str(folder)]
     approval = {"descriptor": descriptor, "sha256": capture(descriptor, settings)["sha256"],
                 "runner_id": settings.runner.id, "approval_id": "a"}
     agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=["hpc"])
     runner = Runner(settings)
     monkeypatch.setattr(runner.registry, "get", lambda _: agent)
+    watched = []
+    def watch(_task, _agent, _workspace, extra_dirs, *, read_only):
+        watched.append(list(extra_dirs))
+    monkeypatch.setattr(runner, "_start_disk_watch", watch)
     class FakeTransfer:
         def path(self, relative):
             return "/remote/" + relative
@@ -462,6 +468,7 @@ async def test_runner_stages_approved_inputs_before_adapter(tmp_path, monkeypatc
         "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}})
     await runner.run_task(task)
     assert called == [True]
+    assert len(watched) == 1 and str(folder) not in watched[0]
 
 
 async def test_fresh_unverifiable_input_stops_before_briefing():
