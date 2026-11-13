@@ -41,7 +41,7 @@ jobs:
   pytest:
     needs: changes
     if: needs.changes.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Ubuntu 26.04 resolves touch to a non-system coreutils path (#1413).
     env:
       CI_JOB_LABEL: pytest (${{ matrix.python-version }})
       PYTHONHASHSEED: '0'

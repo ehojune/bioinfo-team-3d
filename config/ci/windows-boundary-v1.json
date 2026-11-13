@@ -5,6 +5,7 @@
   "known_tests": [
     "tests/test_59_halt_resume_e2e.py",
     "tests/test_673_retry_budget.py",
+    "tests/test_access_deny_1413.py",
     "tests/test_active_request_cancel.py",
     "tests/test_adapters_fake_cli.py",
     "tests/test_agent_capabilities.py",
@@ -432,6 +433,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_access_deny_1413.py": "Windows Codex ancestor-input refusal and non-blocked protection paths; mock adapters only.",
     "tests/test_wiki_audit_transport_1037.py": "Runner filesystem and exact-byte audit transport, wire validation and CP2 refusal; synthetic fixtures only.",
     "tests/test_vm_provision_666.py": "Windows PowerShell 5.1 VM fixture provisioning, ACL, destructive removal confirmation and offline lifecycle contracts; OS/network/Hyper-V effects are mocked.",
     "tests/test_process_boundary_seal_contract.py": "Synthetic supervisor/seal security acceptance contract; retain all cases on Windows.",

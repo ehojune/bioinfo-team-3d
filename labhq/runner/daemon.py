@@ -12,6 +12,7 @@ import contextlib
 import contextvars
 import copy
 from dataclasses import replace
+from functools import wraps
 import inspect
 import json
 import logging
@@ -231,6 +232,46 @@ def claude_rule_ready(path: str) -> bool:
     return True
 
 
+def _cleanup_preparing_codex(fn):
+    @wraps(fn)
+    async def wrapped(self, *args, **kwargs):
+        try:
+            return await fn(self, *args, **kwargs)
+        finally:
+            preparing = getattr(self, "_preparing_codex_workdirs", None)
+            if preparing is not None:
+                preparing.pop(asyncio.current_task(), None)
+    return wrapped
+
+
+def _codex_sibling_denies(root: Path, workdir: Path, active: list[Path]) -> list[str]:
+    """Snapshot existing work folders without denying this or another active Codex folder."""
+    from ..adapters.owned import is_link
+
+    protected = [p.resolve() for p in [workdir, *active]]
+    folders = []
+    def collect(path: Path) -> None:
+        if is_link(path) or not path.is_dir():
+            return
+        resolved = path.resolve()
+        if any(resolved == q or resolved.is_relative_to(q) for q in protected):
+            return
+        if any(q.is_relative_to(resolved) for q in protected):
+            for child in path.iterdir():
+                collect(child)
+        else:
+            folders.append(path)
+    for entry in root.iterdir():
+        if is_link(entry) or not entry.is_dir():
+            continue
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.name):
+            for child in entry.iterdir():
+                collect(child)
+        else:
+            collect(entry)
+    return [str(p) for p in folders]
+
+
 def _can_list(path: str) -> bool:
     try:
         os.listdir(path)
@@ -408,6 +449,7 @@ class Runner:
         self.task_req: dict[str, str | None] = {}
         self.approval_tasks: dict[str, tuple[str | None, str | None]] = {}
         self.tool_contexts: dict[str, Any] = {}
+        self._preparing_codex_workdirs: dict[asyncio.Task, Path] = {}
         self.submitting: dict[str, set[asyncio.Future]] = {}  # submit commands running, by task (#214 review)
         self.jobs: dict[str, dict] = self.store.all("job")
         self.notified: set[str] = set(self.store.all("notified"))
@@ -2221,6 +2263,7 @@ class Runner:
         return (f"큰 원자료(수 GB 이상)는 작업 폴더가 아니라 {resolved}{free} 아래에 받으세요. "
                 "작업 폴더 밖이라 쓰기는 평소처럼 승인을 거칠 수 있습니다.")
 
+    @_cleanup_preparing_codex
     async def _run_task(self, task: Task, workdir_override: Path | None = None, *, paper_skill_build=None) -> TaskResult:
         if getattr(self, "process_boundary", None) is not None:
             refusal = await self._refuse_process_boundary(task)
@@ -2290,6 +2333,9 @@ class Runner:
                 Event(type="task.result", data={**result.model_dump(mode="json"),
                                                 "control": self.controls.finish(task.id)}, **base)])
             return result
+        if sys.platform == "win32" and agent.engine == Engine.codex:
+            # Register on the event loop before any thread can create the workspace.
+            self._preparing_codex_workdirs[asyncio.current_task()] = workspace_dir
         reused = await asyncio.to_thread(os.path.lexists, workspace_dir)  # file system work stays off the loop (#606)
         if whole_hpc:
             await asyncio.to_thread(self.ws_root.mkdir, parents=True, exist_ok=True)
@@ -2483,6 +2529,7 @@ class Runner:
                         continue
                     extra_dirs.append(str(upstream))
             upstream_steps = task.meta.get("upstream_steps")
+            native_deny_read_paths = None
             if artifact_contract:
                 artifacts = task.meta["upstream_artifacts"]
                 steps = upstream_steps if isinstance(upstream_steps, dict) else {}
@@ -2694,11 +2741,18 @@ class Runner:
             private = await asyncio.to_thread(resolve_private_paths, self.s, keep, open_reads=open_reads, cwd=ws.dir)
             if artifact_contract:
                 # Reuse the existing private/read-root machinery; inputs never become write roots.
+                task_denies = [str(root)]
+                # Include both spellings for junctioned workspaces (#946).
+                input_denies = [str(ws.dir / "inputs"), os.path.realpath(ws.dir / "inputs")]
+                if sys.platform == "win32" and agent.engine == Engine.codex:
+                    active = list(self._preparing_codex_workdirs.values())
+                    task_denies = _codex_sibling_denies(root, ws.dir, active)
+                    # Keep input denies in the policy gate, but not native read-deny ACLs:
+                    # Windows ACLs override nested read grants. The read-only profile below
+                    # grants writes only to outputs and .tmp.
+                    native_deny_read_paths = list(dict.fromkeys([*private.paths, *task_denies]))
                 private = replace(private, paths=tuple(dict.fromkeys([
-                                      *private.paths, str(root), str(ws.dir / "inputs"),
-                                      # Both spellings: with a junctioned root the real inputs path is otherwise
-                                      # not denied and matches the resolved workdir's write allow (#946).
-                                      os.path.realpath(ws.dir / "inputs")])),
+                                      *private.paths, *task_denies, *input_denies])),
                                   labels=(*private.labels, "선행 단계 읽기 전용 입력"), enabled=True,
                                   open_reads=tuple(scoped_open_reads(self.s, [
                                       *private.open_reads, str(ws.dir), *staged_inputs], cwd=ws.dir)))
@@ -2826,11 +2880,14 @@ class Runner:
                 env={**env, "MCP_TOOL_TIMEOUT": str(labhq_mcp_timeout_s(self.s) * 1000)},
                 emit=emit, prompt=prompt, prompt_pointer=ws.prompt_pointer, extra_dirs=extra_dirs,
                 read_dirs=read_dirs, read_only_inputs=([*staged_inputs, *paper_inputs] or
-                    ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') else [])),
+                    ([str(ws.dir / 'inputs')] if os.path.lexists(ws.dir / 'inputs') or
+                     (artifact_contract and sys.platform == 'win32' and agent.engine == Engine.codex
+                      and task.meta.get('environment_step') is not True) else [])),
                 # Other engines never read these rules; only paths a rule can name go in (#177).
                 claude_settings=engine_settings,
                 private_labels=list(private.labels),
                 private_paths=list(private.paths),
+                native_deny_read_paths=native_deny_read_paths,
                 private_enabled=private.enabled,
                 private_open_reads=list(private.open_reads),
                 denied_links=list(denied_links),

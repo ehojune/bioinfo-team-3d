@@ -242,10 +242,11 @@ class CodexAdapter(AgentAdapter):
         enforces deny-read (unelevated refuses to start with it), and only that backend is measured here, so other
         platforms keep the instruction in the role footer. labhq passes windows.sandbox only to isolated runs."""
         b = self.settings.engines.codex
-        if not (ctx.private_paths and _is_windows() and b.windows_sandbox == "elevated"
+        paths = ctx.private_paths if ctx.native_deny_read_paths is None else ctx.native_deny_read_paths
+        if not (paths and _is_windows() and b.windows_sandbox == "elevated"
                 and (b.isolate_user_config or ctx.read_only or ctx.read_only_inputs)):
             return []
-        return list(dict.fromkeys(ctx.private_paths))
+        return list(dict.fromkeys(paths))
 
     def sandbox_flags(self, ctx: RunContext) -> list[str]:
         """`-s <mode>`, or with private paths to refuse a permission profile that extends the same built-in mode.
