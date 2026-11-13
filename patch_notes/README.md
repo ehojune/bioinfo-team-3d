@@ -14,6 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:36 | [`4e9f3a8`](https://github.com/ehojune/bioinfo-team-3d/pull/1430/commits/4e9f3a8) | **읽기 전용 입력 디스크의 용량 부족이 작업 쓰기 감시를 멈추지 않게 합니다.**<br>HPC snapshot 원본 project 경로를 직원의 쓰기 디스크 감시에서 제외한다 (#1413). |
+| 06:27 | [`47be260`](https://github.com/ehojune/bioinfo-team-3d/pull/1430/commits/47be260) | **복사할 수 없는 입력은 승인 전에 알려 줍니다.**<br>snapshot의 파일 크기·폴더 수·깊이 상한을 승인 전 검사와 일치시킨다 (#1413). |
+| 06:20 | [`9d10d98`](https://github.com/ehojune/bioinfo-team-3d/pull/1430/commits/9d10d98) | **전송할 수 없는 큰 입력은 승인 전에 알려 줍니다.**<br>원격 전송 파일 크기 상한을 사전 검사에 반영한다 (#1413). |
+| 06:11 | [`ab0c72c`](https://github.com/ehojune/bioinfo-team-3d/pull/1430/commits/ab0c72c) | **새 사전 검사와 Windows 테스트 환경에 맞춰 회귀 시험을 고쳤습니다.**<br>runner capability 기대값과 Windows shell fixture의 실행 명령을 갱신한다 (#1413). |
+| 06:08 | [`1ea19ee`](https://github.com/ehojune/bioinfo-team-3d/pull/1430/commits/1ea19ee) | **너무 많은 입력 파일 때문에 승인 뒤 작업이 멈추는 일을 막습니다.**<br>HPC 요청의 파일 수가 snapshot 상한을 넘으면 PI 승인 전에 거부한다 (#1413). |
+| 05:56 | [`f176694`](https://github.com/ehojune/bioinfo-team-3d/pull/1430/commits/f176694) | **기존 입력을 확인한 복사본으로 전달하고 고정 후보 중 한 노드만 요청합니다.**<br>HPC 요청 입력의 사전 검사·승인·snapshot 검증과 Slurm 단일 노드 고정을 추가한다 (#1413). |
 | 04:27 | [`31dd2f7`](https://github.com/ehojune/bioinfo-team-3d/pull/1429/commits/31dd2f7) | **HPC 잡이 결과를 중첩 폴더에 잘못 쓴 경우 수정 기회를 줍니다.**<br>전체 HPC 잡의 리터럴 중첩 쓰기 보조 검사와 검증된 누락 산출의 동일 직원 1회 수정을 추가한다 (#1413). |
 | 00:12 | [`820655f`](https://github.com/ehojune/bioinfo-team-3d/commit/820655f) | **Windows 설치 테스트에서 ACL 검사를 격리합니다.**<br>init 테스트의 CLI 차단을 유지하면서 ACL 진단만 대체한다 (#1413). |
 
