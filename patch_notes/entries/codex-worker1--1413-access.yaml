@@ -1,5 +1,9 @@
 pr: 1426
 rows:
+- sha: 'd3ffd50'
+  at: 2026-11-13 15:30
+  summary: Linux 검사 환경을 Ubuntu 22.04로 고정합니다.
+  text: pytest 전체 검사와 Python 버전 구성은 유지하고 시스템 명령 경로가 달라진 환경을 피한다 (#1413).
 - sha: '400680d'
   at: 2026-11-13 15:19
   summary: Windows Codex 입력 파일의 쓰기를 다시 제한합니다.
