@@ -1,7 +1,9 @@
 """Staff elevated sandbox setup vs. the Codex version in use (#328). Fakes only: no real Codex, no UAC."""
 import json
 import os
+import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -264,6 +266,44 @@ def test_same_version_different_install_and_legacy_record_warn(tmp_path, monkeyp
     assert _sandbox_row(settings)["status"] == "warn"
     codex_sandbox.record_ok(home, "0.159.0", "codex.exe")
     assert _sandbox_row(settings)["status"] == "warn"
+
+
+def test_launcher_script_replacement_changes_install_identity(tmp_path):
+    node = _exe(tmp_path / "bin", "node.exe")
+    script = node.parent / "codex.js"
+    script.write_text("first", encoding="utf-8")
+    command = [str(node), str(script)]
+    previous = codex_sandbox.command_identity(command)
+    script.write_text("replacement", encoding="utf-8")
+    assert codex_sandbox.command_identity(command) != previous
+
+
+def test_record_lock_serializes_other_process(tmp_path):
+    code = ("import sys\nfrom pathlib import Path\n"
+            "from labhq.runner.codex_sandbox import _sandbox_record_lock\n"
+            "with _sandbox_record_lock(Path(sys.argv[1])):\n"
+            " print('locked', flush=True)\n sys.stdin.readline()\n")
+    child = subprocess.Popen([sys.executable, "-u", "-c", code, str(tmp_path)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    acquired = threading.Event()
+    def acquire():
+        with codex_sandbox._sandbox_record_lock(tmp_path):
+            acquired.set()
+    thread = None
+    try:
+        assert child.stdout.readline().strip() == "locked"
+        thread = threading.Thread(target=acquire)
+        thread.start()
+        assert not acquired.wait(0.25)
+        child.stdin.write("release\n")
+        child.stdin.flush()
+        assert acquired.wait(10)
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=10)
+        if thread:
+            thread.join(timeout=10)
 
 
 @pytest.mark.asyncio

@@ -17,6 +17,7 @@ import re
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..adapters import codex as codex_adapter
@@ -30,6 +31,27 @@ OK_FILE = ".labhq-sandbox-ok.json"
 APP_BIN = ("OpenAI", "Codex", "bin")
 _VERSIONS: dict[tuple, str | None] = {}
 _RECORD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _sandbox_record_lock(home: Path):
+    """Serialize cooperating runner processes as well as threads on a stable lock file."""
+    from ..instance_guard import _file_lock
+    with _RECORD_LOCK:
+        deadline = time.monotonic() + 30
+        while True:
+            lock = _file_lock(home / ".labhq-sandbox-record.lock")
+            try:
+                lock.__enter__()
+                break
+            except (BlockingIOError, PermissionError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            lock.__exit__(None, None, None)
 
 
 def elevated_homes(settings: Settings, env: dict[str, str], workdir: Path, read_only: bool = False) -> list[Path]:
@@ -196,6 +218,10 @@ def command_identity(command: list[str] | None) -> str | None:
     try:
         exe = Path(command[0]).resolve(strict=True)
         files = [exe]
+        for arg in command[1:]:
+            path = Path(arg)
+            if path.is_absolute() and path.is_file():
+                files.append(path.resolve(strict=True))
         if exe.name.lower() == "codex.exe":
             files.extend(exe.parent / name for name in CODEX_WINDOWS_HELPERS if (exe.parent / name).is_file())
         parts = [os.path.normcase(str(exe)), *command[1:]]
@@ -269,7 +295,7 @@ class SandboxWatch:
         if version and identity and command_identity(cmd) == identity:
             for home in homes:
                 try:
-                    with _RECORD_LOCK:
+                    with _sandbox_record_lock(home):
                         record = read_ok(home) or {}
                         if record.get("state") == "failed" and (started_at is None or record.get("failed_at", 0) >= started_at):
                             continue
@@ -277,18 +303,21 @@ class SandboxWatch:
                 except OSError:
                     continue
 
+    def _record_failure(self, homes: list[Path]) -> None:
+        for home in homes:
+            try:
+                with _sandbox_record_lock(home):
+                    record = read_ok(home) or {}
+                    _write_record(home, {**record, "state": "failed", "failed_at": time.time()})
+            except OSError:
+                continue
+
     async def after_run(self, settings: Settings, ctx, env: dict[str, str], result, emit) -> None:
         homes = elevated_homes(settings, env, ctx.workdir, ctx.read_only)
         if not homes:
             return
         if is_setup_failure(result):
-            for home in homes:
-                try:
-                    with _RECORD_LOCK:
-                        record = read_ok(home) or {}
-                        _write_record(home, {**record, "state": "failed", "failed_at": time.time()})
-                except OSError:
-                    continue
+            await asyncio.to_thread(self._record_failure, homes)
             if self.alerted:  # every later task fails the same way; its own result already says so
                 return
             self.alerted = True
