@@ -1,5 +1,9 @@
 pr: 1426
 rows:
+- sha: '9634981'
+  at: 2026-11-13 14:28
+  summary: Windows 검사 목록과 작업 기록 이름을 바로잡습니다.
+  text: 선행 산출 제한 검사를 Windows 경계 검사에 등록하고 status 파일에 시간을 넣는다 (#1413).
 - sha: c83960f
   at: 2026-11-13 14:18
   summary: Windows Codex 직원이 실행할 수 없는 선행 산출 단계를 미리 알려 줍니다.
