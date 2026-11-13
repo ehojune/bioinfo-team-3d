@@ -3137,6 +3137,7 @@ class Runner:
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
         result.output_sha256 = hashed
         remote_manifests = []
+        nested_candidates = []
         retained_text = ""
         if whole_hpc and _should_check_declared_outputs(result):
             try:
@@ -3145,6 +3146,8 @@ class Runner:
                 result.ok = False
                 result.error = "incomplete: remote outputs could not be verified: " + self._hide_text(str(exc))[:300]
             if remote_manifests:
+                nested_candidates = [item for manifest in remote_manifests
+                                     for item in manifest.pop("_nested_candidates", [])]
                 from ..hpc_transfer import local_copy_conflicts
                 remote_paths = ["outputs/" + row["path"]
                                 for manifest in remote_manifests for row in manifest["files"]]
@@ -3184,9 +3187,16 @@ class Runner:
             missing_optional = [rel for name in optional_declared
                                 if (rel := output_relpath(name)) and not has_output(rel)]
             if missing_required:
+                diagnostic_eligible = result.ok
                 result.ok = False
                 result.missing_outputs = list(dict.fromkeys([*result.missing_outputs, *missing_required]))
                 result.error = "incomplete: missing outputs: " + ", ".join(result.missing_outputs)
+                nested = await asyncio.to_thread(self._verify_nested_candidates, task.request_id,
+                                                 missing_required, nested_candidates)
+                if nested and diagnostic_eligible:
+                    result.error_kind = "nested_hpc_outputs"
+                    result.error += ("; verified under an extra outputs/ directory: " + ", ".join(nested) +
+                                     ". The job already starts in outputs/: remove that prefix from its write paths.")
             if declared_dirs and result.ok and output_scan_notes and not remote_manifests:
                 # The bounded walk of outputs/ skipped something (too deep, too many entries, unreadable). That only
                 # matters for a declared folder the walk did not see whole: each folder is walked on its own, and an
@@ -4254,6 +4264,22 @@ class Runner:
                 collect_all = (ws.task.meta.get("kind") == "direct" or
                                ws.task.meta.get("collect_direct_outputs") is True)
                 unchanged = set(manifest.get("unchanged_inputs", []))
+                # These files are evidence only. Verify them separately and never add them to the collected manifest.
+                candidates = {}
+                for name in ws.task.meta.get("required_outputs", ws.task.meta.get("outputs", [])):
+                    rel = output_relpath(name)
+                    if not rel or rel == "outputs":
+                        continue
+                    target = "outputs/" + rel.removeprefix("outputs/")
+                    rows = [row for row in manifest["files"] if row["path"] not in unchanged and
+                            (row["path"] == target or row["path"].startswith(target + "/"))]
+                    omitted = any(target == row["path"] or target.startswith(row["path"] + "/") or
+                                  row["path"].startswith(target + "/") for row in manifest.get("skipped", []))
+                    if rows and not omitted:
+                        candidates[rel] = rows
+                pending_candidates = [(rel, {**manifest, "files": rows, "bytes": sum(row["bytes"] for row in rows),
+                                              "directories": [], "unchanged_inputs": [], "skipped": []})
+                                      for rel, rows in candidates.items()]
                 files = [row for row in manifest["files"] if (collect_all and row["path"] not in unchanged) or row["path"] in declared or
                          any(not d or row["path"].startswith(d + "/") for d in declared_dirs)]
                 manifest = {**manifest, "retained_bytes": manifest["bytes"],
@@ -4268,6 +4294,7 @@ class Runner:
                 copied.update(job.get("fetched_sha256", {}))
                 manifest["_local_copy_sha256"] = {row["path"]: copied[row["path"]]
                                                   for row in files if row["path"] in copied}
+                manifest["_nested_candidates"] = pending_candidates
                 file_paths = {row["path"].casefold() for row in manifest["files"]}
                 current_dirs = {directory.casefold() for directory in manifest["directories"]}
                 for path in file_paths:
@@ -4282,6 +4309,22 @@ class Runner:
                 directory_paths.update(current_dirs)
                 manifests.append(manifest)
         return manifests
+
+    def _verify_nested_candidates(self, request_id: str, missing: list[str], candidates: list) -> list[str]:
+        """Verify only missing outputs; evidence is never part of the collected output manifest."""
+        from ..hpc_transfer import verify_remote_data
+
+        verified = set()
+        with request_scope(request_id), queue_wait():
+            for rel, manifest in candidates:
+                if rel not in missing or rel in verified:
+                    continue
+                try:
+                    verify_remote_data(self.scheduler.transfer(), manifest, request_id)
+                except Exception:
+                    continue  # An unsafe, stale or unreadable candidate proves nothing.
+                verified.add(rel)
+        return [rel for rel in missing if rel in verified]
 
     def _fetch_job_files(self, j: dict, spec: dict) -> dict:
         from ..hpc_transfer import fetch_results

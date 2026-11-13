@@ -6,7 +6,7 @@ where dependencies allow (hibernate on HPC jobs, resume when they finish) → sc
 """
 
 from __future__ import annotations
-from ..request_persistence import create_revised_request, persist_request, remove_result, save_result
+from ..request_persistence import create_revised_request, persist_request, remove_result, save_result, update_request
 
 import sqlite3
 import asyncio
@@ -3102,8 +3102,8 @@ def failure_kind(outcome: TaskResult | BaseException, engine: str = "") -> str |
         return "terminal"
     if is_model_refusal(outcome):
         return "terminal"
-    if outcome.error_kind in PI_STOP_ERROR_KINDS or outcome.error_kind == "structured_output_format":
-        # PI stops and exhausted JSON repair must not enter another retry/facilities loop.
+    if outcome.error_kind in PI_STOP_ERROR_KINDS or outcome.error_kind in {"structured_output_format", "nested_hpc_outputs"}:
+        # PI stops, exhausted JSON repair and nested-output repair have their own bounded handling.
         return "terminal"
     if outcome.ok and (outcome.text.strip() or outcome.structured is not None or waiting(outcome)):
         return None
@@ -4486,7 +4486,7 @@ class Orchestrator:
             tool_errors = list(res.tool_errors)
             format_tries = 0
             while True:
-                if (res.error_kind == "structured_output_format" and res.format_retry
+                if (not turn.meta.get("nested_hpc_rerun") and res.error_kind == "structured_output_format" and res.format_retry
                         and format_tries < self.hub.s.runner.structured_output_retries and res.session_id):
                     # #673: the repair is a new dispatch of the same session, so it passes the request budget gate (and
                     # its reservation) with every other turn instead of being decided inside one runner turn. res holds
@@ -4624,10 +4624,10 @@ class Orchestrator:
         if task.meta.get("facilities_diagnosis"):
             return res  # one consult turn, even if a malformed reply claims pending jobs/questions
         read_only = is_read_only_task(task.meta)
-        environment = None if res.ok else environment_problem(res, engine)
+        environment = None if res.ok or res.error_kind == "nested_hpc_outputs" else environment_problem(res, engine)
         propose = facility_fixes.proposal(environment, res.error, res.tool_errors)
         approve_fix = getattr(self.hub, "request_facilities_fix", None)
-        if propose and not read_only and callable(approve_fix):
+        if propose and not read_only and not task.meta.get("nested_hpc_rerun") and callable(approve_fix):
             # Use the logical turn key, not a generated task id: direct requests must keep their one-fix limit
             # when the gateway restarts while the approval or repair is in flight.
             key = turn_key(task)
@@ -4702,7 +4702,7 @@ class Orchestrator:
                         **merged_tool_call_update(res, retried),
                     })
         diagnose = getattr(self.hub, "request_facilities_diagnosis", None)
-        if (environment and not propose and not read_only and not res.facilities_fix and
+        if (environment and not propose and not read_only and not task.meta.get("nested_hpc_rerun") and not res.facilities_fix and
                 task.meta.get("kind") in {"step", "direct"} and not task.meta.get("facilities_rerun") and
                 callable(diagnose)):
             await diagnose(task, res, turn_key(task))
@@ -4713,7 +4713,7 @@ class Orchestrator:
         # under a smaller limit (7th mock trial: QC had reproduced every number when its 40 turns ran out). Jobs and
         # questions belong to the turn that made them, so a turn still waiting on them keeps the old path
         # (PR #355 review).
-        finishes = int(task.meta.get("finish_turns") or 0) if task.meta.get("kind") == "step" else 0
+        finishes = int(task.meta.get("finish_turns") or 0) if task.meta.get("kind") == "step" and not task.meta.get("nested_hpc_rerun") else 0
         while (finishes > 0 and not res.ok and res.error_kind == "error_max_turns" and res.session_id
                and not read_only and not waiting(res) and self.hub.supports_resume(task.agent_id)):
             finishes -= 1
@@ -4731,7 +4731,7 @@ class Orchestrator:
                 res = merged_turn(res, await dispatch_turn(finish, max_attempts=1))
             except BudgetExceeded:
                 break
-        if (not res.ok and res.error_kind == "error_max_turns" and res.session_id and not read_only
+        if (not res.ok and res.error_kind == "error_max_turns" and res.session_id and not read_only and not task.meta.get("nested_hpc_rerun")
                 and self.hub.supports_resume(task.agent_id)):
             wrap = Task(agent_id=task.agent_id, request_id=rid,
                         prompt=continuation_prompt(task, WRAP_PROMPT, resumable=True,
@@ -4797,7 +4797,7 @@ class Orchestrator:
                                            previous_result=res, context_chars=self.cfg.context_chars_per_step),
                 meta=meta, resume_session_id=res.session_id if can_resume else None,
             )
-            res = merged_turn(res, await dispatch_turn(wake))
+            res = merged_turn(res, await dispatch_turn(wake, max_attempts=1 if task.meta.get("nested_hpc_rerun") else None))
             if not (awaited_jobs and set(res.pending_jobs) - awaited_jobs):
                 cycles += 1
         if res.ok and waiting(res):
@@ -4810,6 +4810,33 @@ class Orchestrator:
                          f"pending asks: {res.pending_asks}; pending jobs: {res.pending_jobs}",
                 "pending_asks": [], "pending_jobs": [], "blocking_decision": None,
             })
+        if (not res.ok and res.error_kind == "nested_hpc_outputs" and not read_only and not waiting(res)
+                and task.meta.get("kind") in {"step", "direct"}
+                and (task.meta.get("execution_location") or {}).get("mode") == "hpc"):
+            key = turn_key(task)
+
+            def claim_nested_retry(request):
+                used = request.setdefault("nested_hpc_retries", {})
+                if key in used:
+                    return False
+                used[key] = True
+                return True
+
+            # Persist before dispatch: a restart cannot grant a second repair turn.
+            if await update_request(self.hub, rid, claim_nested_retry):
+                can_resume = bool(res.session_id and self.hub.supports_resume(task.agent_id))
+                retry = task.model_copy(update={
+                    "id": new_id("task"), "context": "",
+                    "prompt": continuation_prompt(task, (res.error or "Nested HPC output detected.") +
+                                                  " Correct the job output paths and retry this step once.",
+                                                  resumable=can_resume, previous_result=res,
+                                                  context_chars=self.cfg.context_chars_per_step),
+                    "resume_session_id": res.session_id if can_resume else None,
+                    "meta": {**task.meta, "parent_task": res.task_id, "nested_hpc_rerun": True, "max_attempts": 1,
+                             **({"workdir": res.workdir} if res.workdir else {})},
+                })
+                return merged_workspace_rerun(res, await self.run_step(retry))
+            return res
         if final_step:  # every turn of the last step has run: an overrun now is recorded, not asked about
             await self._check_budget(rid, block=False, final_turn=True)
         if res.error_kind == "structured_output_format":

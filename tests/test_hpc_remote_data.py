@@ -425,6 +425,34 @@ def test_listing_hashes_large_outputs_and_next_input_rejects_same_size_change(cl
     assert path.read_bytes() == b'modified'
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX link verification is exercised by Linux CI')
+def test_nested_candidate_replaced_by_link_is_not_diagnosed(cluster, tmp_path):
+    from labhq.models import Task
+    from labhq.runner.daemon import Runner
+
+    transfer = helper_transfer(cluster)
+    spec = prepare(cluster, transfer, tmp_path, {'outputs/result.tsv': b'ok'})
+    manifest = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')['remote']
+    ws = SimpleNamespace(dir=tmp_path, task=Task(agent_id='worker', request_id='r', prompt='mock',
+                          meta={'kind': 'step', 'step_id': 's1', 'outputs': ['outputs/result.tsv']}))
+    runner = Runner.__new__(Runner)
+    runner.scheduler = SimpleNamespace(transfer=lambda: transfer)
+    runner.jobs = {'1': {'workdir': str(tmp_path), 'transfer': {'request_id': 'r', 'step_id': 's1'},
+                         'submitted_by_runner': True, 'terminal': True, 'state': 'completed', 'fetched': True,
+                         'remote_manifest': manifest}}
+    collected, = runner._remote_step_outputs(ws)
+    candidate = collected.pop('_nested_candidates')
+    assert collected['files'] == []
+    target = cluster.path(spec['work'] + '/outputs/result.tsv')
+    target.unlink()
+    target.symlink_to(tmp_path / 'outside')
+    assert runner._verify_nested_candidates('r', ['outputs/result.tsv'], candidate) == []
+
+    escaped = inventory(path='outputs/../escape.tsv')
+    with pytest.raises(ht.TransferError):
+        ht.validate_remote_manifest(escaped, 'r')
+
+
 @pytest.mark.parametrize('modified', [False, True])
 def test_declared_uploaded_input_can_also_be_a_remote_output(cluster, tmp_path, modified):
     transfer = helper_transfer(cluster)
