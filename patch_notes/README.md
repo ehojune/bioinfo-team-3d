@@ -10,10 +10,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-14
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:12 | [`820655f`](https://github.com/ehojune/bioinfo-team-3d/commit/820655f) | **Windows 설치 테스트에서 ACL 검사를 격리합니다.**<br>init 테스트의 CLI 차단을 유지하면서 ACL 진단만 대체한다 (#1413). |
+
 ## 2026-11-13
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:50 | [`50a7a06`](https://github.com/ehojune/bioinfo-team-3d/commit/50a7a06) | **Codex 작업 폴더 보호 목록을 줄이고 남은 읽기 거부를 진단합니다.**<br>비활성 날짜를 묶어 거부하고 Windows doctor가 작업 루트 ACL을 확인한다 (#1413). |
 | 16:21 | [`091bcca`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/091bcca) | **입력 없는 Codex 환경 생성 단계가 가상환경을 만듭니다.**<br>작업 폴더 쓰기를 유지하면서 다른 작업 폴더 읽기는 제한한다 (#1413). |
 | 16:12 | [`baac05a`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/baac05a) | **작업 준비 정리 중 초기 거절 동작을 보존합니다.**<br>runner 초기화 전에 거절하는 경로와 기존 상태 검사 회귀를 복구한다 (#1413). |
 | 15:56 | [`8d535f8`](https://github.com/ehojune/bioinfo-team-3d/pull/1426/commits/8d535f8) | **Windows Codex 작업 준비와 중첩 폴더 보호를 보완합니다.**<br>준비 중인 작업을 등록하고 비활성 중첩 폴더도 읽기 거부에 포함한다 (#1413). |
