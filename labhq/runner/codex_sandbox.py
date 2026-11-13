@@ -10,15 +10,18 @@ this reason alerts the PI once per runner process with the commands to set it up
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from ..adapters import codex as codex_adapter
-from ..adapters.base import _resolve_command, child_config_dirs
+from ..adapters.base import CODEX_WINDOWS_HELPERS, _resolve_command, child_config_dirs
 from ..models import ApprovalRequest
 from ..settings import Settings
 from ..test_guard import guard_test_path
@@ -27,6 +30,28 @@ from .versions import _probe, _version
 OK_FILE = ".labhq-sandbox-ok.json"
 APP_BIN = ("OpenAI", "Codex", "bin")
 _VERSIONS: dict[tuple, str | None] = {}
+_RECORD_LOCK = threading.Lock()
+
+
+@contextmanager
+def _sandbox_record_lock(home: Path):
+    """Serialize cooperating runner processes as well as threads on a stable lock file."""
+    from ..instance_guard import _file_lock
+    with _RECORD_LOCK:
+        deadline = time.monotonic() + 30
+        while True:
+            lock = _file_lock(home / ".labhq-sandbox-record.lock")
+            try:
+                lock.__enter__()
+                break
+            except (BlockingIOError, PermissionError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            lock.__exit__(None, None, None)
 
 
 def elevated_homes(settings: Settings, env: dict[str, str], workdir: Path, read_only: bool = False) -> list[Path]:
@@ -113,8 +138,13 @@ ONE_HOME_NOTE = ("한 PC에서 elevated sandbox는 Codex 홈 하나만 쓸 수 �
 
 def setup_hint(home: Path, command: list[str] | str | None, env: dict[str, str]) -> str:
     """PowerShell commands the PI runs once (it shows a UAC prompt): an elevated workspace-write run in a probe dir."""
+    launcher = [command] if isinstance(command, str) else list(command or [])
+    relative = app_relative(launcher[0], env) if len(launcher) == 1 else None
+    helper_path = (f'$env:PATH = "$env:LOCALAPPDATA/OpenAI/Codex/bin/{Path(relative).parent.as_posix()};$env:PATH"; '
+                   if relative else "")
     return (f"{ONE_HOME_NOTE}. PowerShell에서 직접 실행하고 UAC를 승인하세요: "
             f"$env:CODEX_HOME = {_powershell_home(home)}; "
+            f"{helper_path}"
             "$probe = Join-Path $env:TEMP 'labhq-sandbox-probe'; New-Item -ItemType Directory -Force $probe | Out-Null; "
             "Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $probe 'ok.txt'); "
             f"& {powershell_executable(command, env)} exec --skip-git-repo-check -C $probe -s workspace-write "
@@ -181,17 +211,44 @@ def read_ok(home: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def record_ok(home: Path, version: str, label: str) -> bool:
-    """Write the ok record when it changes; the time is when this version was first seen working."""
-    current = read_ok(home) or {}
-    if current.get("codex_version") == version and current.get("bin") == label:
-        return False
-    data = {"codex_version": version, "bin": label, "recorded_at": time.time()}
+def command_identity(command: list[str] | None) -> str | None:
+    """Private fingerprint of the launcher path and file metadata, including adjacent Windows helpers."""
+    if not command:
+        return None
+    try:
+        exe = Path(command[0]).resolve(strict=True)
+        files = [exe]
+        for arg in command[1:]:
+            path = Path(arg)
+            if path.is_absolute() and path.is_file():
+                files.append(path.resolve(strict=True))
+        if exe.name.lower() == "codex.exe":
+            files.extend(exe.parent / name for name in CODEX_WINDOWS_HELPERS if (exe.parent / name).is_file())
+        parts = [os.path.normcase(str(exe)), *command[1:]]
+        for path in files:
+            stat = path.stat()
+            parts.extend((path.name, str(stat.st_size), str(stat.st_mtime_ns)))
+        return hashlib.sha256(json.dumps(parts, ensure_ascii=False).encode("utf-8")).hexdigest()
+    except OSError:
+        return None
+
+
+def _write_record(home: Path, data: dict) -> None:
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=home, prefix=OK_FILE, suffix=".tmp",
                                      delete=False) as out:
         json.dump(data, out)
         temp = Path(out.name)
     temp.replace(home / OK_FILE)
+
+
+def record_ok(home: Path, version: str, label: str, identity: str | None = None) -> bool:
+    """Write the ok record when it changes; the time is when this version was first seen working."""
+    current = read_ok(home) or {}
+    if (current.get("codex_version") == version and current.get("bin") == label
+            and current.get("identity") == identity and current.get("state") == "ok"):
+        return False
+    _write_record(home, {"codex_version": version, "bin": label, "identity": identity,
+                         "state": "ok", "recorded_at": time.time()})
     return True
 
 
@@ -200,17 +257,23 @@ def has_setup_marker(home: Path) -> bool:
     return (home / ".sandbox" / "setup_marker.json").is_file()
 
 
-def check(home: Path, current: str | None) -> tuple[str, str]:
+def check(home: Path, current: str | None, command: list[str] | None = None) -> tuple[str, str]:
     """doctor status and one-line reason for one staff CODEX_HOME."""
+    record = read_ok(home) or {}
+    recorded = record.get("codex_version")
+    if record.get("state") == "failed":
+        return "warn", "sandbox setup 실패 기록 — 현재 준비 상태 미확인"
     if current is None:
         return "skip", "현재 codex 판본을 읽지 못해 sandbox 준비 판본을 비교하지 않음"
-    recorded = (read_ok(home) or {}).get("codex_version")
     if not recorded:
         return "warn", (f"sandbox 준비가 Codex {current}에서 성공한 기록 없음 — "
                         "무인 실행 전에 sandbox 준비를 다시 확인")
     if recorded != current:
         return "warn", f"Codex가 {recorded}에서 {current}로 바뀜 — 무인 실행 전에 sandbox 준비를 다시 확인"
-    return "ok", f"sandbox 준비가 Codex {current}에서 확인됨"
+    identity = command_identity(command)
+    if not identity or record.get("identity") != identity:
+        return "warn", "sandbox의 과거 성공 기록은 있으나 현재 설치 묶음과 일치하는지 미확인"
+    return "ok", f"Codex {current}의 같은 설치에서 과거 셸 성공 기록 (현재 상태 실시간 검증 아님)"
 
 
 def is_setup_failure(result) -> bool:
@@ -223,23 +286,38 @@ class SandboxWatch:
     def __init__(self) -> None:
         self.alerted = False
 
-    def _record(self, homes: list[Path], cmd: list[str], env: dict[str, str]) -> None:
+    def _record(self, homes: list[Path], cmd: list[str], env: dict[str, str], identity: str | None,
+                started_at: float | None) -> None:
         """`cmd` is the launcher the run started, never a fresh resolution: with `bin: auto` an app update during
         the run would otherwise record the new build as working."""
         homes = [home for home in homes if has_setup_marker(home)]
         version = codex_version(cmd, env) if homes else None
-        if version:
+        if version and identity and command_identity(cmd) == identity:
             for home in homes:
                 try:
-                    record_ok(home, version, executable_label(cmd[0], env))
+                    with _sandbox_record_lock(home):
+                        record = read_ok(home) or {}
+                        if record.get("state") == "failed" and (started_at is None or record.get("failed_at", 0) >= started_at):
+                            continue
+                        record_ok(home, version, executable_label(cmd[0], env), identity)
                 except OSError:
                     continue
+
+    def _record_failure(self, homes: list[Path]) -> None:
+        for home in homes:
+            try:
+                with _sandbox_record_lock(home):
+                    record = read_ok(home) or {}
+                    _write_record(home, {**record, "state": "failed", "failed_at": time.time()})
+            except OSError:
+                continue
 
     async def after_run(self, settings: Settings, ctx, env: dict[str, str], result, emit) -> None:
         homes = elevated_homes(settings, env, ctx.workdir, ctx.read_only)
         if not homes:
             return
         if is_setup_failure(result):
+            await asyncio.to_thread(self._record_failure, homes)
             if self.alerted:  # every later task fails the same way; its own result already says so
                 return
             self.alerted = True
@@ -256,4 +334,5 @@ class SandboxWatch:
         elif result.ok and ctx.commands_ran and ctx.started_command:
             # Only a run whose sandbox started a command proves the setup; text-only, MCP-only and output_schema
             # turns never touch it.
-            await asyncio.to_thread(self._record, homes, ctx.started_command, env)
+            await asyncio.to_thread(self._record, homes, ctx.started_command, env, ctx.started_command_identity,
+                                    ctx.started_at)

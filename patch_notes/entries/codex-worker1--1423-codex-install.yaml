@@ -1,0 +1,10 @@
+pr: 1424
+rows:
+- sha: 42b0757
+  at: 2026-11-13 10:43
+  text: npm launcher 변경도 설치 식별에 반영하고 runner 프로세스 사이 sandbox 기록 잠금을 추가합니다.
+  summary: 실행기 파일이 바뀌거나 여러 runner가 기록을 갱신할 때 과거 성공이 잘못 표시될 가능성을 줄였습니다.
+- sha: 914c041
+  at: 2026-11-13 10:35
+  text: Windows Codex 앱의 완전한 설치 묶음을 선택하고 sandbox 성공 기록을 설치와 후속 실패에 맞춰 판정합니다.
+  summary: Windows 직원 실행에서 준비 도구가 빠진 설치를 피하고 오래된 성공 기록의 오판을 줄였습니다.
