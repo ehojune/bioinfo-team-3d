@@ -59,7 +59,8 @@ def capture(request, settings, meta=None, *, allow_request_projects=False):
         for source in (request, meta or {}):
             paths.extend((p, False) for p in source.get('reference_dirs') or [])
             paths.extend((p, str(p) in projects) for p in source.get('project_dirs') or [])
-        roots = [Path(p).resolve(strict=True) for p in reference_roots(settings)] if paths else []
+        roots = ([Path(p).resolve(strict=True) for p in reference_roots(settings)]
+                 if any(not project for _, project in paths) else [])
         zones = [settings.path(z.path).resolve() for z in settings.policy.data_zones if z.level == 'restricted']
         private = resolve_private_paths(settings)
         maximum = settings.runner.reference_scan_max_entries

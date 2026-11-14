@@ -84,6 +84,15 @@ def test_unattached_meta_project_is_not_admitted(tmp_path):
     assert capture({'reference_dirs': [str(folder)]}, settings, allow_request_projects=True) is None
 
 
+def test_project_proof_does_not_depend_on_a_missing_reference_root(tmp_path):
+    settings, _, folder = fixture(tmp_path)
+    settings.runner.reference_roots = [str(tmp_path / 'missing')]
+    project = {'project_dirs': [str(folder)]}
+    assert capture(project, settings, allow_request_projects=True) is not None
+    project['reference_dirs'] = [str(folder)]
+    assert capture(project, settings, allow_request_projects=True) is None
+
+
 def test_project_proof_rejects_hardlinks_and_private_paths(tmp_path):
     import os
     settings, _, folder = fixture(tmp_path)
