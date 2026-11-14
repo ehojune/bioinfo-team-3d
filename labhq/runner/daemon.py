@@ -4551,13 +4551,14 @@ class Runner:
                         previous["_local_copy_sha256"] = {name: digest for name, digest in
                                                           previous["_local_copy_sha256"].items()
                                                           if name.casefold() != key}
-                        candidates = []
-                        for name, candidate in previous["_nested_candidates"]:
-                            rows = [old for old in candidate["files"] if old["path"].casefold() != key]
-                            if rows:
-                                candidates.append((name, {**candidate, "files": rows,
-                                                          "bytes": sum(old["bytes"] for old in rows)}))
-                        previous["_nested_candidates"] = candidates
+                        if "_nested_candidates" in previous:
+                            candidates = []
+                            for name, candidate in previous["_nested_candidates"]:
+                                rows = [old for old in candidate["files"] if old["path"].casefold() != key]
+                                if rows:
+                                    candidates.append((name, {**candidate, "files": rows,
+                                                              "bytes": sum(old["bytes"] for old in rows)}))
+                            previous["_nested_candidates"] = candidates
                     paths.add(key)
                     path_owners[key] = (manifest, submitted(job), job)
                 directory_paths.update(current_dirs)
