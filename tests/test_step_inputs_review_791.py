@@ -208,7 +208,7 @@ async def test_reused_workspace_inputs_remain_protected_without_new_artifact_met
     # Model a later turn reusing this workspace. No native CLI is run by the capture adapter.
     later, seen = _capture_runner(runner.s, monkeypatch, Engine.codex)
     result = await later.run_task(Task(id='later', agent_id='worker', request_id='r', prompt='fixture',
-        meta={'kind': 'result_correction', 'workdir': str(ctx.workdir)}))
+        meta={'kind': 'result_correction', 'step_id': 'qc', 'parent_task': 'down', 'workdir': str(ctx.workdir)}))
     assert result.ok
     assert seen['ctx'].read_only_inputs == [str(ctx.workdir / 'inputs')]
 

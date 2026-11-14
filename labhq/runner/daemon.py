@@ -2910,7 +2910,7 @@ class Runner:
             # A declared step artifact is a future ancestor input. Hash through the same admission cap;
             # Steps without declared artifacts retain their configured observation/output cap.
             artifact_hash_limit = self.s.runner.output_hash_max_bytes
-            if task.meta.get('kind') == 'step' and task.meta.get('outputs'):
+            if (task.meta.get('kind') == 'step' and task.meta.get('outputs')) or task.meta.get('kind') == 'result_correction':
                 artifact_hash_limit = max(artifact_hash_limit, min(
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes))
 
@@ -3112,6 +3112,7 @@ class Runner:
                                  engine=agent.engine.value, model=agent.model,
                                  engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
                                  resume_of=task.resume_session_id, kind=task.meta.get("kind"),
+                                 revision=task.meta.get("revision", 0),
                                  **({"reference_dirs": read_dirs} if read_dirs else {}))
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             self.tool_contexts[task.id] = ctx
@@ -3242,6 +3243,13 @@ class Runner:
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
         result.output_sha256 = hashed
+        if task.meta.get("kind") == "result_correction" and not whole_hpc and result.ok:
+            from .step_inputs import repair_outputs
+            try:
+                result.outputs, result.output_sha256 = repair_outputs(ws._manifest(), task, output_records)
+            except (ValueError, TypeError, KeyError, AttributeError) as exc:
+                result.ok = False
+                result.error = "incomplete: " + str(exc)
         remote_manifests = []
         nested_candidates = []
         retained_text = ""
@@ -3474,7 +3482,8 @@ class Runner:
                              cost_known=result.cost_known if result.cost_known is not None
                              else result.cost_usd is not None,
                              usage=result.usage, usage_known=result.usage_known,
-                             session_id=result.session_id, pending_jobs=pending)
+                             session_id=result.session_id, pending_jobs=pending,
+                             outputs=result.outputs, output_sha256=result.output_sha256)
         if task.meta.get("paper_skills"):
             ws.record_paper_skill_usage(result)
         result.provenance = ws.provenance()
