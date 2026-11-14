@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:48 | [`2fdd7d0`](https://github.com/ehojune/bioinfo-team-3d/commit/2fdd7d0) | **끝난 HPC 단계의 검증된 원격 결과를 수정 계획에서 다시 쓸 수 있습니다.**<br>수정 재계획 전후에 성공 run의 원격 산출과 로컬 충돌을 선택 runner에서 재검증한다 (#1413). |
 | 10:09 | [`4b23148`](https://github.com/ehojune/bioinfo-team-3d/commit/4b23148) | **이전 runner 기준에서도 수정된 잡의 결과를 수집합니다.**<br>구형 산출 목록에 선택적 중첩 후보가 없어도 동명 파일 교체를 처리한다 (#1413). |
 | 10:03 | [`f82ed2e`](https://github.com/ehojune/bioinfo-team-3d/commit/f82ed2e) | **고쳐 제출한 HPC 잡의 결과를 이후 단계에 전달합니다.**<br>같은 단계의 성공 잡 산출을 제출 순서로 고르고 역순 수집과 release 복원을 기록한다 (#1413). |
 | 06:36 | [`4e9f3a8`](https://github.com/ehojune/bioinfo-team-3d/pull/1430/commits/4e9f3a8) | **읽기 전용 입력 디스크의 용량 부족이 작업 쓰기 감시를 멈추지 않게 합니다.**<br>HPC snapshot 원본 project 경로를 직원의 쓰기 디스크 감시에서 제외한다 (#1413). |
