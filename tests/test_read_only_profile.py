@@ -272,6 +272,7 @@ async def test_read_only_run_that_writes_its_workspace_fails_and_alerts_the_pi(t
     result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
                                         meta={"kind": kind, "workdir": str(workdir)}))
     assert result.ok is False and "읽기 전용" in result.error and "(read-only policy)" in result.error
+    assert result.cleanup_evidence.get("read_only_check") == "violation"
     assert "+ workdir/canary.txt" in result.error and "~ workdir/inputs/table.tsv" in result.error
     assert str(tmp_path) not in result.error, "labels, not local paths: errors reach reports"
     from labhq.orchestrator.cso import failure_kind
@@ -312,6 +313,7 @@ async def test_labhq_own_files_and_the_adapter_prepare_step_are_not_changes(tmp_
         result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="q",
                                             meta={"kind": "followup", "workdir": str(workdir)}))
         assert result.ok, result.error
+        assert result.cleanup_evidence["read_only_check"] == "no_changes_observed"
     assert (workdir / "AGENTS.md").exists() and (workdir / "outputs" / "RESULT.md").exists()
 
 

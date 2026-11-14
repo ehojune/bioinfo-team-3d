@@ -103,6 +103,184 @@ SOURCES = ["cso", "facilities", "peer", "pi", "timeout", "task_cap", "target_cap
 CONSUMERS = ["session", "wake", "blocking", "persisted_blocking", "direct_recovery"]
 
 
+def _failed_start_pair(hub, task_id="task"):
+    old = AskRequest(task_id=task_id, agent_id="worker", request_id="r", to="cso",
+                     question="Which input?", why_blocked="missing")
+    answer = {"status": "rejected", "reason": "executable not found", "ask_id": old.id,
+              "consult_evidence": {"spawn": "failed", "end_observed": "start_failed",
+                                   "spawn_error_kind": "not_found",
+                                   "read_only_check": "no_changes_observed", "error_kind": None,
+                                   "exit_code": None}}
+    hub.store.put("ask", old.id, {"ask": old.model_dump(), "state": "resolved", "answer": answer})
+    replacement = AskRequest(task_id=task_id, agent_id="worker", request_id="r", to="facilities",
+                             question=old.question, why_blocked="missing", replaces_ask_id=old.id)
+    hub.store.put("ask", replacement.id, {"ask": replacement.model_dump(), "state": "pending", "origin": "runner"})
+    return old, replacement, answer
+
+
+async def test_replacement_is_verified_and_survives_reload(tmp_path):
+    from labhq.ask_results import read_ask_results
+
+    s = settings(tmp_path)
+    hub = Hub(s)
+    old, replacement, failed = _failed_start_pair(hub)
+    assert hub.pending_ask_replacements("task", [replacement.id]) == {old.id}
+    assert read_ask_results([failed], pending_replacements={old.id})["status"] == "answered"
+    await hub.resolve_ask(replacement, "runner", {"status": "answered", "answer": "use input A"})
+    assert read_ask_results(hub.ask_results_for_task("task"))["status"] == "answered"
+    hub.store.close()
+    restarted = Hub(s)
+    try:
+        rows = restarted.ask_results_for_task("task")
+        assert read_ask_results(rows)["status"] == "answered"
+        assert next(a for a in rows if a["ask_id"] == replacement.id)["verified_replacement_of"] == old.id
+    finally:
+        restarted.store.close()
+
+
+async def test_consult_failure_evidence_reaches_durable_ask(tmp_path):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    hub.agents = {"cso": {"engine": "mock"}, "worker": {"engine": "mock"}}
+    ask = AskRequest(task_id="task", agent_id="worker", request_id="r", to="cso",
+                     question="Which input?", why_blocked="missing")
+
+    async def dispatch(task):
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="start failed",
+                          cleanup_evidence={"spawn": "failed", "end_observed": "start_failed",
+                                            "spawn_error_kind": "not_found",
+                                            "read_only_check": "no_changes_observed"})
+
+    hub.dispatch = dispatch
+    try:
+        await hub.orchestrator.answer_ask(ask, "runner")
+        answer = hub.store.get("ask", ask.id)["answer"]
+        assert answer["status"] == "rejected"
+        assert answer["consult_evidence"] == {"spawn": "failed", "end_observed": "start_failed",
+                                             "spawn_error_kind": "not_found",
+                                             "read_only_check": "no_changes_observed", "error_kind": None,
+                                             "exit_code": None}
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("variant", ["other_task", "unrelated_question", "legacy", "malformed", "missing_exit", "permission", "exit", "violation", "timeout", "pi"])
+async def test_replacement_never_clears_unverified_or_unrelated_failure(tmp_path, variant):
+    from labhq.ask_results import read_ask_results
+
+    hub = Hub(settings(tmp_path))
+    try:
+        old, replacement, answer = _failed_start_pair(hub)
+        if variant == "other_task":
+            replacement.task_id = "other"
+        elif variant == "unrelated_question":
+            replacement.question = "A different question?"
+        elif variant == "pi":
+            entry = hub.store.get("ask", old.id)
+            entry["hard_stop"] = "data_zone"
+            hub.store.put("ask", old.id, entry)
+        else:
+            entry = hub.store.get("ask", old.id)
+            evidence = entry["answer"]["consult_evidence"]
+            if variant == "legacy":
+                entry["answer"].pop("consult_evidence")
+            elif variant == "malformed":
+                entry["answer"]["consult_evidence"] = "unknown"
+            elif variant == "missing_exit":
+                evidence.pop("exit_code")
+            elif variant == "permission":
+                evidence["spawn_error_kind"] = "other_os_error"
+            elif variant == "exit":
+                evidence.update(end_observed="process_exit", exit_code=1)
+            elif variant == "violation":
+                evidence["read_only_check"] = "violation"
+            else:
+                evidence["end_observed"] = "timeout"
+            hub.store.put("ask", old.id, entry)
+        assert not hub.valid_ask_replacement(replacement)
+        await hub.resolve_ask(replacement, "runner", {"status": "answered", "answer": "irrelevant"})
+        assert hub.store.get("ask", replacement.id)["answer"]["status"] == "rejected"
+        assert read_ask_results(hub.ask_results_for_task("task"))["status"] == "rejected"
+    finally:
+        hub.store.close()
+
+
+@pytest.mark.parametrize("replacement_ok", [True, False])
+async def test_pending_replacement_gates_job_wake(tmp_path, replacement_ok):
+    hub = Hub(settings(tmp_path))
+    hub.requests["r"] = {"id": "r", "text": "study", "status": "running"}
+    calls = []
+    pending = []
+
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) > 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="finished")
+        _, replacement, _ = _failed_start_pair(hub, task.id)
+
+        async def settle():
+            await asyncio.sleep(0.01)
+            answer = ({"status": "answered", "answer": "use input A"} if replacement_ok else
+                      {"status": "rejected", "reason": "consult failed"})
+            await hub.resolve_ask(replacement, "runner", answer)
+
+        pending.append(asyncio.create_task(settle()))
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, session_id="session",
+                          pending_asks=[replacement.id], pending_jobs=["job"])
+
+    async def jobs(_task_id):
+        return {"jobs": [{"job_id": "job", "state": "completed", "exit_status": 0}]}
+
+    hub.dispatch, hub.wait_jobs = dispatch, jobs
+    try:
+        result = await hub.orchestrator.run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+        assert result.ok is replacement_ok
+        assert len(calls) == (2 if replacement_ok else 1)
+        if replacement_ok:
+            assert "use input A" in calls[1].prompt and "job" in calls[1].prompt
+        else:
+            assert result.error_kind == "ask_rejected"
+    finally:
+        await asyncio.gather(*pending)
+        hub.store.close()
+
+
+async def test_runner_preserves_pending_replacement_after_failed_consult(tmp_path, monkeypatch):
+    runner = Runner(settings(tmp_path))
+    agent = AgentSpec(id="worker", name="Worker", role="test", engine=Engine.mock, builtin_mcp=[])
+    monkeypatch.setattr(runner, "_resolve_agent", lambda _task: agent)
+
+    async def emit(_event):
+        pass
+
+    async def on_ask(req):
+        if not req.replaces_ask_id:
+            runner.broker.resolve_ask(req.id, {"status": "rejected", "reason": "start failed",
+                "consult_evidence": {"spawn": "failed", "end_observed": "start_failed",
+                                     "spawn_error_kind": "not_found",
+                                     "read_only_check": "no_changes_observed", "error_kind": None,
+                                     "exit_code": None}})
+
+    class Adapter:
+        async def run(self, ctx):
+            old = AskRequest(task_id=ctx.task.id, agent_id="worker", request_id="r", to="cso",
+                             question="Which input?", why_blocked="missing")
+            assert (await runner.broker.request_ask(old))["status"] == "rejected"
+            new = AskRequest(task_id=ctx.task.id, agent_id="worker", request_id="r", to="facilities",
+                             question=old.question, why_blocked="missing", wait="hibernate",
+                             replaces_ask_id=old.id)
+            assert (await runner.broker.request_ask(new))["status"] == "pending"
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=True, session_id="session")
+
+    runner.emit, runner.broker._on_ask = emit, on_ask
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_args: Adapter())
+    try:
+        result = await runner.run_task(Task(agent_id="worker", request_id="r", prompt="work"))
+        assert result.ok and len(result.pending_asks) == 1
+    finally:
+        runner.store.close()
+
+
 @pytest.fixture
 def outcome_calls(monkeypatch):
     """Replacing both functions proves the live paths use the shared contract."""

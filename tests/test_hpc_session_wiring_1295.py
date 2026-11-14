@@ -590,6 +590,7 @@ def cluster(tmp_path, monkeypatch):
 
 def runner_fixture(tmp_path, cluster):
     r = Runner.__new__(Runner)
+    r._job_fetch_lock = asyncio.Lock()  # __new__ bypasses Runner.__init__
     r.s, r.scheduler = cluster.s, sched.Scheduler(cluster.s.hpc)
     r.jobs, r.task_req, r.workspaces, r.active_roots = {}, {}, {}, {}
     r.events, r.submitting, r.notified, r.tasks = [], {}, set(), {}

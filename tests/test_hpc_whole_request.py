@@ -948,6 +948,67 @@ def _late_runner(tmp_path):
     return runner, events
 
 
+async def test_concurrent_job_wakes_do_not_fetch_the_same_job_twice(tmp_path, monkeypatch):
+    import threading
+
+    runner, _ = _late_runner(tmp_path)
+    workdir, job = _staged_job(runner, tmp_path, step_file="original")
+    job.update(fetched=False, state="completed", transfer={"fetch_to": str(workdir / "outputs")})
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def fetch(j, spec):
+        calls.append(j["job_id"])
+        entered.set()
+        assert release.wait(5)
+        return {"fetched": [{"path": "sub/index.tsv", "sha256": "digest"}], "skipped": []}
+
+    monkeypatch.setattr(runner, "_fetch_job_files", fetch)
+    first = asyncio.create_task(runner._fetch_finished_jobs())
+    assert await asyncio.to_thread(entered.wait, 5)
+    second = asyncio.create_task(runner._fetch_finished_jobs())
+    await asyncio.sleep(0.1)
+    assert len(calls) == 1
+    release.set()
+    await asyncio.gather(first, second)
+    assert calls == ["7682"]
+    assert job["fetched"] is True
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert (workdir / "jobs" / "replaced" / "7682" / "sub" / "index.tsv").read_text(encoding="utf-8") == "original"
+
+
+async def test_cancelled_fetch_waits_for_transfer_before_another_fetch(tmp_path, monkeypatch):
+    import threading
+
+    runner, _ = _late_runner(tmp_path)
+    workdir, job = _staged_job(runner, tmp_path, step_file="original")
+    job.update(fetched=False, state="completed", transfer={"fetch_to": str(workdir / "outputs")})
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def fetch(j, spec):
+        calls.append(j["job_id"])
+        entered.set()
+        assert release.wait(5)
+        return {"fetched": [{"path": "sub/index.tsv", "sha256": "digest"}], "skipped": []}
+
+    monkeypatch.setattr(runner, "_fetch_job_files", fetch)
+    first = asyncio.create_task(runner._fetch_finished_jobs())
+    assert await asyncio.to_thread(entered.wait, 5)
+    first.cancel()
+    second = asyncio.create_task(runner._fetch_finished_jobs())
+    await asyncio.sleep(0.1)
+    assert len(calls) == 1
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await second
+    assert len(calls) == 2
+    assert job["fetch_tries"] == 1  # cancellation must not consume a transfer failure attempt
+    assert job["fetched"] is True
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+
+
 async def test_job_files_are_staged_and_committed_only_while_the_step_still_waits(tmp_path, monkeypatch):
     from labhq import hpc_transfer
     runner, _ = _late_runner(tmp_path)

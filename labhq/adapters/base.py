@@ -1190,6 +1190,8 @@ class AgentAdapter(ABC):
             ctx.bench_spawn(bench_spawn_id, "failed", cmd, payload)
             memory_guard.close()
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                              cleanup_evidence={"spawn": "failed", "end_observed": "start_failed",
+                                                "spawn_error_kind": "not_found"},
                               error=f"executable not found: {cmd[0]!r} — install it on the runner or fix "
                                     f"engines/cli settings for agent {ctx.agent.id!r}")
         except OSError as exc:
@@ -1197,6 +1199,8 @@ class AgentAdapter(ABC):
             memory_guard.close()
             detail = exc.strerror or str(exc)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
+                              cleanup_evidence={"spawn": "failed", "end_observed": "start_failed",
+                                                "spawn_error_kind": "other_os_error"},
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.bench_spawn(bench_spawn_id, "started", spawn_cmd, payload)
         # #863: the wrapper the runner started and holds; its activation line and end are recorded below.
@@ -1395,6 +1399,7 @@ class AgentAdapter(ABC):
                         continue
                     minutes = max(1, math.ceil((time.monotonic() - last_output) / 60))
                     st.error = f"engine stream timed out: no output for {minutes} min and no running command"
+                    cleanup["end_observed"] = "stall_timeout"
                     await self._kill(proc)
                     return
                 due = []
@@ -1424,6 +1429,7 @@ class AgentAdapter(ABC):
             # Decided and marked with no await between the check above and the kill: a run that ends on its own is never
             # relabelled halted, and the notice is written only once the tree really is being ended (#1174).
             st.error_kind = "halted"
+            cleanup["end_observed"] = "halted"
             st.error = "halted by the PI"
             if not (st.session_id or ctx.task.resume_session_id):
                 st.error += ": " + session_note
@@ -1439,10 +1445,12 @@ class AgentAdapter(ABC):
         try:
             await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
         except asyncio.TimeoutError:
+            cleanup["end_observed"] = "timeout"
             st.error = f"timeout after {self.settings.runner.task_timeout_s}s"
             cleanup["kill"] = await self._kill(proc)
             await drain
         except asyncio.CancelledError:
+            cleanup["end_observed"] = "cancelled"
             guard.cancel()
             try:
                 cleanup["kill"] = await self._kill(proc)
@@ -1484,6 +1492,7 @@ class AgentAdapter(ABC):
         st.ended_by_guard = ended_after_result
         res = self.finalize(st, ctx, returncode)
         res.exit_code = returncode
+        cleanup.setdefault("end_observed", "result_guard" if ended_after_result else "process_exit")
         res.cleanup_evidence = self._cleanup_evidence(cleanup, proc)
         ctx.commands_ran = st.commands_ran
         secrets = self._secret_values(ctx, env)
@@ -1635,7 +1644,10 @@ class AgentAdapter(ABC):
                                 if key in ("requested", "tree", "wait")}
         observed.update(returncode=returncode if type(returncode) is int else None,
                         wait="completed" if type(returncode) is int else "not_finished")
-        return cleanup_verdict(observed)
+        verdict = cleanup_verdict(observed)
+        if record.get("end_observed"):
+            verdict["end_observed"] = record["end_observed"]
+        return verdict
 
     @classmethod
     def _report_cleanup(cls, ctx: RunContext, record: dict[str, Any], proc: Any) -> dict[str, Any]:

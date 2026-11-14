@@ -53,6 +53,7 @@ class Broker:
         self._on_restricted = on_restricted
         self.hibernate_asks: dict[str, str] = {}
         self.task_ask_results: dict[str, list[dict]] = {}
+        self.task_ask_requests: dict[str, dict[str, AskRequest]] = {}
         self.identities: dict[str, dict[str, str | bool | None]] = {}
         self._on_approval, self._on_event, self._on_submit = on_approval, on_event, on_submit
         self._on_ask = on_ask
@@ -216,6 +217,7 @@ class Broker:
         return False
 
     async def request_ask(self, req: AskRequest) -> dict:
+        self.task_ask_requests.setdefault(req.task_id or "", {})[req.id] = req
         def terminal(answer: dict) -> dict:
             result = ask_result(**{**answer, "ask_id": req.id})
             outcome = read_ask_results([result])
@@ -274,8 +276,23 @@ class Broker:
     def pending_for_task(self, task_id: str) -> list[str]:
         return [ask_id for ask_id, owner in self.hibernate_asks.items() if owner == task_id]
 
+    def pending_replacements(self, task_id: str) -> set[str]:
+        from ..ask_results import replacement_allowed
+
+        requests = self.task_ask_requests.get(task_id, {})
+        results = {r.get("ask_id"): r for r in self.task_ask_results.get(task_id, [])}
+        deferred = set()
+        for ask_id in self.pending_for_task(task_id):
+            req = requests.get(ask_id)
+            old = requests.get(req.replaces_ask_id or "") if req else None
+            if (req and old and not hard_stop_kind(req) and replacement_allowed(
+                    old.model_dump(), results.get(old.id) or {}, req.model_dump())):
+                deferred.add(old.id)
+        return deferred
+
     def finish_task(self, task_id: str) -> None:
         self.task_ask_results.pop(task_id, None)
+        self.task_ask_requests.pop(task_id, None)
         for ask_id in self.pending_for_task(task_id):
             self.hibernate_asks.pop(ask_id, None)
 

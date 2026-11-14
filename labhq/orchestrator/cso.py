@@ -3836,12 +3836,17 @@ class Orchestrator:
         ).hexdigest()
         entries = self.hub.store.all("ask")
         current = entries.get(ask.id) or {}
+        if ask.replaces_ask_id and not self.hub.valid_ask_replacement(ask):
+            await self.hub.resolve_ask(ask, runner_id, ask_result(
+                reason="replacement does not match an eligible failed consult", **{"from": "labhq"}))
+            return
         automatic = bool(current.get("facilities_diagnosis"))
         scope = tuple(current["scope"]) if automatic else self._ask_scope(ask.model_dump())
         self.hub.store.put("ask", ask.id, {"ask": ask.model_dump(mode="json"), "origin": runner_id,
                                            **current, "signature": signature, "scope": scope})
         for other_id, entry in entries.items():
-            if other_id != ask.id and entry.get("signature") == signature and entry.get("state") == "resolved":
+            if (not ask.replaces_ask_id and other_id != ask.id and entry.get("signature") == signature
+                    and entry.get("state") == "resolved"):
                 cached = ask_result(**{**entry["answer"], "cached": True})
                 if ask.to == "facilities" and cached.get("routed_to") == "cso":
                     if "facilities" in self.hub.agents:
@@ -4052,7 +4057,12 @@ class Orchestrator:
             answer = result.text.strip() if answered else f"상담 실패: {result.error or 'empty answer'}"
             await resolve_consult(ask_result(
                 answer=answer if answered else None, reason=None if answered else answer,
-                **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count)}))
+                **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count),
+                   "consult_evidence": {"error_kind": result.error_kind, "exit_code": result.exit_code,
+                                        "spawn": result.cleanup_evidence.get("spawn"),
+                                        "spawn_error_kind": result.cleanup_evidence.get("spawn_error_kind"),
+                                        "end_observed": result.cleanup_evidence.get("end_observed"),
+                                        "read_only_check": result.cleanup_evidence.get("read_only_check")}}))
 
     # ---------- follow-up on a finished request (#36) ----------
     async def run_followup(self, rid: str, fid: str) -> None:
@@ -4525,7 +4535,10 @@ class Orchestrator:
                 # Audit even failed/exceptional attempts. Keep answered asks across
                 # every retry, including engines without session resume.
                 answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
-                outcome = read_ask_results(answers)
+                deferred = getattr(self.hub, "pending_ask_replacements", lambda *_args: set())(
+                    res.task_id, res.pending_asks)
+                outcome = (read_ask_results(answers, pending_replacements=deferred) if deferred
+                           else read_ask_results(answers))
                 if outcome["status"] == "rejected":
                     res = rejected_step(res, outcome["reason"])
                     kind = "terminal"
@@ -4858,6 +4871,9 @@ class Orchestrator:
             prompts = []
             if res.pending_asks:
                 answers = await self.hub.wait_asks(res.pending_asks)
+                retained = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
+                known = {answer.get("ask_id") for answer in answers if answer.get("ask_id")}
+                answers = [*answers, *(answer for answer in retained if answer.get("ask_id") not in known)]
                 outcome = read_ask_results(answers)
                 if outcome["status"] == "rejected":
                     res = rejected_step(res, outcome["reason"])

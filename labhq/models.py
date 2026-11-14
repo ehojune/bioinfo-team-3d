@@ -605,6 +605,7 @@ class AskRequest(BaseModel):
     tried: list[str] = Field(default_factory=list, max_length=12)
     options: list[str] = Field(default_factory=list, max_length=12)
     refs: list[str] = Field(default_factory=list, max_length=20)
+    replaces_ask_id: str | None = Field(default=None, max_length=100)
     # Set by the runner's capability token, never trusted from the MCP caller (#86).
     source_workdir: str | None = None
     # Also from the token: the asking task's inputs touch a restricted zone, so no staff that send data out may

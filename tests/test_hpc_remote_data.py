@@ -617,10 +617,12 @@ def test_permanent_local_retrieval_refusal_keeps_verified_remote_outputs(cluster
 
 
 async def test_fetch_receipts_are_saved_with_the_job_for_local_copy_admission():
+    import asyncio
     from unittest.mock import AsyncMock, Mock
     from labhq.runner.daemon import Runner
 
     runner = Runner.__new__(Runner)
+    runner._job_fetch_lock = asyncio.Lock()  # __new__ bypasses Runner.__init__
     job = {'task_id': 't', 'terminal': True, 'transfer': {'dir': 'mock'}}
     runner.jobs = {'j': job}
     runner.task_req = {'t': 'r'}

@@ -422,6 +422,7 @@ class Runner:
         self.registry = Registry(settings.path(settings.runner.agents_dir), settings.path(settings.runner.talent_dir),
                                  settings.path(settings.runner.contract_dir) if settings.runner.contract_dir else None)
         self._contract_lock = asyncio.Lock()
+        self._job_fetch_lock = asyncio.Lock()
         self.ws_root = settings.path(settings.runner.workspace_root)
         self.input_hash_cache = InputHashCache(
             settings.path(settings.runner.state_dir) / "input-sha256-cache.json")
@@ -1833,7 +1834,8 @@ class Runner:
             await emit("agent.log", {"level": "warn", "text": (
                 f"읽기 전용 쓰기 확인에서 제외: 바뀐 항목 {left_out}개 (실행 중 다른 작업이 쓰던 폴더)")})
         if not changed:
-            return result
+            return result.model_copy(update={"cleanup_evidence": {
+                **result.cleanup_evidence, "read_only_check": "incomplete" if left_out else "no_changes_observed"}})
         # Labels stand in for local paths in the error and the alert; this local manifest maps them back.
         await ws.aupdate_run(task_id, read_only_changes=changed,
                              read_only_roots={label: str(path) for label, path in watch.roots})
@@ -1842,7 +1844,8 @@ class Runner:
             f"읽기 전용 실행이 파일을 바꿨습니다: {shown}. 되돌리지 않았으니 확인하세요. "
             "전체 목록과 폴더 이름은 작업 폴더 manifest.json의 read_only_changes·read_only_roots")})
         return result.model_copy(update={
-            "ok": False, "error": f"읽기 전용 실행 중 파일 {len(changed)}개가 바뀌어 결과를 쓰지 않습니다: {shown} "
+            "ok": False, "cleanup_evidence": {**result.cleanup_evidence, "read_only_check": "violation"},
+            "error": f"읽기 전용 실행 중 파일 {len(changed)}개가 바뀌어 결과를 쓰지 않습니다: {shown} "
                                   "(read-only policy)"})
 
     def _system_ca_env(self, agent: AgentSpec) -> dict[str, str]:
@@ -3143,7 +3146,10 @@ class Runner:
                         except OSError:
                             log.warning("codex sandbox record failed", exc_info=True)
                 result.pending_asks = self.broker.pending_for_task(task.id)
-                outcome = read_ask_results(self.broker.task_ask_results.get(task.id, []))
+                answers = self.broker.task_ask_results.get(task.id, [])
+                deferred = self.broker.pending_replacements(task.id)
+                outcome = (read_ask_results(answers, pending_replacements=deferred) if deferred
+                           else read_ask_results(answers))
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
             finally:
@@ -4417,6 +4423,10 @@ class Runner:
     async def _fetch_finished_jobs(self) -> None:
         """Bring home the logs and small results of each finished job that ran without a shared file system (#1308), before
         its agent is woken. A failure is retried on the next poll and then reported; the agent is woken either way."""
+        async with self._job_fetch_lock:
+            await self._fetch_finished_jobs_locked()
+
+    async def _fetch_finished_jobs_locked(self) -> None:
         for jid, j in list(self.jobs.items()):
             spec = j.get("transfer")
             if not (spec and j.get("terminal")) or j.get("fetched") or j.get("fetch_tries", 0) >= self.FETCH_TRIES:
@@ -4427,7 +4437,22 @@ class Runner:
                 continue  # waiting for login admission does not consume file-recovery attempts or wake the employee
             j["fetch_tries"] = j.get("fetch_tries", 0) + 1
             try:
-                manifest = await asyncio.to_thread(self._fetch_job_files, j, spec)
+                transfer = asyncio.create_task(asyncio.to_thread(self._fetch_job_files, j, spec))
+                try:
+                    manifest = await asyncio.shield(transfer)
+                except asyncio.CancelledError:
+                    # The thread may still write staging files. Keep the lock until it stops.
+                    while not transfer.done():
+                        try:
+                            await asyncio.shield(transfer)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:
+                            break
+                    if not transfer.cancelled():
+                        transfer.exception()  # retrieve any exception before propagating cancellation
+                    j["fetch_tries"] -= 1  # the cancelled poll never committed its transfer result
+                    raise
             except LoginLimitReached as stop:
                 j["fetch_tries"] -= 1
                 await self._notify_login_limit(request_id, stop, [j], operation="fetch")

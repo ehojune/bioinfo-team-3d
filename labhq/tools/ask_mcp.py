@@ -33,11 +33,15 @@ server = make_server(
 @server.tool()
 async def ask(to: str, question: str, why_blocked: str, tried: list[str] | None = None,
               options: list[str] | None = None, refs: list[str] | None = None,
-              wait: Literal["short", "hibernate"] = "short") -> str:
-    """Ask a single question and return one terminal answer or a hibernate instruction."""
+              wait: Literal["short", "hibernate"] = "short", replaces_ask_id: str | None = None) -> str:
+    """Ask a single question and return one terminal answer or a hibernate instruction.
+
+    For a failed consult, use its ask_id in replaces_ask_id and repeat the same question and refs.
+    Only a verified file-not-found failure before process start is eligible; unknown failures remain blocking.
+    """
     payload = {"task_id": TASK, "agent_id": AGENT, "to": to, "question": question,
                "why_blocked": why_blocked, "tried": tried or [], "options": options or [],
-               "refs": refs or [], "wait": wait}
+               "refs": refs or [], "wait": wait, "replaces_ask_id": replaces_ask_id}
     try:
         async with httpx.AsyncClient(timeout=ASK_MAX_WAIT_S + 30) as client:
             response = await client.post(f"{BROKER}/ask", headers={"X-Labhq-Token": TOKEN}, json=payload)

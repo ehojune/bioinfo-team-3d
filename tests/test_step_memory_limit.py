@@ -436,6 +436,7 @@ async def test_a_finished_run_records_trusted_cleanup_evidence(tmp_path, monkeyp
     result = await adapter.run(ctx)
     evidence = result.cleanup_evidence
     assert evidence["status"] == status and evidence["wrapper_pid"] == 4242
+    assert evidence["end_observed"] == "process_exit"
     assert evidence["wrapper_created"] == 133000000000000000 and evidence["returncode"] == code
     assert evidence["active_processes_measured"] is False and not result.shutdown_evidence and reports == []
     tail = (ctx.workdir / ".labhq" / "stderr_tail.txt").read_text(encoding="utf-8")
@@ -450,6 +451,20 @@ async def test_without_a_job_the_end_is_unknown(tmp_path, monkeypatch):
 
     adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn, limit=0)
     assert (await adapter.run(ctx)).cleanup_evidence["reason"] == "windows_job_disabled"
+
+
+@pytest.mark.parametrize("error, kind", [(FileNotFoundError("missing"), "not_found"),
+                                        (PermissionError("denied"), "other_os_error")])
+@pytest.mark.asyncio
+async def test_failed_process_start_preserves_observed_evidence(tmp_path, monkeypatch, error, kind):
+    async def spawn(*_args, **_kwargs):
+        raise error
+
+    adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn)
+    result = await adapter.run(ctx)
+    assert not result.ok and result.exit_code is None
+    assert result.cleanup_evidence == {"spawn": "failed", "end_observed": "start_failed",
+                                       "spawn_error_kind": kind}
 
 
 @pytest.mark.asyncio
@@ -471,6 +486,7 @@ async def test_a_cancelled_run_reports_its_wrapper_end_before_the_cancel_propaga
         await run
     assert killed == [4242] and len(reports) == 1
     assert reports[0]["status"] == "job_close_contract_enforced" and reports[0]["returncode"] == 1
+    assert reports[0]["end_observed"] == "cancelled"
     assert reports[0]["kill"]["tree"]["killed"] == 2
 
 

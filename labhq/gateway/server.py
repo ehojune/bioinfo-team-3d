@@ -2191,7 +2191,10 @@ class Hub:
         for body in candidates:
             if body:
                 result = TaskResult.model_validate(body)
-                outcome = read_ask_results(self.ask_results_for_task(result.task_id))
+                answers = self.ask_results_for_task(result.task_id)
+                deferred = self.pending_ask_replacements(result.task_id, result.pending_asks)
+                outcome = (read_ask_results(answers, pending_replacements=deferred) if deferred
+                           else read_ask_results(answers))
                 if outcome["status"] == "rejected":
                     return rejected_step(result, outcome["reason"])
                 if result.ok and not waiting(result):
@@ -5280,9 +5283,43 @@ class Hub:
                             "data": {**answer, "to": ask.agent_id, "question": ask.question}},
                            inbox_key=entry["inbox_key"], publication_name="agent.answer")
 
+    def valid_ask_replacement(self, ask: AskRequest) -> bool:
+        from ..ask_results import replacement_allowed
+
+        old = self.store.get("ask", ask.replaces_ask_id or "") or {}
+        return bool(old.get("state") == "resolved" and not old.get("hard_stop")
+                    and not old.get("facilities_diagnosis") and
+                    replacement_allowed(old.get("ask") or {}, old.get("answer") or {}, ask.model_dump()))
+
+    def pending_ask_replacements(self, task_id: str, pending: list[str]) -> set[str]:
+        from ..models import hard_stop_kind
+
+        deferred = set()
+        for ask_id in pending:
+            entry = self.store.get("ask", ask_id) or {}
+            if entry.get("state") not in {"pending", "working"} or entry.get("recovery_blocked"):
+                continue
+            try:
+                ask = AskRequest.model_validate(entry.get("ask") or {})
+            except (ValueError, TypeError):
+                continue  # malformed or old pending records cannot defer a failure
+            if (ask.task_id == task_id and not hard_stop_kind(ask, self.s.policy.bioinfo_agent.hard_stops)
+                    and self._ask_generation_current(entry) and self.valid_ask_replacement(ask)):
+                deferred.add(ask.replaces_ask_id)
+        return deferred
+
     async def resolve_ask(self, ask: AskRequest, runner_id: str, answer: dict) -> None:
+        from ..models import hard_stop_kind
+
         answer = ask_result(**{**answer, "ask_id": ask.id})
+        answer.pop("verified_replacement_of", None)  # only this gateway may attest the relationship
         entry = self.store.get("ask", ask.id) or {"ask": ask.model_dump(mode="json"), "origin": runner_id}
+        if ask.replaces_ask_id and answer["status"] == "answered":
+            if (self.valid_ask_replacement(ask) and not entry.get("hard_stop")
+                    and not hard_stop_kind(ask, self.s.policy.bioinfo_agent.hard_stops)):
+                answer["verified_replacement_of"] = ask.replaces_ask_id
+            else:
+                answer = ask_result(reason="replacement does not match an eligible failed consult", ask_id=ask.id)
         if entry.get("inbox_key") and entry.get("state") == "resolved":
             if entry.get("answer") != answer or entry.get("origin") != runner_id:
                 raise ValueError("ask answer conflict")
