@@ -352,6 +352,7 @@ def stub_runner(site, job):
     from labhq.runner.daemon import Runner
 
     runner = Runner.__new__(Runner)
+    runner._job_fetch_lock = asyncio.Lock()  # __new__ bypasses Runner.__init__
     runner.s, runner.scheduler = site.settings, sched.Scheduler(site.settings.hpc)
     runner.jobs, runner.task_req, runner.events = {"1000": job}, {"t1": "req_1"}, []
     runner.store = SimpleNamespace(put=lambda *a, **k: None, run_batch=lambda fn: fn(),

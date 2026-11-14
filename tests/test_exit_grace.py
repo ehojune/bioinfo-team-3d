@@ -82,6 +82,7 @@ async def test_process_left_after_final_event_is_ended_and_result_kept(tmp_path,
     res, events, elapsed = await _run(tmp_path, engine, sleep_s=60, grace_s=1)
     assert elapsed < 1 + 15, elapsed
     assert res.ok, res.error
+    assert res.cleanup_evidence["end_observed"] == "result_guard"
     assert res.text == "문헌 정리 끝"
     assert res.session_id in ("thr-330", "sess-330")
     logs = _kill_logs(events)
