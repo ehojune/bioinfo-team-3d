@@ -370,3 +370,5 @@ def test_group_direction_does_not_claim_effect_direction():
         assert check(sentence, tables)["findings"] == []
     findings = check("하향 유전자 군의 위험은 감소했습니다 (OR 1.24, [표](effect.tsv)).", tables)["findings"]
     assert [item["kind"] for item in findings] == ["direction"]
+    findings = _consistency("KLF15은 하향 유전자입니다 ([표](steps/s3/outputs/de.tsv)).")["findings"]
+    assert [item["kind"] for item in findings] == ["direction"]

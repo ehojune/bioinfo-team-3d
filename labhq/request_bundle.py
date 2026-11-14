@@ -945,7 +945,8 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                         return "](" + destination + (match.group(2) or "") + ")"
                     return match.group(0)
 
-                report_text = re.sub(r'\]\(\s*(<[^>\n]+>|[^\s()<>]+)(\s+"[^"\n]*")?\s*\)', rebase_link, draft)
+                report_text = re.sub(r"\]\(\s*(<[^>\n]+>|[^\s()<>]+)(\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)",
+                                     rebase_link, draft)
                 p1 = [item for item in review.get("issues") or []
                       if isinstance(item, Mapping) and item.get("priority", "P1") == "P1"]
                 issue_lines = [f"- {item.get('step_id', '-')}: {item.get('problem', '')} → {item.get('request', '')}"
