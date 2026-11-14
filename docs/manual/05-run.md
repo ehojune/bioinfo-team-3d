@@ -2,6 +2,8 @@
 
 ## 띄우기와 접속
 
+같은 단계·revision에서 성공한 HPC 잡이 같은 파일을 만들면 나중에 제출한 잡의 산출을 사용하고 앞선 사본은 `jobs/replaced/`에 보관합니다. 동시에 제출한 잡의 충돌, 실행 중인 잡, 마지막 성공 뒤의 실패, 파일과 폴더의 경로 충돌은 거부합니다.
+
 ```bash
 .\labhq -c config\labhq.yaml up
 .\labhq -c config\labhq.yaml open

@@ -16,6 +16,7 @@ from functools import wraps
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import stat
@@ -448,6 +449,7 @@ class Runner:
         self._preparing_codex_workdirs: dict[asyncio.Task, Path] = {}
         self.submitting: dict[str, set[asyncio.Future]] = {}  # submit commands running, by task (#214 review)
         self.jobs: dict[str, dict] = self.store.all("job")
+        self._recover_fetch_moves()
         self.notified: set[str] = set(self.store.all("notified"))
         self.task_req.update({j["task_id"]: j.get("request_id") for j in self.jobs.values() if j.get("task_id")})
         limit = settings.annot.request_lookup_limit
@@ -3503,17 +3505,21 @@ class Runner:
         if location and (location.get("mode") != "hpc" or ws.task.meta.get("kind") not in {"step", "direct"}):
             return {"error": "this request selected local execution for this task; no HPC job was submitted"}
 
+        submission_overlapped = False
+
         async def approve(payload: dict) -> dict:
             return await self.broker.request_approval(ApprovalRequest.model_validate(
                 {**payload, "task_id": tid, "agent_id": aid, "request_id": body.get("request_id")}))
 
         @contextlib.asynccontextmanager
         async def gate():
+            nonlocal submission_overlapped
             # Same run as the call: a task that ended (or resumed as a new run) while the PI decided gets no job.
             if self.active_roots.get(tid or "") is not running:
                 yield False
                 return
             done = asyncio.get_running_loop().create_future()
+            submission_overlapped = bool(self.submitting.get(tid or ""))
             self.submitting.setdefault(tid or "", set()).add(done)
             try:
                 yield True  # run_task waits for this before it lists the task's pending jobs
@@ -3531,7 +3537,8 @@ class Runner:
                                    "name": result["name"], "script": result["script"],
                                    "script_sha256": result["script_sha256"],
                                    "core_hours": result["core_hours"]},
-                                  {"transfer": {**result["transfer"], "fetch_to": str(fetch_to),
+                                  {"submission_overlapped": submission_overlapped,
+                                   "transfer": {**result["transfer"], "fetch_to": str(fetch_to),
                                                 "step_id": ws.task.meta.get("step_id"),
                                                 "revision": ws.task.meta.get("revision", 0)}}
                                   if result.get("transfer") else None)
@@ -3702,9 +3709,11 @@ class Runner:
         """Watch a job the runner submitted. No broker endpoint reaches this with a caller's id."""
         jid, tid = str(body["job_id"]), body.get("task_id")
         ws = self.workspaces.get(tid or "")
+        sequence = max((j.get("submission_seq", 0) for j in self.jobs.values()
+                        if type(j.get("submission_seq", 0)) is int), default=0) + 1
         self.jobs[jid] = {"job_id": jid, "task_id": tid, "agent_id": body.get("agent_id"),
                            "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
-                           "exit_status": None, "submitted_at": time.time(),
+                           "exit_status": None, "submitted_at": time.time(), "submission_seq": sequence,
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
                            "workdir": str(ws.dir) if ws else None,
                            "script_sha256": body.get("script_sha256"), "submitted_by_runner": True, **(extra or {})}
@@ -4020,39 +4029,186 @@ class Runner:
         return Path(j["workdir"]) / "jobs" / kind / name
 
     @staticmethod
-    def _move_files(source: Path, target: Path, paths: list[str], job_id: Any) -> None:
-        for rel in paths:
-            src, dst = source / rel, target / rel
-            try:
-                if src.is_file() and not src.is_symlink():
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(src, dst)
-            except OSError:
-                log.warning("could not move a fetched file of job %s", job_id)
+    def _job_submission_order(job: dict) -> tuple[int, float]:
+        sequence = job.get("submission_seq")
+        if type(sequence) is int and sequence > 0:
+            return 1, sequence
+        value = job.get("submitted_at")
+        return 0, float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else 0.0
+
+    @staticmethod
+    def _same_remote_step(left: dict, right: dict) -> bool:
+        a, b = left.get("transfer") or {}, right.get("transfer") or {}
+        if a.get("request_id") and a.get("step_id"):
+            return (left.get("workdir"), a.get("request_id"), a.get("step_id"), a.get("revision", 0),
+                    left.get("session_id")) == (right.get("workdir"), b.get("request_id"), b.get("step_id"),
+                                                b.get("revision", 0), right.get("session_id"))
+        return bool(left.get("task_id") and left.get("task_id") == right.get("task_id"))
+
+    def _fetch_chain(self, destination: Path, rel: str, excluding: dict | None = None) -> list[dict]:
+        """Return the recorded owners from newest to oldest; ambiguous legacy overlaps fail closed."""
+        for job in self.jobs.values():
+            if job is excluding or job.get("late") or job.get("fetched_into") != str(destination):
+                continue
+            if any(name != rel and name.casefold() == rel.casefold() for name in job.get("fetched_paths", [])):
+                raise RuntimeError("fetched output paths differ only in case")
+        jobs = {str(job.get("job_id")): job for job in self.jobs.values()
+                if job is not excluding and not job.get("late") and job.get("job_id")
+                and job.get("fetched_into") == str(destination) and rel in job.get("fetched_paths", [])}
+        previous = {str(owner) for job in jobs.values()
+                    if (owner := (job.get("replaced_owners") or {}).get(rel)) is not None}
+        tops = set(jobs) - previous
+        if jobs and len(tops) != 1:
+            raise RuntimeError("ambiguous fetched output ownership")
+        chain, seen = [], set()
+        current = next(iter(tops), None)
+        while current is not None:
+            if current in seen or current not in jobs:
+                raise RuntimeError("invalid fetched output ownership chain")
+            seen.add(current)
+            job = jobs[current]
+            chain.append(job)
+            owner = (job.get("replaced_owners") or {}).get(rel)
+            current = str(owner) if owner is not None else None
+        if len(chain) != len(jobs):
+            raise RuntimeError("incomplete fetched output ownership chain")
+        return chain
+
+    def _recover_fetch_moves(self) -> None:
+        """Undo interrupted file moves before accepting more work; committed moves need only journal cleanup."""
+        for key, journal in self.store.all("fetch_move").items():
+            if not journal.get("committed"):
+                for old, new in reversed(journal["moves"]):
+                    src, dst = Path(old), Path(new)
+                    if src.is_symlink() or dst.is_symlink():
+                        raise OSError("cannot recover fetched output through a link")
+                    if src.exists():
+                        continue  # this move was not reached
+                    if not dst.is_file():
+                        raise OSError("cannot recover a missing fetched output")
+                    src.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(dst, src)
+            self.store.delete("fetch_move", key)
+
+    @contextlib.contextmanager
+    def _fetch_moves(self, jobs: list[dict]):
+        """Journal file moves; commit their owner rows together or restore them on failure/restart."""
+        unique = {str(job["job_id"]): job for job in jobs}
+        before = {key: copy.deepcopy(job) for key, job in unique.items()}
+        moves, moved = [], []
+        journal_id = uuid.uuid4().hex
+
+        def move(src: Path, dst: Path, *, optional: bool = False) -> bool:
+            if optional and not src.exists() and not src.is_symlink():
+                return False
+            moves.append((src, dst))
+            return True
+
+        journal_written = False
+        try:
+            yield move
+            journal = {"committed": False, "moves": [[str(src), str(dst)] for src, dst in moves]}
+            self.store.put("fetch_move", journal_id, journal)
+            journal_written = True
+            for src, dst in moves:
+                if not src.is_file() or src.is_symlink() or dst.exists() or dst.is_symlink():
+                    raise OSError("fetched output move has a missing or conflicting file")
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(src, dst)
+                moved.append((src, dst))
+
+            def save():
+                for key, job in unique.items():
+                    self.store.put("job", key, job)
+                self.store.put("fetch_move", journal_id, {**journal, "committed": True})
+
+            self.store.run_batch(save)
+        except BaseException:
+            for key, job in unique.items():
+                job.clear()
+                job.update(before[key])
+            for src, dst in reversed(moved):
+                src.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(dst, src)
+            if journal_written:
+                self.store.delete("fetch_move", journal_id)
+            raise
+        try:
+            self.store.delete("fetch_move", journal_id)
+        except Exception:
+            log.warning("could not remove committed fetched output journal")
 
     def _commit_fetch(self, j: dict, commit_to: Path) -> None:
         """Every job fetch lands in jobs/fetch/<job>/ first (#1357). Here, on the event loop where a release is applied,
         the files go to jobs/late/<job>/ when the step was released, else into the step's folder. A step-owned file a
         result replaces is kept in jobs/replaced/<job>/ so a later release can put it back."""
+        self._recover_fetch_moves()
         staging, paths = self._job_dir(j, "fetch"), list(j.get("fetched_paths") or [])
         if self._jobs_released(j.get("task_id") or ""):
-            self._move_files(staging, self._job_dir(j, "late"), paths, j.get("job_id"))
-            j["late"], j["fetched_into"] = True, str(self._job_dir(j, "late"))
+            with self._fetch_moves([j]) as move:
+                for rel in paths:
+                    move(staging / rel, self._job_dir(j, "late") / rel)
+                j["late"], j["fetched_into"] = True, str(self._job_dir(j, "late"))
             return
-        replaced = [rel for rel in paths if (commit_to / rel).is_file() and not (commit_to / rel).is_symlink()]
-        self._move_files(commit_to, self._job_dir(j, "replaced"), replaced, j.get("job_id"))
-        self._move_files(staging, commit_to, paths, j.get("job_id"))
-        j["fetched_into"], j["replaced_paths"] = str(commit_to), replaced
+        # Plan all chains before moving anything. A job fetched late is inserted before the first
+        # later submission of the same step, rather than replacing that later result.
+        plans = []
+        for rel in paths:
+            chain = self._fetch_chain(commit_to, rel, excluding=j)
+            if any(self._same_remote_step(j, other) and
+                   (j.get("submission_overlapped") or other.get("submission_overlapped")) for other in chain):
+                raise RuntimeError("overlapping submissions have ambiguous output order")
+            when = self._job_submission_order(j)
+            later = [other for other in reversed(chain) if self._same_remote_step(j, other)
+                     and other.get("state") == "completed"
+                     and (j.get("state") == "completed" or
+                          (j.get("state") in ("failed", "cancelled") and j.get("name")
+                           and j.get("name") == other.get("name")))
+                     and when < self._job_submission_order(other)]
+            successor = later[0] if later else None
+            previous = ((successor.get("replaced_owners") or {}).get(rel) if successor
+                        else str(chain[0]["job_id"]) if chain else None)
+            plans.append((rel, successor, previous))
+        owners, replaced = {}, []
+        with self._fetch_moves([j, *(successor for _, successor, _ in plans if successor)]) as move:
+            for rel, successor, previous in plans:
+                target = self._job_dir(successor, "replaced") if successor else commit_to
+                if move(target / rel, self._job_dir(j, "replaced") / rel, optional=True):
+                    replaced.append(rel)
+                move(staging / rel, target / rel)
+                owners[rel] = previous
+                if successor:
+                    successor.setdefault("replaced_owners", {})[rel] = str(j["job_id"])
+                    if rel not in successor.setdefault("replaced_paths", []):
+                        successor["replaced_paths"].append(rel)
+            j["fetched_into"], j["replaced_paths"], j["replaced_owners"] = str(commit_to), replaced, owners
 
     def _move_late(self, j: dict) -> bool:
         """A released job whose results were already committed: they go to jobs/late/<job>/ and any step-owned file
         they replaced comes back (#1357 review). True when the job was moved."""
         if j.get("late") or not j.get("fetched_into") or not j.get("workdir"):
             return False
+        self._recover_fetch_moves()
         source = Path(j["fetched_into"])
-        self._move_files(source, self._job_dir(j, "late"), list(j.get("fetched_paths") or []), j.get("job_id"))
-        self._move_files(self._job_dir(j, "replaced"), source, list(j.get("replaced_paths") or []), j.get("job_id"))
-        j["late"], j["fetched_into"] = True, str(self._job_dir(j, "late"))
+        plans = []
+        for rel in list(j.get("fetched_paths") or []):
+            chain = self._fetch_chain(source, rel)
+            index = next((i for i, owner in enumerate(chain) if owner is j), None)
+            if index is None:
+                raise RuntimeError("released job has no fetched output ownership")
+            successor = chain[index - 1] if index else None
+            plans.append((rel, successor))
+        with self._fetch_moves([j, *(successor for _, successor in plans if successor)]) as move:
+            for rel, successor in plans:
+                target = self._job_dir(successor, "replaced") if successor else source
+                move(target / rel, self._job_dir(j, "late") / rel)
+                if rel in (j.get("replaced_paths") or []):
+                    move(self._job_dir(j, "replaced") / rel, target / rel)
+                if successor:
+                    successor.setdefault("replaced_owners", {})[rel] = (j.get("replaced_owners") or {}).get(rel)
+                    if rel not in (j.get("replaced_paths") or []):
+                        successor["replaced_paths"] = [p for p in successor.get("replaced_paths", []) if p != rel]
+            j["late"], j["fetched_into"] = True, str(self._job_dir(j, "late"))
         return True
 
     async def _say_late(self, jid: str, j: dict) -> None:
@@ -4177,7 +4333,15 @@ class Runner:
                                        if isinstance(row.get("sha256"), str)}
                 j["fetched_paths"] = [row["path"] for row in manifest.get("fetched", []) if isinstance(row.get("path"), str)]
                 if j.get("workdir") and spec.get("fetch_to"):
-                    self._commit_fetch(j, Path(spec["fetch_to"]))  # no await since the release check: one decision
+                    try:
+                        self._commit_fetch(j, Path(spec["fetch_to"]))  # no await since the release check
+                    except Exception as error:  # failed local commit must not be reported as fetched
+                        j["fetched"] = False
+                        j["fetch_error"] = self._hide_text(str(error))[:300]
+                        if j["fetch_tries"] >= self.FETCH_TRIES:
+                            await self._emit_hpc_notice("transfer", f"작업 {jid}: 결과를 저장하지 못했습니다: {j['fetch_error']}")
+                        self.store.put("job", jid, j)
+                        continue
                 if manifest["skipped"]:
                     await self._emit_hpc_notice(
                         "transfer", f"작업 {jid}: 파일 {len(manifest['skipped'])}개는 가져오지 않았습니다(크기 상한 등). "
@@ -4195,6 +4359,7 @@ class Runner:
         from ..hpc_transfer import TransferError, validate_remote_manifest, verify_remote_data
 
         manifests, paths, directory_paths = [], set(), set()
+        path_owners = {}
         transfer = self.scheduler.transfer()
         if transfer is None:
             return manifests
@@ -4205,9 +4370,7 @@ class Runner:
                         spec.get("revision", 0) != ws.task.meta.get("revision", 0) or
                         (ws.task.resume_session_id and job.get("session_id") != ws.task.resume_session_id))
 
-        def submitted(job: dict) -> float:
-            value = job.get("submitted_at")
-            return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+        submitted = self._job_submission_order
 
         # A failed or cancelled attempt that a later successful resubmission replaced is history, not evidence: the
         # step's outputs come from the success (#1366, 5th airway trial: walltime-killed 7677, then 7687 exit 0). A
@@ -4218,18 +4381,18 @@ class Runner:
             return bool(job.get("terminal") and job.get("state") == "completed" and job.get("fetched")
                         and isinstance(job.get("remote_manifest"), dict))
 
-        last_success: dict[str, float] = {}
+        last_success: dict[str, tuple[int, float]] = {}
         for job in self.jobs.values():
             name = job.get("name")
             if mine(job) and isinstance(name, str) and name and usable(job):
-                last_success[name] = max(last_success.get(name, 0.0), submitted(job))
+                last_success[name] = max(last_success.get(name, (-1, float("-inf"))), submitted(job))
         with request_scope(ws.task.request_id), queue_wait():
-            for job in list(self.jobs.values()):
+            for job in sorted(self.jobs.values(), key=submitted):
                 if not mine(job):
                     continue
                 spec = job.get("transfer") or {}
                 if (job.get("terminal") and not usable(job)
-                        and submitted(job) < last_success.get(str(job.get("name") or ""), float("-inf"))):
+                        and submitted(job) < last_success.get(str(job.get("name") or ""), (-1, float("-inf")))):
                     continue
                 if (job.get("late") or not job.get("submitted_by_runner") or not job.get("terminal")
                         or job.get("state") != "completed"
@@ -4276,9 +4439,31 @@ class Runner:
                 if file_paths & directory_paths or current_dirs & paths or file_paths & current_dirs:
                     raise TransferError("remote jobs produced conflicting file and directory paths")
                 for row in manifest["files"]:
-                    if row["path"].casefold() in paths:
-                        raise TransferError("multiple remote jobs produced the same output path")
-                    paths.add(row["path"].casefold())
+                    key = row["path"].casefold()
+                    if key in path_owners:
+                        previous, previous_time, previous_job = path_owners[key]
+                        if not any(old["path"] == row["path"] for old in previous["files"]):
+                            raise TransferError("multiple remote jobs produced the same output path with different case")
+                        if submitted(job) <= previous_time:
+                            raise TransferError("remote jobs have ambiguous submission order for an output path")
+                        if job.get("submission_overlapped") or previous_job.get("submission_overlapped"):
+                            raise TransferError("overlapping submissions have ambiguous output order")
+                        previous["files"] = [old for old in previous["files"] if old["path"].casefold() != key]
+                        previous["bytes"] = sum(old["bytes"] for old in previous["files"])
+                        previous["unchanged_inputs"] = [name for name in previous["unchanged_inputs"]
+                                                        if name.casefold() != key]
+                        previous["_local_copy_sha256"] = {name: digest for name, digest in
+                                                          previous["_local_copy_sha256"].items()
+                                                          if name.casefold() != key}
+                        candidates = []
+                        for name, candidate in previous["_nested_candidates"]:
+                            rows = [old for old in candidate["files"] if old["path"].casefold() != key]
+                            if rows:
+                                candidates.append((name, {**candidate, "files": rows,
+                                                          "bytes": sum(old["bytes"] for old in rows)}))
+                        previous["_nested_candidates"] = candidates
+                    paths.add(key)
+                    path_owners[key] = (manifest, submitted(job), job)
                 directory_paths.update(current_dirs)
                 manifests.append(manifest)
         return manifests
