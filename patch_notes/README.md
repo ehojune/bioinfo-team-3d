@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:37 | [`3f6060a`](https://github.com/ehojune/bioinfo-team-3d/pull/1435/commits/3f6060a) | **재계획할 때 각 단계를 다시 실행하는 이유를 승인 카드에서 확인합니다.**<br>CP1 카드에 안전한 사유 분류와 원본 승인 hash를 표시하고 snapshot 원본과 재사용 검증을 보존한다. |
 | 19:02 | [`b5c2d47`](https://github.com/ehojune/bioinfo-team-3d/pull/1434/commits/b5c2d47) | **결과 교정 중 확인 질문이 나와도 원래 산출을 지킵니다.**<br>blocking 응답에서도 부모 산출의 변경과 누락을 검사한다 (#1413). |
 | 18:52 | [`cc87657`](https://github.com/ehojune/bioinfo-team-3d/pull/1434/commits/cc87657) | **결과 JSON을 고칠 때 환경 준비 산출이 빠지는 문제를 고쳤습니다.**<br>같은 단계의 원래 산출 목록과 hash를 이어받고 파일 변경이나 누락을 거절한다 (#1413). |
 | 17:24 | [`026cbec`](https://github.com/ehojune/bioinfo-team-3d/commit/026cbec) | **HPC 수신 검사의 시험 환경을 새 잠금에 맞췄습니다.**<br>생성자를 건너뛰는 두 fixture에 fetch lock을 초기화하고 관련 poll 회귀를 확인했다 (#1413). |
