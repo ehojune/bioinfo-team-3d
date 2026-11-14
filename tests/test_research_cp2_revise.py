@@ -7,6 +7,9 @@ revises together; past it, or when the new round ends before any step ran, the r
 
 from __future__ import annotations
 
+import copy
+import json
+
 import pytest
 
 from labhq.evidence.audit import ledger_binding_problems
@@ -27,6 +30,49 @@ def _kinds(hub):
 
 def _plans(hub):
     return [task for task in hub.calls if task.meta["kind"] == "plan"]
+
+
+@pytest.mark.asyncio
+async def test_continuation_card_shows_safe_reasons_before_long_step_lists(tmp_path, monkeypatch):
+    hub = cont._hub(tmp_path, [CP1, REVISE, {"approved": False, "note": "no"}])
+    original = Orchestrator._prepare_research_reuse
+    reasons = {f"step_{i:03d}": "request-level input hash record missing (including legacy execution)"
+               for i in range(80)}
+    reasons.update({"output_step": "output hash check: C:/private/secret.txt changed",
+                    "other": "unexpected /private/secret detail"})
+    original_state = {}
+
+    async def prepare(self, rid, plan):
+        await original(self, rid, plan)
+        carried = self.hub.requests[rid]["research_contract"]["continuation"]
+        carried["reuse"] = [f"reused_{i:03d}" for i in range(80)]
+        carried["rerun"] = copy.deepcopy(reasons)
+        carried["reuse_snapshot"]["rerun"] = copy.deepcopy(reasons)
+        carried["reuse_snapshot"]["nodes"]["fixture"] = {
+            "identity_sha256": "a" * 64, "result_sha256": "b" * 64,
+            "outputs": {"C:/private/secret.txt": "c" * 64}}
+        original_state.update(copy.deepcopy(carried))
+
+    monkeypatch.setattr(Orchestrator, "_prepare_research_reuse", prepare)
+    await Orchestrator(hub).run_request("r")
+    card = hub.approvals[2]
+    assert "입력 증빙 없음" in card["summary"]
+    assert "산출 확인 실패" in card["summary"]
+    assert "기타 사유" in card["summary"]
+    assert "private" not in card["summary"] and "secret" not in card["summary"]
+    assert len(card["summary"]) <= 699
+    detail = card["detail"]["continuation"]
+    assert detail["rerun"]["step_000"] == "입력 증빙 없음"
+    assert detail["rerun"]["output_step"] == "산출 확인 실패"
+    assert detail["rerun"]["other"] == "기타 사유"
+    assert detail["reuse_snapshot"]["rerun"] == detail["rerun"]
+    assert "표시용 요약" in detail["reuse_snapshot"]["label"]
+    assert detail["reuse_snapshot"]["original_approval_sha256"] == original_state["reuse_snapshot"]["sha256"]
+    assert "outputs" not in detail["reuse_snapshot"]["nodes"]["fixture"]
+    assert "private" not in json.dumps(card["detail"], ensure_ascii=False)
+    carried = hub.requests["r"]["research_contract"]["continuation"]
+    assert carried["rerun"] == original_state["rerun"]
+    assert carried["reuse_snapshot"] == original_state["reuse_snapshot"]
 
 
 @pytest.mark.asyncio
@@ -73,8 +119,9 @@ async def test_a_cp2_revise_with_a_note_replans_through_a_new_cp1_and_reruns_onl
     assert first["plan_sha256"] in second
     cp1 = hub.approvals[2]
     assert cp1["summary"].startswith("CP1 연구 계획 승인:")
-    assert "이어 가기 2차 계획(CP2 수정 요청 반영). 재사용: s1 · 다시 실행: s2. " in cp1["summary"]
-    assert '재사용 거부 이유: spec changed.' in cp1['summary']
+    assert "이어 가기 2차 계획(CP2 수정 요청 반영). 재사용 1단계 · 다시 실행 1단계." in cp1["summary"]
+    assert '재사용 거부 이유: 계획 변경.' in cp1['summary']
+    assert cp1['detail']['continuation']['rerun'] == {'s2': '계획 변경'}
     if long_notices:
         assert 'Paper skill: fixture' in cp1['summary'] and '재배정: worker' in cp1['summary']
         assert len(cp1['summary']) <= 699

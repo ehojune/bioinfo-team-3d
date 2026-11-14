@@ -158,7 +158,7 @@ async def test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step
     card = hub.approvals[2]
     assert card["detail"]["p1_issues"] == [P1] and card["detail"]["plan_sha256"] == first["plan_sha256"]
     cp1 = hub.approvals[3]
-    assert cp1["detail"]["continuation"]["reuse"] == ["s1"] and "재사용: s1" in cp1["summary"]
+    assert cp1["detail"]["continuation"]["reuse"] == ["s1"] and "재사용 1단계" in cp1["summary"]
     assert hub.approvals[4]["detail"]["continuation"]["reuse"] == ["s1"]  # the CP2 card names the reuse
 
     plan_prompt = hub.calls[4].prompt

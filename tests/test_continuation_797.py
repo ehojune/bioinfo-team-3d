@@ -205,6 +205,9 @@ async def test_card_uses_verified_candidates_and_drift_never_silently_reruns(tmp
         assert card['reuse_snapshot']['reuse'] == card['reuse']
         assert set(card['reuse_snapshot']['nodes']) == set(card['reuse'])
         assert card['reuse_snapshot']['plan_sha256'] == hub.approvals[3]['detail']['target_sha256']
+        sealed = hub.requests['r']['research_contract']['continuation']['reuse_snapshot']
+        assert card['reuse_snapshot']['original_approval_sha256'] == sealed['sha256']
+        assert c._digest({k: v for k, v in sealed.items() if k != 'sha256'}) == sealed['sha256']
         assert card['reuse'] == ([] if when == 'before_cp1' else ['s1'])
         if when != 'dispatch':
             drift['changed'] = True
@@ -229,7 +232,7 @@ async def test_card_uses_verified_candidates_and_drift_never_silently_reruns(tmp
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('mutation', ['file', 'tools', 'record', 'missing_seal', 'plan'])
+@pytest.mark.parametrize('mutation', ['file', 'tools', 'record', 'missing_seal', 'plan', 'approval_hash'])
 @pytest.mark.parametrize('dispatched', [False, True])
 async def test_resume_revalidates_even_previously_verified_snapshot(monkeypatch, mutation, dispatched):
     old = archive()
@@ -260,6 +263,8 @@ async def test_resume_revalidates_even_previously_verified_snapshot(monkeypatch,
         req['results']['s1']['output_sha256']['outputs/result1.tsv'] = 'e' * 64
     elif mutation == 'plan':
         req['plan']['brief']['scope'] += ' another population'
+    elif mutation == 'approval_hash':
+        req['research_contract']['approval']['reuse_snapshot_sha256'] = '0' * 64
     else:
         carried.pop('reuse_snapshot')
     assert not await orch._verify_research_reuse('r', plan)

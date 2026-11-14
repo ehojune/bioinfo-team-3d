@@ -7591,15 +7591,32 @@ class Orchestrator:
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
                                   else "리뷰 P1 반영")
-                        reasons = list(dict.fromkeys((carried.get('rerun') or {}).values()))
-                        reason_line = ('재사용 거부 이유: ' + '; '.join(reasons)[:240] + '. ' if reasons else '')
+                        # Verifier errors can contain private paths. Use the same categories in
+                        # the summary and both display copies, without changing the sealed record.
+                        def display_reason(reason):
+                            if reason == 'request-level input hash record missing (including legacy execution)':
+                                return '입력 증빙 없음'
+                            elif reason == 'request-level input hash changed or verification unavailable':
+                                return '입력 확인 실패'
+                            elif isinstance(reason, str) and reason.startswith('output hash check:'):
+                                return '산출 확인 실패'
+                            elif reason in ('new step', 'spec changed',
+                                            'question, scope, hypotheses, protocol or pack values changed',
+                                            'domain pack snapshot changed', 'named by a P1 review issue'):
+                                return '계획 변경'
+                            elif isinstance(reason, str) and reason.startswith('upstream re-runs:'):
+                                return '앞 단계 재실행'
+                            return '기타 사유'
+
+                        reasons = {display_reason(reason) for reason in (carried.get('rerun') or {}).values()}
+                        reason_line = ('재사용 거부 이유: ' + ', '.join(sorted(reasons)) + '. ' if reasons else '')
                         pinned = unreceipted_references(req["research_contract"], carried.get('reuse') or [])
                         if pinned:  # kept whole beyond the cut below, like the budget line: the PI approves the reuse here
                             pinned_note = (f"재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 "
                                            "내용은 확인하지 않았습니다.")
-                        approval_notices.append((f"이어 가기 {carried.get('round')}차 계획({source}). 재사용: "
-                                   f"{', '.join(carried.get('reuse') or []) or '없음'} · 다시 실행: "
-                                   f"{', '.join(carried.get('rerun') or {}) or '없음'}. ") + reason_line)
+                        approval_notices.append(reason_line + (f"이어 가기 {carried.get('round')}차 계획({source}). "
+                                   f"재사용 {len(carried.get('reuse') or [])}단계 · "
+                                   f"다시 실행 {len(carried.get('rerun') or {})}단계. 상세에서 단계를 확인하세요."))
                     budget, configured_source = self._research_budget(rid, req, plan)
                     # Kept whole beyond the 699-char cut: the web shows the summary, not detail.budget; the selection
                     # record line (#890) rides with it, so long paper-skill or continuation text cannot cut it off.
@@ -7635,9 +7652,22 @@ class Orchestrator:
                                        if req.get("execution_location") else {}),
                                     **({"continuation": {
                                         **{key: copy.deepcopy(carried.get(key)) for key in
-                                           ("round", "from_plan_sha256", "reuse", "rerun", "p1_issues")},
+                                           ("round", "from_plan_sha256", "reuse", "p1_issues")},
+                                        "rerun": {sid: display_reason(reason) for sid, reason in
+                                                  (carried.get("rerun") or {}).items()},
                                         **{key: copy.deepcopy(carried[key]) for key in
-                                           ("trigger", "pi_request", "reuse_snapshot") if key in carried}}}
+                                           ("trigger", "pi_request") if key in carried},
+                                        **({"reuse_snapshot": {
+                                            "label": "표시용 요약 (hash는 원본 승인 snapshot을 가리킵니다)",
+                                            "original_approval_sha256": offered_reuse_sha,
+                                            "plan_sha256": carried["reuse_snapshot"].get("plan_sha256"),
+                                            "nodes": {sid: {key: node.get(key) for key in
+                                                            ("identity_sha256", "result_sha256")}
+                                                      for sid, node in (carried["reuse_snapshot"].get("nodes") or {}).items()},
+                                            "reuse": copy.deepcopy(carried["reuse_snapshot"].get("reuse") or []),
+                                            "rerun": {sid: display_reason(reason) for sid, reason in
+                                                      (carried["reuse_snapshot"].get("rerun") or {}).items()}}}
+                                           if isinstance(carried.get("reuse_snapshot"), dict) else {})}}
                                        if reuse_pending else {})})
 
                     # Only the plan the card showed (same hash), with nothing the card left out: a stopped device
