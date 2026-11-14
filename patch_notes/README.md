@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:31 | [`a6b0a6f`](https://github.com/ehojune/bioinfo-team-3d/pull/1437/commits/a6b0a6f) | **연결되지 않은 참고 폴더가 첨부 프로젝트의 재사용을 막지 않습니다.**<br>project-dir만 증명할 때 무관한 reference root를 확인하지 않는다 (#1413). |
+| 06:23 | [`40b3919`](https://github.com/ehojune/bioinfo-team-3d/pull/1437/commits/40b3919) | **HPC 결과 회수 크기를 정하고 첨부 입력이 같으면 완료 단계를 다시 씁니다.**<br>사이트 프로필 회수 상한과 원격 필수 산출 표시, 요청 project-dir의 실행 전후 증명을 추가한다 (#1413). |
 | 05:26 | [`27935db`](https://github.com/ehojune/bioinfo-team-3d/pull/1436/commits/27935db) | **초안의 참조형 결과 파일 링크도 묶음에서 열리게 했습니다.**<br>Markdown reference 정의의 복사 파일 경로를 묶음 기준으로 바꾼다 (#1413). |
 | 05:20 | [`1c875e6`](https://github.com/ehojune/bioinfo-team-3d/pull/1436/commits/1c875e6) | **개별 유전자의 잘못된 방향 표현을 계속 찾아냅니다.**<br>군 이름만 방향 검사에서 제외하고 작은따옴표가 든 초안 링크도 묶음 경로로 바꾼다 (#1413). |
 | 05:15 | [`d2b9677`](https://github.com/ehojune/bioinfo-team-3d/pull/1436/commits/d2b9677) | **초안에서 이름에 공백이 든 결과 파일 링크도 열리게 했습니다.**<br>Markdown 꺾쇠 링크와 제목을 보존하며 묶음 안의 복사 파일로 경로를 바꾼다 (#1413). |
