@@ -38,6 +38,9 @@ _UP = re.compile(r"증가|상향|높(?:았|다|은|게|아)|늘(?:었|어|은)|�
                  r"\belevat\w*|\binduc\w*|\bupward\b|\bgain\w*", re.I)
 _DOWN = re.compile(r"감소|하향|낮(?:았|다|은|게|아)|줄(?:었|어|은)|떨어|작아|down-?regulat|\bdecreas\w*|\blower\b|"
                    r"\breduc\w*|\brepress\w*|\bsuppress\w*|\bdownward\b|\bloss\b", re.I)
+# Direction words in a named gene group describe how it was selected, not the effect measured in it.
+_GENE_GROUP = re.compile(r"(?:상향|하향)(?=\s*(?:(?:조절\s*)?유전자\s*(?:군|그룹|집단|집합|에서)"
+                         r"|(?:이른\s*[·-]\s*늦은\s*)?(?:OR|HR|RR)\b))", re.I)
 _LOG_EFFECT = re.compile(r"\b(?:log2\s*\(?\s*fc\)?|log2\s*fold[\s-]*change|log2FoldChange|l2fc|lfc|logfc|log\s*fc)\b"
                          r"\s*(?:\(|=|:|of|은|는|이|가|값)?\s*([-−–]?\d+(?:\.\d+)?)", re.I)
 _RATIO_EFFECT = re.compile(r"\b(?:HR|OR|RR|IRR|hazard\s+ratio|odds\s+ratio|risk\s+ratio|fold[\s-]*change|FC)\b"
@@ -134,6 +137,7 @@ def _checkable_numbers(sentence: str) -> list[tuple[str, float]]:
 
 
 def _direction(sentence: str) -> str | None:
+    sentence = _GENE_GROUP.sub(" ", sentence)
     up, down = bool(_UP.search(sentence)), bool(_DOWN.search(sentence))
     return "up" if up and not down else "down" if down and not up else None
 
