@@ -4,6 +4,14 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1413 — HPC 성공 잡의 산출 교체
+
+- 같은 단계·revision에서 뒤에 제출한 성공 잡의 동명 산출을 채택하고 앞선 사본과 소유 관계를 보관한다. 역순 fetch와 release는 소유 관계를 따라 복원한다.
+- 실행 중 잡·마지막 성공 뒤 실패·파일/폴더 충돌·동시 제출의 충돌은 거부한다. 구형 잡은 저장 시각으로 순서를 판단한다.
+- Windows fixture: 관련 413 passed, 42 skipped. 세 잡의 fetch·release 36조합, 동시 제출 표시, 이동 도중 재시작 복구를 확인했다.
+- `16bd14f0` 기반 별도 배포 가지는 관련 fixture 413 passed, 41 skipped. #1430 입력 snapshot·노드 제출 변경은 넣지 않았다.
+- 저장된 잡과 workspace를 불러오는 기존 재시작 fixture는 중복 제출 없이 wake를 확인한다. 실제 runner·HPC 재시작과 scheduler는 검증하지 않았다.
+
 # #1413 — HPC 요청 입력과 고정 노드
 
 ## 결론
