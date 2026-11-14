@@ -10,6 +10,8 @@ If a required output is missing and the corresponding extra-nested path is safel
 
 When successful HPC jobs in the same step and revision produce the same file, the later submission supplies the output; earlier copies are kept under `jobs/replaced/`. A collision between overlapping submissions, a running job, a failure after the last success, or a file and directory path conflict blocks collection.
 
+When a plan is revised, the selected runner checks completed steps' remote outputs again before offering them for reuse. Missing or mismatched successful-run evidence or file hashes prevent reuse. The files are checked again after approval; a change requires new approval.
+
 ```bash
 .\labhq -c config\labhq.yaml up
 .\labhq -c config\labhq.yaml open

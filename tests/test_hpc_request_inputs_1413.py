@@ -117,12 +117,13 @@ def test_source_change_since_approval_refuses_staging(source):
         request_inputs.stage(work, descriptor["reference_dirs"], [], settings, proof["sha256"])
 
 
-def test_preflight_is_never_adopted_as_a_recovered_task():
+@pytest.mark.parametrize("kind", ["hpc_input_preflight", "hpc_reuse_verify"])
+def test_preflight_is_never_adopted_as_a_recovered_task(kind):
     from labhq.gateway.server import Hub
     from labhq.models import Task
 
-    task = Task(agent_id="worker", request_id="r", prompt="", meta={"kind": "hpc_input_preflight"})
-    entry = {"request_id": "r", "kind": "hpc_input_preflight", "payload": {"meta": dict(task.meta)}}
+    task = Task(agent_id="worker", request_id="r", prompt="", meta={"kind": kind})
+    entry = {"request_id": "r", "kind": kind, "payload": {"meta": dict(task.meta)}}
     assert not Hub._matches_recovery(task, entry)
     task.meta["kind"] = entry["kind"] = "step"
     entry["payload"]["meta"] = dict(task.meta)
@@ -251,7 +252,8 @@ async def test_preflight_requires_online_runner_and_unchanged_approval(source):
     assert "hpc_input_approval" not in req
 
 
-async def test_preflight_send_refuses_old_or_replaced_runner():
+@pytest.mark.parametrize("kind", ["hpc_input_preflight", "hpc_reuse_verify"])
+async def test_preflight_send_refuses_old_or_replaced_runner(kind):
     import asyncio
     from labhq.gateway.server import Hub
     from labhq.models import RunnerNotSent
@@ -266,8 +268,8 @@ async def test_preflight_send_refuses_old_or_replaced_runner():
     lock = asyncio.Lock()
     hub.runners = {"r": socket}
     hub.runner_locks = {"r": lock}
-    hub.runner_capabilities = {"r": {"hpc_input_preflight": True}}
-    frame = {"type": "task.dispatch", "task": {"meta": {"kind": "hpc_input_preflight",
+    hub.runner_capabilities = {"r": {kind: True}}
+    frame = {"type": "task.dispatch", "task": {"meta": {"kind": kind,
              "execution_location": {"mode": "hpc", "runner_id": "r"}}}}
     await lock.acquire()
     pending = asyncio.create_task(hub.send_runner("r", frame))
@@ -277,7 +279,7 @@ async def test_preflight_send_refuses_old_or_replaced_runner():
     with pytest.raises(RunnerNotSent):
         await pending
     assert socket.sent == []
-    hub.runner_capabilities["r"] = {"hpc_input_preflight": True}
+    hub.runner_capabilities["r"] = {kind: True}
     await hub.send_runner("r", frame)
     assert len(socket.sent) == 1
 

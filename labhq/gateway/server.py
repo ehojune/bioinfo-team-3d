@@ -1895,7 +1895,7 @@ class Hub:
     def _matches_recovery(task: Task, entry: dict) -> bool:
         kind = task.meta.get("kind")
         # A proof is a fresh observation, not a completed processing result to adopt after restart.
-        if kind == "hpc_input_preflight":
+        if kind in {"hpc_input_preflight", "hpc_reuse_verify"}:
             return False
         prior_meta = (entry.get("payload") or {}).get("meta") or {}
         entry_step = entry.get("step_id")
@@ -3795,6 +3795,11 @@ class Hub:
                 if (location.get("runner_id") != runner_id or
                         self.runner_capabilities.get(runner_id, {}).get("hpc_input_preflight") is not True):
                     raise RunnerNotSent("runner cannot perform a no-model HPC input preflight")
+            if isinstance(meta, dict) and meta.get("kind") == "hpc_reuse_verify":
+                location = meta.get("execution_location") or {}
+                if (location.get("runner_id") != runner_id or
+                        self.runner_capabilities.get(runner_id, {}).get("hpc_reuse_verify") is not True):
+                    raise RunnerNotSent("runner cannot perform no-model HPC reuse verification")
             try:
                 await ws.send_text(payload)
             except Exception as exc:

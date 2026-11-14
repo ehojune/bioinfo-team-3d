@@ -905,7 +905,7 @@ class Runner:
 
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
-        capabilities = {"scheduler": self.s.hpc.scheduler, "hpc_input_preflight": True,
+        capabilities = {"scheduler": self.s.hpc.scheduler, "hpc_input_preflight": True, "hpc_reuse_verify": True,
                         "runtime_env": ("wsl" if self.s.runner.environment == "wsl" else
                                         "windows" if sys.platform == "win32" else "linux"),
                         "workspace_root": str(self.s.path(self.s.runner.workspace_root)),
@@ -2107,6 +2107,37 @@ class Runner:
                 shared_path(str(Path(override).resolve()), "wsl")
 
         self._result_queued.discard(task.id)  # a new run of this id
+
+        if task.meta.get("kind") == "hpc_reuse_verify":
+            from .step_inputs import verify_reuse_outputs
+
+            location = task.meta.get("execution_location") or {}
+            results = task.meta.get("results")
+            nonce = task.meta.get("verification_id")
+            plan_hash = task.meta.get("plan_sha256")
+            valid = (location.get("mode") == "hpc" and location.get("runner_id") == self.s.runner.id
+                     and self.s.hpc.scheduler != "none" and bool(task.request_id)
+                     and isinstance(results, dict) and bool(results)
+                     and isinstance(nonce, str) and bool(re.fullmatch(r"[a-f0-9]{32}", nonce))
+                     and isinstance(plan_hash, str) and bool(re.fullmatch(r"[a-f0-9]{64}", plan_hash)))
+            failures = None
+            try:
+                transfer = self.scheduler.transfer() if valid else None
+                if transfer is not None:
+                    with request_scope(task.request_id), queue_wait():
+                        failures = await asyncio.to_thread(verify_reuse_outputs, task.request_id, results,
+                                                           self.s, transfer)
+            except Exception:
+                failures = None
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=failures is not None,
+                                structured={"runner_id": self.s.runner.id, "verification_id": nonce,
+                                            "request_id": task.request_id, "plan_sha256": plan_hash,
+                                            "failures": failures},
+                                error=None if failures is not None else "HPC reuse verification unavailable",
+                                cost_usd=0.0, cost_known=True)
+            await self.emit(Event(type="task.result", task_id=task.id, agent_id=task.agent_id,
+                                  request_id=task.request_id, data=result.model_dump(mode="json")))
+            return result
 
         if task.meta.get("kind") == "hpc_input_preflight":
             # This internal task observes inputs on the selected runner without starting an adapter or a job.
