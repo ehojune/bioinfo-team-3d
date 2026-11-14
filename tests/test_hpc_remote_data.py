@@ -169,12 +169,22 @@ def test_large_outputs_stay_remote_small_outputs_and_manifest_come_home(cluster,
     spec = prepare(cluster, transfer, tmp_path)
     result = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
     assert [x['path'] for x in result['fetched']] == ['small.csv']
+    assert {'path': 'tx2gene.tsv', 'bytes': 2000, 'reason': 'retained in request remote data'} in result['skipped']
     assert result['remote']['bytes'] == 2008
     assert not (tmp_path / 'outputs/tx2gene.tsv').exists()
     assert cluster.path(spec['data'] + '/tx2gene.tsv').read_bytes() == b'x' * 2000
     assert ht.verify_remote_data(transfer, result['remote'], 'r').endswith(spec['data'])
     assert json.loads((tmp_path / 'logs/align.fetch.json').read_text())['remote'] == result['remote']
     assert cluster.logins() == 1
+
+
+def test_raised_fetch_limits_retrieve_and_verify_large_output(cluster, tmp_path):
+    transfer = helper_transfer(cluster, fetch_max_bytes=3000, fetch_total_bytes=3000)
+    spec = prepare(cluster, transfer, tmp_path)
+    result = ht.fetch_results(transfer, spec, tmp_path / 'logs', tmp_path / 'outputs')
+    assert {row['path'] for row in result['fetched']} == {'small.csv', 'tx2gene.tsv'}
+    assert (tmp_path / 'outputs/tx2gene.tsv').read_bytes() == b'x' * 2000
+    assert next(row['sha256'] for row in result['fetched'] if row['path'] == 'tx2gene.tsv') == hashlib.sha256(b'x' * 2000).hexdigest()
 
 
 @pytest.mark.parametrize('problem', ['changed', 'missing', 'link', 'directory_link'])
@@ -397,6 +407,8 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             assert result.output_types['outputs/' + collected_output]['data_type']['value'] == 'table'
             assert 'Retained HPC data' in result.text
             fetched_copy = step == 's1' and layout in {'fetched_copy', 'unchanged_copy'}
+            required_remote = not fetched_copy and not collect_all
+            assert ('Required outputs remaining on HPC (not fetched locally)' in result.text) is required_remote
             assert ('outputs/' + output in result.output_sha256) is fetched_copy
             assert (Path(result.workdir) / 'outputs' / output).exists() is fetched_copy
             expected_bytes = 6 if fetched_copy else 6000000 if step == 's1' and layout == 'many_files' else 20000000

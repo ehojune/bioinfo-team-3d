@@ -427,12 +427,13 @@ class Scheduler:
         profile = getattr(session, "profile", None) if session is not None else None
         if profile is None or not profile.remote_workdir:
             return None
-        from ..hpc_transfer import Transfer
+        from ..hpc_transfer import Limits, Transfer
 
         from ..hpc_session import redact
 
         words = session.cfg.redact_words or ()
-        return Transfer(session.run, profile.remote_workdir, redact=lambda text: redact(text, words),
+        limits = Limits(fetch_max_bytes=profile.fetch_max_bytes, fetch_total_bytes=profile.fetch_total_bytes)
+        return Transfer(session.run, profile.remote_workdir, limits=limits, redact=lambda text: redact(text, words),
                         long_run=lambda command, timeout: session.run(command, timeout_s=timeout))
 
     def attach_session(self, *, on_notice=None, has_open_jobs=None) -> bool:

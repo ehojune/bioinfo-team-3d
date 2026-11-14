@@ -4450,7 +4450,8 @@ class Orchestrator:
                         and not research_continuation.has_request_inputs(execution_req)
                         and not research_continuation.has_request_inputs(attempt_task.meta))
                     from ..research.input_proof import capture
-                    execution_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, attempt_task.meta)
+                    execution_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, attempt_task.meta,
+                                                               allow_request_projects=True)
                     attempt_task = attempt_task.model_copy(update={'meta': {**attempt_task.meta,
                         'reuse_input_request': {key: copy.deepcopy(execution_req.get(key) or [])
                             for key in ('references', 'reference_dirs', 'project_dirs')},
@@ -4490,7 +4491,8 @@ class Orchestrator:
                         await persist_request(self.hub, rid)
                 else:
                     if execution_step and execution_req.get('research_contract'):
-                        after_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, dispatched.meta)
+                        after_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, dispatched.meta,
+                                                               allow_request_projects=True)
                         if (after_inputs != execution_inputs or execution_inputs is None
                                 or res.request_input_sha256 != execution_inputs['sha256']):
                             execution_req['reuse_input_proof'][execution_step] = None
@@ -6995,7 +6997,7 @@ class Orchestrator:
         previous = contract['rounds'][-1]
         tools = self._research_reuse_tools(rid, plan)
         from ..research.input_proof import capture
-        input_proof = await asyncio.to_thread(capture, req, self.hub.s)
+        input_proof = await asyncio.to_thread(capture, req, self.hub.s, allow_request_projects=True)
         refused = dict(sealed.get('rerun') or {}) if sealed else {}
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)

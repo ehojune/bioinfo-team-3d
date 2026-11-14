@@ -29,10 +29,12 @@ def _identifier(ref):
     return f"{ref['kind']}:{value.casefold() if ref['kind'] == 'doi' else value}"
 
 
-def capture(request, settings, meta=None):
+def capture(request, settings, meta=None, *, allow_request_projects=False):
     """Return a content manifest, or None when any input cannot be proved on this host.
 
-    Paths must already be within configured reference roots. Links, special files, private
+    Reference paths must already be within configured reference roots. For reuse evidence only,
+    explicitly attached request project directories may be scanned within their own boundaries.
+    Links, special files, private
     paths, controlled zones and incomplete scans are declined before reading file contents.
     DOI and PMID references carry no content receipt: they are listed under `unreceipted`, so reuse needs the
     same identifiers but is not proof that the cited work is unchanged (#1061). Other references decline.
@@ -48,14 +50,15 @@ def capture(request, settings, meta=None):
             if not isinstance(ref, dict) or not ref.get('value'):
                 return None
             if ref.get('kind') == 'path':
-                paths.append(ref['value'])
+                paths.append((ref['value'], False))
             elif (identifier := _identifier(ref)) is not None:
                 unreceipted.append(identifier)
             else:
                 return None  # URLs/repositories have no local content receipt.
+        projects = {str(p) for p in request.get('project_dirs') or []} if allow_request_projects else set()
         for source in (request, meta or {}):
-            for key in ('reference_dirs', 'project_dirs'):
-                paths.extend(source.get(key) or [])
+            paths.extend((p, False) for p in source.get('reference_dirs') or [])
+            paths.extend((p, str(p) in projects) for p in source.get('project_dirs') or [])
         roots = [Path(p).resolve(strict=True) for p in reference_roots(settings)] if paths else []
         zones = [settings.path(z.path).resolve() for z in settings.policy.data_zones if z.level == 'restricted']
         private = resolve_private_paths(settings)
@@ -65,14 +68,14 @@ def capture(request, settings, meta=None):
         count = 0
         rows = []
 
-        def checked(path):
+        def checked(path, project_root=None):
             # Check each ancestor too: resolve() must not hide junctions or symlink roots.
             for ancestor in (path, *path.parents):
                 info = ancestor.lstat()
                 if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
                     raise ValueError('link')
             resolved = path.resolve(strict=True)
-            if (not any(resolved == r or resolved.is_relative_to(r) for r in roots)
+            if (not any(resolved == r or resolved.is_relative_to(r) for r in ([project_root] if project_root else roots))
                     or overlaps_restricted(str(path), settings) or overlaps_zone(resolved, zones)
                     or credential_path(str(resolved))
                     or any(resolved == Path(p) or resolved.is_relative_to(Path(p))
@@ -80,12 +83,12 @@ def capture(request, settings, meta=None):
                 raise ValueError('guard')
             return resolved, path.lstat()
 
-        def walk(path, relative, depth):
+        def walk(path, relative, depth, project_root=None):
             nonlocal count, budget
             count += 1
             if count > maximum or depth > depth_limit:
                 raise ValueError('scan limit')
-            _, before = checked(path)
+            _, before = checked(path, project_root)
             if stat.S_ISDIR(before.st_mode):
                 if os.path.ismount(path):
                     raise ValueError('mount')
@@ -95,7 +98,7 @@ def capture(request, settings, meta=None):
                 if count + len(children) > maximum:
                     raise ValueError('scan limit')
                 for child in sorted(children, key=lambda p: p.name):
-                    walk(child, relative + '/' + child.name, depth + 1)
+                    walk(child, relative + '/' + child.name, depth + 1, project_root)
             elif stat.S_ISREG(before.st_mode) and before.st_nlink == 1:
                 budget -= before.st_size
                 if budget < 0:
@@ -119,14 +122,17 @@ def capture(request, settings, meta=None):
             else:
                 raise ValueError('special file or hard link')
 
-        exposed = set()
-        for raw in paths:
+        exposed = {}
+        for raw, project in paths:
             path = Path(os.path.expanduser(str(raw))).absolute()
-            checked(path)  # do not hide a link by replacing it with its parent
+            project_root = path.resolve(strict=True) if project else None
+            checked(path, project_root)  # do not hide a link by replacing it with its parent
+            if project and not path.is_dir():
+                raise ValueError('project input is not a directory')
             # Runner._reference_dirs exposes the parent of a file reference, including siblings.
-            exposed.add(path.parent if path.is_file() else path)
+            exposed[path.parent if path.is_file() else path] = project_root
         for root in sorted(exposed, key=_logical_path):
-            walk(root, '.', 0)
+            walk(root, '.', 0, exposed[root])
         descriptor = {k: request.get(k) or [] for k in ('references', 'reference_dirs', 'project_dirs')}
         from ..wsl_paths import message_paths
         descriptor = message_paths(descriptor, 'windows')

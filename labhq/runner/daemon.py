@@ -3085,8 +3085,12 @@ class Runner:
                 descriptor = task.meta.get('reuse_input_request')
                 if not isinstance(descriptor, dict):
                     return None
+                # Only prove project folders actually opened to this task, never merely named in a receipt.
+                opened = {str(self.s.path(p)) for p in task.meta.get('project_dirs') or []}
+                if any(str(self.s.path(p)) not in opened for p in descriptor.get('project_dirs') or []):
+                    return None
                 return await asyncio.to_thread(capture_reuse_inputs, descriptor, self.s,
-                                               task.meta.get('reuse_input_meta'))
+                                               task.meta.get('reuse_input_meta'), allow_request_projects=True)
             reuse_before = await reuse_inputs()
 
             async def wait_ready() -> bool:
@@ -3285,6 +3289,13 @@ class Runner:
                 retained_text = "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
                     f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} known bytes retained "
                     f"({m['bytes']} declared)" for m in remote_manifests)
+                required_rels = [rel for name in required_declared if (rel := output_relpath(name))]
+                remote_only = [path for path in remote_paths if path not in hashed and any(
+                    path == rel or path.startswith(rel.rstrip('/') + '/') for rel in required_rels)]
+                if remote_only:
+                    retained_text += (f"\nRequired outputs remaining on HPC (not fetched locally): {len(remote_only)}; "
+                                      + ", ".join(remote_only[:8])
+                                      + (" (more in the remote manifest)" if len(remote_only) > 8 else ""))
                 result.text += retained_text
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
