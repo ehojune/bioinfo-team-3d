@@ -1190,7 +1190,8 @@ class AgentAdapter(ABC):
             ctx.bench_spawn(bench_spawn_id, "failed", cmd, payload)
             memory_guard.close()
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
-                              cleanup_evidence={"spawn": "failed", "end_observed": "start_failed"},
+                              cleanup_evidence={"spawn": "failed", "end_observed": "start_failed",
+                                                "spawn_error_kind": "not_found"},
                               error=f"executable not found: {cmd[0]!r} — install it on the runner or fix "
                                     f"engines/cli settings for agent {ctx.agent.id!r}")
         except OSError as exc:
@@ -1198,7 +1199,8 @@ class AgentAdapter(ABC):
             memory_guard.close()
             detail = exc.strerror or str(exc)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False,
-                              cleanup_evidence={"spawn": "failed", "end_observed": "start_failed"},
+                              cleanup_evidence={"spawn": "failed", "end_observed": "start_failed",
+                                                "spawn_error_kind": "other_os_error"},
                               error=f"could not start executable {cmd[0]!r}: {detail}")
         ctx.bench_spawn(bench_spawn_id, "started", spawn_cmd, payload)
         # #863: the wrapper the runner started and holds; its activation line and end are recorded below.

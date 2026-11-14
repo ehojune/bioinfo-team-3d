@@ -37,7 +37,7 @@ async def ask(to: str, question: str, why_blocked: str, tried: list[str] | None 
     """Ask a single question and return one terminal answer or a hibernate instruction.
 
     For a failed consult, use its ask_id in replaces_ask_id and repeat the same question and refs.
-    Only a verified failure before process start is eligible; rejection and unknown failures remain blocking.
+    Only a verified file-not-found failure before process start is eligible; unknown failures remain blocking.
     """
     payload = {"task_id": TASK, "agent_id": AGENT, "to": to, "question": question,
                "why_blocked": why_blocked, "tried": tried or [], "options": options or [],

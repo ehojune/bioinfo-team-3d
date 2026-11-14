@@ -453,15 +453,18 @@ async def test_without_a_job_the_end_is_unknown(tmp_path, monkeypatch):
     assert (await adapter.run(ctx)).cleanup_evidence["reason"] == "windows_job_disabled"
 
 
+@pytest.mark.parametrize("error, kind", [(FileNotFoundError("missing"), "not_found"),
+                                        (PermissionError("denied"), "other_os_error")])
 @pytest.mark.asyncio
-async def test_failed_process_start_preserves_observed_evidence(tmp_path, monkeypatch):
+async def test_failed_process_start_preserves_observed_evidence(tmp_path, monkeypatch, error, kind):
     async def spawn(*_args, **_kwargs):
-        raise FileNotFoundError("missing executable")
+        raise error
 
     adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn)
     result = await adapter.run(ctx)
     assert not result.ok and result.exit_code is None
-    assert result.cleanup_evidence == {"spawn": "failed", "end_observed": "start_failed"}
+    assert result.cleanup_evidence == {"spawn": "failed", "end_observed": "start_failed",
+                                       "spawn_error_kind": kind}
 
 
 @pytest.mark.asyncio

@@ -11,9 +11,10 @@ def _failed_before_start(previous: dict) -> bool:
     evidence = previous.get("consult_evidence") or {}
     if not isinstance(evidence, dict):
         return False
-    return (all(key in evidence for key in ("spawn", "end_observed", "read_only_check", "error_kind", "exit_code"))
+    return (all(key in evidence for key in ("spawn", "spawn_error_kind", "end_observed", "read_only_check", "error_kind", "exit_code"))
             and previous.get("status") == "rejected" and not previous.get("hard_stop")
-            and evidence.get("spawn") == "failed" and evidence.get("end_observed") == "start_failed"
+            and evidence.get("spawn") == "failed" and evidence.get("spawn_error_kind") == "not_found"
+            and evidence.get("end_observed") == "start_failed"
             and evidence.get("read_only_check") == "no_changes_observed"
             and evidence.get("error_kind") is None and evidence.get("exit_code") is None)
 

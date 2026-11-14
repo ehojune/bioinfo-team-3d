@@ -4060,6 +4060,7 @@ class Orchestrator:
                 **{"from": routed, "routed_to": routed, "remaining_asks": max(0, 2 - task_count),
                    "consult_evidence": {"error_kind": result.error_kind, "exit_code": result.exit_code,
                                         "spawn": result.cleanup_evidence.get("spawn"),
+                                        "spawn_error_kind": result.cleanup_evidence.get("spawn_error_kind"),
                                         "end_observed": result.cleanup_evidence.get("end_observed"),
                                         "read_only_check": result.cleanup_evidence.get("read_only_check")}}))
 

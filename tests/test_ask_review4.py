@@ -108,6 +108,7 @@ def _failed_start_pair(hub, task_id="task"):
                      question="Which input?", why_blocked="missing")
     answer = {"status": "rejected", "reason": "executable not found", "ask_id": old.id,
               "consult_evidence": {"spawn": "failed", "end_observed": "start_failed",
+                                   "spawn_error_kind": "not_found",
                                    "read_only_check": "no_changes_observed", "error_kind": None,
                                    "exit_code": None}}
     hub.store.put("ask", old.id, {"ask": old.model_dump(), "state": "resolved", "answer": answer})
@@ -147,6 +148,7 @@ async def test_consult_failure_evidence_reaches_durable_ask(tmp_path):
     async def dispatch(task):
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="start failed",
                           cleanup_evidence={"spawn": "failed", "end_observed": "start_failed",
+                                            "spawn_error_kind": "not_found",
                                             "read_only_check": "no_changes_observed"})
 
     hub.dispatch = dispatch
@@ -155,13 +157,14 @@ async def test_consult_failure_evidence_reaches_durable_ask(tmp_path):
         answer = hub.store.get("ask", ask.id)["answer"]
         assert answer["status"] == "rejected"
         assert answer["consult_evidence"] == {"spawn": "failed", "end_observed": "start_failed",
+                                             "spawn_error_kind": "not_found",
                                              "read_only_check": "no_changes_observed", "error_kind": None,
                                              "exit_code": None}
     finally:
         hub.store.close()
 
 
-@pytest.mark.parametrize("variant", ["other_task", "unrelated_question", "legacy", "malformed", "missing_exit", "exit", "violation", "timeout", "pi"])
+@pytest.mark.parametrize("variant", ["other_task", "unrelated_question", "legacy", "malformed", "missing_exit", "permission", "exit", "violation", "timeout", "pi"])
 async def test_replacement_never_clears_unverified_or_unrelated_failure(tmp_path, variant):
     from labhq.ask_results import read_ask_results
 
@@ -185,6 +188,8 @@ async def test_replacement_never_clears_unverified_or_unrelated_failure(tmp_path
                 entry["answer"]["consult_evidence"] = "unknown"
             elif variant == "missing_exit":
                 evidence.pop("exit_code")
+            elif variant == "permission":
+                evidence["spawn_error_kind"] = "other_os_error"
             elif variant == "exit":
                 evidence.update(end_observed="process_exit", exit_code=1)
             elif variant == "violation":
@@ -252,6 +257,7 @@ async def test_runner_preserves_pending_replacement_after_failed_consult(tmp_pat
         if not req.replaces_ask_id:
             runner.broker.resolve_ask(req.id, {"status": "rejected", "reason": "start failed",
                 "consult_evidence": {"spawn": "failed", "end_observed": "start_failed",
+                                     "spawn_error_kind": "not_found",
                                      "read_only_check": "no_changes_observed", "error_kind": None,
                                      "exit_code": None}})
 

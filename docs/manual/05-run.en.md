@@ -2,7 +2,7 @@
 
 ## Starting and connecting
 
-When a consult is confirmed to have failed before process start, an employee can repeat the same question and refs with `replaces_ask_id` and wait for an answer. PI denial, cancellation, timeout, protection violations, and failures of unknown cause still block continuation. HPC fetches do not overlap, and existing manifest checks remain in force.
+When a consult is confirmed to have failed before process start because a file was not found, an employee can repeat the same question and refs with `replaces_ask_id` and wait for an answer. PI denial, cancellation, timeout, protection violations, and failures of unknown cause still block continuation. HPC fetches do not overlap, and existing manifest checks remain in force.
 
 **Output paths in a whole-HPC request:** A job already starts in the step's `outputs/` directory. Write `result.tsv` rather than `outputs/result.tsv` in the job script. The best-effort submission check looks for simple literal `>`, `>>`, `&>`, the last destination of `cp`, `mv`, and `install`, and destinations of `mkdir`, `touch`, `tee`, and `cd outputs`. It does not reject input reads. Options that take arguments, variables, invoked scripts, here-documents, and paths after a working-directory change can escape this check, so passing it does not certify the script.
 
