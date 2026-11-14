@@ -593,7 +593,8 @@ def runner_fixture(tmp_path, cluster):
     r.s, r.scheduler = cluster.s, sched.Scheduler(cluster.s.hpc)
     r.jobs, r.task_req, r.workspaces, r.active_roots = {}, {}, {}, {}
     r.events, r.submitting, r.notified, r.tasks = [], {}, set(), {}
-    r.store = SimpleNamespace(put=lambda *args: None)
+    r.store = SimpleNamespace(put=lambda *args: None, run_batch=lambda fn: fn(),
+                              all=lambda kind: {}, delete=lambda *args: None)
 
     async def emit(event):
         r.events.append(event)

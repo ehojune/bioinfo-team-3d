@@ -354,7 +354,8 @@ def stub_runner(site, job):
     runner = Runner.__new__(Runner)
     runner.s, runner.scheduler = site.settings, sched.Scheduler(site.settings.hpc)
     runner.jobs, runner.task_req, runner.events = {"1000": job}, {"t1": "req_1"}, []
-    runner.store = SimpleNamespace(put=lambda *a, **k: None)
+    runner.store = SimpleNamespace(put=lambda *a, **k: None, run_batch=lambda fn: fn(),
+                                   all=lambda kind: {}, delete=lambda *a: None)
     runner.notified, runner.tasks = set(), {}
 
     async def emit(event):

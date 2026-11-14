@@ -1,6 +1,7 @@
 """#430: request-wide compute choice; no live scheduler, CLI or cluster."""
 import json
 import asyncio
+import itertools
 import os
 import stat
 from pathlib import Path
@@ -1058,6 +1059,253 @@ def test_a_failed_shard_is_not_replaced_by_another_jobs_success(tmp_path, monkey
     runner, ws = _attempts(tmp_path, ["failed", "completed"], names=["", ""])  # unnamed jobs are never paired
     with pytest.raises(ht.TransferError):
         runner._remote_step_outputs(ws)
+
+
+@pytest.mark.parametrize("names", [["analysis", "analysis"], ["analysis", "analysis_fix"]])
+def test_later_success_replaces_same_path_in_submission_order(tmp_path, monkeypatch, names):
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed", "completed"], names=names)
+    runner.jobs["7677"]["remote_manifest"]["files"][0]["sha256"] = "a" * 64
+    runner.jobs["7678"]["remote_manifest"]["files"][0]["sha256"] = "b" * 64
+    runner.jobs = dict(reversed(list(runner.jobs.items())))  # recovery/fetch order is not submission order
+    found = runner._remote_step_outputs(ws)
+    rows = [row for manifest in found for row in manifest["files"]]
+    assert len(rows) == 1 and rows[0]["sha256"] == "b" * 64
+
+
+@pytest.mark.parametrize("other_scope", ["step_id", "revision"])
+def test_success_from_another_step_or_revision_cannot_replace_output(tmp_path, monkeypatch, other_scope):
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed", "completed"])
+    runner.jobs["7678"]["transfer"][other_scope] = "s2" if other_scope == "step_id" else 1
+    runner.jobs["7677"]["remote_manifest"]["files"][0]["sha256"] = "a" * 64
+    runner.jobs["7678"]["remote_manifest"]["files"][0]["sha256"] = "b" * 64
+    found = runner._remote_step_outputs(ws)
+    assert [row["sha256"] for manifest in found for row in manifest["files"]] == ["a" * 64]
+
+
+def test_same_path_with_ambiguous_order_or_conflicting_directory_is_refused(tmp_path, monkeypatch):
+    from labhq import hpc_transfer as ht
+    from tests.test_hpc_remote_data import inventory
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed", "completed"])
+    runner.jobs["7678"]["submitted_at"] = runner.jobs["7677"]["submitted_at"]
+    with pytest.raises(ht.TransferError, match="ambiguous submission order"):
+        runner._remote_step_outputs(ws)
+    runner.jobs["7678"]["submitted_at"] += 1
+    runner.jobs["7678"]["remote_manifest"] = inventory(path="tx2gene.tsv/part")
+    runner.jobs["7678"]["remote_manifest"]["directories"] = ["tx2gene.tsv"]
+    ws.task.meta["kind"] = "direct"
+    with pytest.raises(ht.TransferError, match="conflicting file and directory"):
+        runner._remote_step_outputs(ws)
+
+
+def test_submission_sequence_survives_clock_change_and_concurrent_order_is_refused(tmp_path, monkeypatch):
+    from labhq import hpc_transfer as ht
+    monkeypatch.setattr(ht, "verify_remote_data", lambda *args: None)
+    runner, ws = _attempts(tmp_path, ["completed", "completed"])
+    earlier, later = runner.jobs.values()
+    earlier.update(submission_seq=1, submitted_at=2000)
+    later.update(submission_seq=2, submitted_at=1000)
+    earlier["remote_manifest"]["files"][0]["sha256"] = "a" * 64
+    later["remote_manifest"]["files"][0]["sha256"] = "b" * 64
+    found = runner._remote_step_outputs(ws)
+    assert [row["sha256"] for manifest in found for row in manifest["files"]] == ["b" * 64]
+    later["submission_overlapped"] = True
+    with pytest.raises(ht.TransferError, match="overlapping submissions"):
+        runner._remote_step_outputs(ws)
+
+
+async def test_overlapping_submits_record_ambiguous_order(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from labhq.runner import daemon
+    runner, _ = _late_runner(tmp_path)
+    runner.workspaces["t1"] = SimpleNamespace(dir=tmp_path, task=SimpleNamespace(meta={}))
+    runner.active_roots["t1"] = (False, [])
+    runner._login_limit = lambda _: None
+    barrier, seen, flags = asyncio.Event(), [], []
+
+    async def submit(settings, scheduler, workdir, body, approve, gate, record, **kwargs):
+        async with gate() as allowed:
+            assert allowed
+            seen.append(body["name"])
+            if len(seen) == 2:
+                barrier.set()
+            await barrier.wait()
+            await record({"job_id": body["name"], "name": body["name"], "script": "fixture",
+                          "script_sha256": "a", "core_hours": 1, "transfer": {"dir": "fixture"}})
+            return {"submitted": True}
+
+    async def track(body, extra):
+        flags.append(extra["submission_overlapped"])
+
+    monkeypatch.setattr(daemon, "submit_job", submit)
+    monkeypatch.setattr(runner, "_track_job", track)
+    await asyncio.gather(*(runner._on_submit_raw({"task_id": "t1", "agent_id": "a", "name": name})
+                           for name in ("first", "second")))
+    assert sorted(flags) == [False, True]
+
+
+async def test_late_fetch_of_earlier_success_keeps_later_result_and_release_restores_step_file(tmp_path):
+    runner, _ = _late_runner(tmp_path)
+    workdir, later = _staged_job(runner, tmp_path, step_file="original")
+    later.update(job_id="7682", submitted_at=2, state="completed")
+    runner._commit_fetch(later, workdir / "outputs")
+    earlier = {**later, "job_id": "7681", "submitted_at": 1}
+    earlier.pop("fetched_into", None)
+    earlier.pop("replaced_paths", None)
+    earlier.pop("replaced_owners", None)
+    staged = workdir / "jobs" / "fetch" / "7681" / "sub"
+    staged.mkdir(parents=True)
+    (staged / "index.tsv").write_text("earlier", encoding="utf-8")
+    runner.jobs["7681"] = earlier
+    runner._commit_fetch(earlier, workdir / "outputs")
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert await runner._cancel_local_jobs("t1", relocate=True)
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "original"
+
+
+async def test_releasing_a_middle_job_keeps_latest_result_and_restores_original(tmp_path):
+    runner, _ = _late_runner(tmp_path)
+    workdir, first = _staged_job(runner, tmp_path, step_file="original")
+    first.update(submitted_at=1, state="completed")
+    runner._commit_fetch(first, workdir / "outputs")
+    jobs = [first]
+    for number in (2, 3):
+        job = {**first, "job_id": str(7681 + number), "submitted_at": number}
+        job.pop("fetched_into", None)
+        job.pop("replaced_paths", None)
+        job.pop("replaced_owners", None)
+        staged = workdir / "jobs" / "fetch" / job["job_id"] / "sub"
+        staged.mkdir(parents=True)
+        (staged / "index.tsv").write_text(f"job {number}", encoding="utf-8")
+        runner.jobs[job["job_id"]] = job
+        runner._commit_fetch(job, workdir / "outputs")
+        jobs.append(job)
+    assert runner._move_late(jobs[1])
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job 3"
+    assert (workdir / "jobs" / "late" / jobs[1]["job_id"] / "sub" / "index.tsv").read_text(encoding="utf-8") == "job 2"
+    assert runner._move_late(jobs[2])
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert runner._move_late(jobs[0])
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "original"
+
+
+@pytest.mark.parametrize("release_order", [("t1", "t2"), ("t2", "t1")])
+async def test_releasing_different_tasks_with_the_same_path_preserves_the_other(tmp_path, release_order):
+    runner, _ = _late_runner(tmp_path)
+    workdir, first = _staged_job(runner, tmp_path, step_file="original")
+    runner._commit_fetch(first, workdir / "outputs")
+    second = {"task_id": "t2", "job_id": "7683", "workdir": str(workdir), "terminal": True,
+              "fetched": True, "fetched_paths": ["sub/index.tsv"]}
+    staged = workdir / "jobs" / "fetch" / "7683" / "sub"
+    staged.mkdir(parents=True)
+    (staged / "index.tsv").write_text("second task", encoding="utf-8")
+    runner.jobs["7683"] = second
+    runner._commit_fetch(second, workdir / "outputs")
+    assert await runner._cancel_local_jobs(release_order[0], relocate=True)
+    expected = "second task" if release_order[0] == "t1" else "job result"
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == expected
+    assert await runner._cancel_local_jobs(release_order[1], relocate=True)
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "original"
+
+
+async def test_late_fetch_of_failed_attempt_keeps_later_success(tmp_path):
+    runner, _ = _late_runner(tmp_path)
+    workdir, later = _staged_job(runner, tmp_path, step_file="original")
+    later.update(name="analysis", submitted_at=2, state="completed")
+    runner._commit_fetch(later, workdir / "outputs")
+    earlier = {"task_id": "t1", "job_id": "7681", "name": "analysis", "workdir": str(workdir),
+               "terminal": True, "fetched": True, "fetched_paths": ["sub/index.tsv"],
+               "state": "failed", "submitted_at": 1}
+    staged = workdir / "jobs" / "fetch" / "7681" / "sub"
+    staged.mkdir(parents=True)
+    (staged / "index.tsv").write_text("failed output", encoding="utf-8")
+    runner.jobs["7681"] = earlier
+    runner._commit_fetch(earlier, workdir / "outputs")
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job result"
+    assert await runner._cancel_local_jobs("t1", relocate=True)
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "original"
+
+
+def test_fetch_move_failure_restores_existing_file_and_keeps_staging(tmp_path, monkeypatch):
+    from labhq.runner import daemon
+    runner, _ = _late_runner(tmp_path)
+    workdir, job = _staged_job(runner, tmp_path, step_file="original")
+    replace = daemon.os.replace
+
+    def fail_staged(src, dst):
+        if src == workdir / "jobs" / "fetch" / "7682" / "sub" / "index.tsv":
+            raise OSError("simulated move failure")
+        replace(src, dst)
+
+    monkeypatch.setattr(daemon.os, "replace", fail_staged)
+    with pytest.raises(OSError, match="simulated move failure"):
+        runner._commit_fetch(job, workdir / "outputs")
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "original"
+    assert (workdir / "jobs" / "fetch" / "7682" / "sub" / "index.tsv").exists()
+    assert not job.get("fetched_into")
+
+
+@pytest.mark.parametrize("moves_done", [0, 1, 2])
+@pytest.mark.parametrize("committed", [False, True])
+def test_runner_restart_recovers_interrupted_fetch_moves(tmp_path, moves_done, committed):
+    if committed and moves_done != 2:
+        pytest.skip("a committed journal follows all file moves")
+    runner, _ = _late_runner(tmp_path)
+    workdir, _ = _staged_job(runner, tmp_path, step_file="original")
+    output = workdir / "outputs" / "sub" / "index.tsv"
+    backup = workdir / "jobs" / "replaced" / "7682" / "sub" / "index.tsv"
+    staged = workdir / "jobs" / "fetch" / "7682" / "sub" / "index.tsv"
+    moves = [(output, backup), (staged, output)]
+    runner.store.put("fetch_move", "interrupted", {"committed": committed,
+                     "moves": [[str(src), str(dst)] for src, dst in moves]})
+    for src, dst in moves[:moves_done]:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(src, dst)
+    runner.store.close()
+    restarted = Runner(_settings(tmp_path))
+    assert restarted.store.all("fetch_move") == {}
+    if committed:
+        assert output.read_text(encoding="utf-8") == "job result"
+        assert backup.read_text(encoding="utf-8") == "original"
+    else:
+        assert output.read_text(encoding="utf-8") == "original"
+        assert staged.read_text(encoding="utf-8") == "job result"
+    restarted.store.close()
+
+
+@pytest.mark.parametrize("fetch_order", list(itertools.permutations((1, 2, 3))))
+@pytest.mark.parametrize("release_order", list(itertools.permutations((1, 2, 3))))
+def test_three_jobs_fetch_release_orders_and_restored_ownership(tmp_path, fetch_order, release_order):
+    runner, _ = _late_runner(tmp_path)
+    workdir, first = _staged_job(runner, tmp_path, step_file="original")
+    first.update(submitted_at=1, state="completed")
+    (workdir / "jobs" / "fetch" / "7682" / "sub" / "index.tsv").write_text("job 1", encoding="utf-8")
+    jobs = {1: first}
+    for number in (2, 3):
+        jid = str(7681 + number)
+        job = {"task_id": "t1", "job_id": jid, "workdir": str(workdir), "terminal": True,
+               "state": "completed", "submitted_at": number, "fetched": True, "fetched_paths": ["sub/index.tsv"]}
+        staged = workdir / "jobs" / "fetch" / jid / "sub"
+        staged.mkdir(parents=True)
+        (staged / "index.tsv").write_text(f"job {number}", encoding="utf-8")
+        jobs[number] = job
+        runner.jobs[jid] = job
+    for number in fetch_order:
+        runner._commit_fetch(jobs[number], workdir / "outputs")
+    runner.jobs = runner.store.all("job")  # the owner links also survive a runner reload
+    assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == "job 3"
+    remaining = {1, 2, 3}
+    for number in release_order:
+        job = runner.jobs[str(7681 + number)]
+        assert runner._move_late(job)
+        assert (workdir / "jobs" / "late" / job["job_id"] / "sub" / "index.tsv").read_text(encoding="utf-8") == f"job {number}"
+        remaining.remove(number)
+        expected = f"job {max(remaining)}" if remaining else "original"
+        assert (workdir / "outputs" / "sub" / "index.tsv").read_text(encoding="utf-8") == expected
 
 
 def test_an_unreadable_manifest_replaced_by_a_same_name_success_does_not_refuse(tmp_path, monkeypatch):

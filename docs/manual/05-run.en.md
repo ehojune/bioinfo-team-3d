@@ -8,6 +8,8 @@ Existing path inputs are checked on the selected runner and sent as snapshots af
 
 If a required output is missing and the corresponding extra-nested path is safely verified, the same employee receives one repair attempt. Outputs are not moved and existing checks remain in force. If a restart interrupts that repair, another attempt may be withheld to prevent duplicate execution.
 
+When successful HPC jobs in the same step and revision produce the same file, the later submission supplies the output; earlier copies are kept under `jobs/replaced/`. A collision between overlapping submissions, a running job, a failure after the last success, or a file and directory path conflict blocks collection.
+
 ```bash
 .\labhq -c config\labhq.yaml up
 .\labhq -c config\labhq.yaml open
