@@ -935,18 +935,21 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                 # The source sits under this step's outputs; links copied to the bundle root need that prefix.
                 copied_paths = {row["relative_path"] for row in rows if row["status"] == "copied"}
 
-                def rebase_link(match: re.Match[str]) -> str:
-                    target = match.group(1)
+                def rebase_target(target: str) -> str:
                     angled = target.startswith("<") and target.endswith(">")
                     path = PurePosixPath(target[1:-1] if angled else target)
                     candidate = PurePosixPath("steps", sid, "outputs", path).as_posix()
                     if not path.is_absolute() and ".." not in path.parts and candidate in copied_paths:
-                        destination = f"<{candidate}>" if angled else candidate
-                        return "](" + destination + (match.group(2) or "") + ")"
-                    return match.group(0)
+                        return f"<{candidate}>" if angled else candidate
+                    return target
+
+                def rebase_link(match: re.Match[str]) -> str:
+                    return "](" + rebase_target(match.group(1)) + (match.group(2) or "") + ")"
 
                 report_text = re.sub(r"\]\(\s*(<[^>\n]+>|[^\s()<>]+)(\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)",
                                      rebase_link, draft)
+                report_text = re.sub(r"(?m)^( {0,3}\[[^\]\n]+\]:[ \t]*)(<[^>\n]+>|[^\s<>]+)",
+                                     lambda m: m.group(1) + rebase_target(m.group(2)), report_text)
                 p1 = [item for item in review.get("issues") or []
                       if isinstance(item, Mapping) and item.get("priority", "P1") == "P1"]
                 issue_lines = [f"- {item.get('step_id', '-')}: {item.get('problem', '')} → {item.get('request', '')}"
