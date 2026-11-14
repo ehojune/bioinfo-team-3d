@@ -43,6 +43,10 @@ def test_the_empty_example_is_a_valid_profile_with_everything_unknown():
     ({"name": "../x"}, "name"),
     ({"labhq_site_profile": 2}, "version"),
     ({"idle_lock_minutes": 0}, "idle_lock_minutes"),
+    ({"fetch_max_bytes": 0}, "fetch_max_bytes"),
+    ({"fetch_max_bytes": True}, "fetch_max_bytes"),
+    ({"fetch_total_bytes": -1}, "fetch_total_bytes"),
+    ({"fetch_total_bytes": "100"}, "fetch_total_bytes"),
     ({"scheduler": "lsf"}, "scheduler"),
     ({"remote_workdir": "relative/path"}, "remote_workdir"),
     ({"remote_workdir": "/a/../b"}, "remote_workdir"),
@@ -61,6 +65,20 @@ def test_schema_rejects(change, message):
 def test_a_file_that_is_not_a_profile_mapping_is_an_error(text):
     with pytest.raises(site.SiteProfileError):
         site.parse_profile(text)
+
+
+@pytest.mark.parametrize('limits', [{}, {'fetch_max_bytes': 12_000_000, 'fetch_total_bytes': 40_000_000}])
+def test_site_fetch_limits_reach_scheduler_transfer(limits):
+    from types import SimpleNamespace
+    from labhq.tools.scheduler import Scheduler
+
+    profile = site.SiteProfile(name='test', remote_workdir='/fixture', **limits)
+    session = SimpleNamespace(profile=profile, cfg=SimpleNamespace(redact_words=[]), run=lambda *a, **k: None)
+    scheduler = Scheduler(HpcSettings())
+    scheduler._session = session
+    transfer = scheduler.transfer()
+    assert transfer.limits.fetch_max_bytes == limits.get('fetch_max_bytes', 1024 * 1024)
+    assert transfer.limits.fetch_total_bytes == limits.get('fetch_total_bytes', 8 * 1024 * 1024)
 
 
 def test_unknown_fields_name_what_is_still_to_ask():

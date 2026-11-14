@@ -56,6 +56,103 @@ def test_outside_root_and_remote_reference_decline(tmp_path):
     assert capture(request, settings) is None
 
 
+def test_explicit_project_proof_is_bounded_and_tracks_changes(tmp_path):
+    settings, _, folder = fixture(tmp_path)
+    settings.runner.reference_roots = []
+    request = {'project_dirs': [str(folder)]}
+    assert capture(request, settings) is None  # other consumers retain their reference-root boundary
+    proof = capture(request, settings, allow_request_projects=True)
+    assert proof and capture(request, settings, allow_request_projects=True) == proof
+    old = archive()
+    old.update(request)
+    old['reuse_input_proof'] = {sid: proof for sid in old['results']}
+    carry = c.carry_over(old, old['plan'], {}, [])
+    tools = c.tool_signatures(old['plan'], AGENTS)
+    assert not c.proof_problems(old, old['plan'], carry, tools, request, proof)
+    (folder / 'a.txt').write_text('changed')
+    changed = capture(request, settings, allow_request_projects=True)
+    assert c.proof_problems(old, old['plan'], carry, tools, request, changed)
+    (folder / 'a.txt').unlink()
+    assert capture(request, settings, allow_request_projects=True) != proof
+    assert c.proof_problems(old, old['plan'], carry, tools, request, None)
+
+
+def test_unattached_meta_project_is_not_admitted(tmp_path):
+    settings, _, folder = fixture(tmp_path)
+    settings.runner.reference_roots = []
+    assert capture({}, settings, {'project_dirs': [str(folder)]}, allow_request_projects=True) is None
+    assert capture({'reference_dirs': [str(folder)]}, settings, allow_request_projects=True) is None
+
+
+def test_project_proof_does_not_depend_on_a_missing_reference_root(tmp_path):
+    settings, _, folder = fixture(tmp_path)
+    settings.runner.reference_roots = [str(tmp_path / 'missing')]
+    project = {'project_dirs': [str(folder)]}
+    assert capture(project, settings, allow_request_projects=True) is not None
+    project['reference_dirs'] = [str(folder)]
+    assert capture(project, settings, allow_request_projects=True) is None
+
+
+def test_project_proof_rejects_hardlinks_and_private_paths(tmp_path):
+    import os
+    settings, _, folder = fixture(tmp_path)
+    settings.runner.reference_roots = []
+    request = {'project_dirs': [str(folder)]}
+    os.link(folder / 'a.txt', folder / 'alias.txt')
+    assert capture(request, settings, allow_request_projects=True) is None
+    (folder / 'alias.txt').unlink()
+    settings.policy.private_paths = [str(folder)]
+    assert capture(request, settings, allow_request_projects=True) is None
+
+
+@pytest.mark.asyncio
+async def test_runner_receipts_only_projects_opened_to_the_task(tmp_path, monkeypatch):
+    from tests.test_input_hashes import _project_runner
+    settings, _, folder = fixture(tmp_path)
+    request = {'project_dirs': [str(folder)]}
+    class Adapter:
+        async def run(self, ctx):
+            return TaskResult(task_id=ctx.task.id, agent_id='worker', ok=True, text='done')
+    runner, agent = _project_runner(tmp_path, monkeypatch, Adapter())
+    runner.s.runner.reference_roots = []
+    expected = capture(request, runner.s, allow_request_projects=True)
+    meta = {'kind': 'step', 'step_id': 's1', 'reuse_input_request': request, 'reuse_input_meta': {}}
+    unopened = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='fixture', meta=meta))
+    assert unopened.request_input_sha256 is None
+    opened = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='fixture',
+                                        meta={**meta, 'project_dirs': [str(folder)]}))
+    assert opened.request_input_sha256 == expected['sha256']
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_records_attached_project_and_offers_unchanged_reuse(tmp_path, monkeypatch):
+    hub, orch = partial_hub(monkeypatch)
+    _, _, folder = fixture(tmp_path)
+    hub.s.runner.reference_roots = []
+    req = hub.requests['r']
+    req['project_dirs'] = [str(folder)]
+    continuation = req['research_contract'].pop('continuation')
+    hub.s.orchestrator.step_max_attempts = 1
+    async def reply(task):
+        proof = capture(task.meta['reuse_input_request'], hub.s, task.meta['reuse_input_meta'],
+                        allow_request_projects=True)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          request_input_sha256=proof['sha256'])
+    hub.reply = reply
+    await orch.run_step(Task(agent_id='worker', request_id='r', prompt='fixture',
+                             meta={'kind': 'step', 'step_id': 's1', 'project_dirs': [str(folder)]}))
+    proof = req['reuse_input_proof']['s1']
+    assert proof and c.archive_round(req, {})['reuse_input_proof']['s1'] == proof
+    old = req['research_contract']['rounds'][-1]
+    old.update(project_dirs=[str(folder)], reuse_input_proof={sid: proof for sid in old['results']})
+    req['research_contract']['continuation'] = continuation
+    await orch._prepare_research_reuse('r', req['plan'])
+    assert req['research_contract']['continuation']['reuse'] == ['s1']
+    (folder / 'a.txt').write_text('changed')
+    approve(req)
+    assert not await orch._verify_research_reuse('r', req['plan'])
+
+
 def test_directory_file_addition_deletion_and_limits(tmp_path):
     settings, request, folder = fixture(tmp_path)
     first = capture(request, settings)

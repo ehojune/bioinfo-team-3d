@@ -67,6 +67,9 @@ class SiteProfile(BaseModel):
     # node, partition or queue is refused. Empty: the scheduler picks within the queue.
     pinned_nodes: list[str] = Field(default_factory=list)
     remote_workdir: str | None = None
+    # Local retrieval limits; leaving them out preserves the historical defaults.
+    fetch_max_bytes: int = Field(default=1024 * 1024, strict=True, gt=0)
+    fetch_total_bytes: int = Field(default=8 * 1024 * 1024, strict=True, gt=0)
     # The user's own limits; `hpc.login_limit_*` in the labhq config is what is enforced (#1298).
     login_limit_per_request: int | None = Field(default=None, ge=1)
     login_limit_per_day: int | None = Field(default=None, ge=1)

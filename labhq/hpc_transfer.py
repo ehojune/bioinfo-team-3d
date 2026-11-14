@@ -850,7 +850,7 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
             manifest["skipped"].append({"path": name, "reason": "name not allowed"})
             continue
         if size > transfer.limits.fetch_max_bytes or total + size > transfer.limits.fetch_total_bytes:
-            manifest["skipped"].append({"path": name, "reason": f"{size} bytes: use the site profile's file transfer method"})
+            manifest["skipped"].append({"path": name, "bytes": size, "reason": f"{size} bytes: use the site profile's file transfer method"})
             continue
         try:
             info = (transfer.fetch_log if is_log(name) else transfer.fetch_file)(rel, fetch_to, name=name)
