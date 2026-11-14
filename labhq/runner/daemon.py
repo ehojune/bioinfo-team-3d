@@ -3243,7 +3243,7 @@ class Runner:
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
         result.output_sha256 = hashed
-        if task.meta.get("kind") == "result_correction" and not whole_hpc and _should_check_declared_outputs(result):
+        if task.meta.get("kind") == "result_correction" and not whole_hpc and result.ok:
             from .step_inputs import repair_outputs
             try:
                 result.outputs, result.output_sha256 = repair_outputs(ws._manifest(), task, output_records)
