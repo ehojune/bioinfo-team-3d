@@ -141,6 +141,48 @@ def crate_entities(bundle: Path) -> dict[str, dict]:
     return {entity["@id"]: entity for entity in crate["@graph"]}
 
 
+def test_unresolved_review_bundle_uses_last_completed_report_as_draft(tmp_path):
+    settings, req, tasks, *_ = request_fixture(tmp_path)
+    result = req["results"]["s2"]
+    source = Path(result["workdir"]) / "outputs/report.md"
+    write(source, "# Synthetic final report\n\n## 결과\n\nA provisional result.\n\n[detail](final.txt)\n")
+    result["outputs"].append("outputs/report.md")
+    result["output_sha256"]["outputs/report.md"] = digest(source)
+    req["plan"]["steps"][1]["outputs"].append("outputs/report.md")
+    req.update(status="failed", outcome="research_review_revise", report="review only",
+               review={"verdict": "revise", "issues": [
+                   {"priority": "P1", "step_id": "s2", "problem": "Needs checking", "request": "Correct it"},
+                   {"priority": "P2", "step_id": "s1", "problem": "Minor", "request": "Optional"}]})
+    bundle = Path(build_request_bundle(req, settings, tasks)["path"])
+    report = (bundle / "report.md").read_text(encoding="utf-8")
+    readme = (bundle / "README.md").read_text(encoding="utf-8")
+    assert report.startswith("# Synthetic final report")
+    assert "[detail](steps/s2/outputs/final.txt)" in report
+    for text in (report, readme):
+        assert "검증 전 초안" in text and "Needs checking" in text and "Correct it" in text
+        assert "A provisional result." in text
+    assert "Minor" not in report.split("## 질문")[0]
+    assert source.read_text(encoding="utf-8").startswith("# Synthetic final report")
+
+
+@pytest.mark.parametrize("status,changed", [("done", False), ("failed", True)])
+def test_bundle_preserves_existing_report_when_draft_is_not_eligible(tmp_path, status, changed):
+    settings, req, tasks, *_ = request_fixture(tmp_path)
+    result = req["results"]["s2"]
+    source = Path(result["workdir"]) / "outputs/report.md"
+    write(source, "# Candidate\n\n## 결과\n\nDraft body.\n")
+    result["outputs"].append("outputs/report.md")
+    result["output_sha256"]["outputs/report.md"] = digest(source)
+    req["plan"]["steps"][1]["outputs"].append("outputs/report.md")
+    req.update(status=status, outcome="research_review_revise", report="Existing body",
+               review={"verdict": "revise", "issues": []})
+    if changed:
+        write(source, "# Modified after completion\n")
+    bundle = Path(build_request_bundle(req, settings, tasks)["path"])
+    report = (bundle / "report.md").read_text(encoding="utf-8")
+    assert "Existing body" in report and "Draft body." not in report
+
+
 def test_nested_steps_keep_distinct_names_run_provenance_and_second_step_links(tmp_path):
     settings = configured(tmp_path)
     root = Path(settings.runner.workspace_root)

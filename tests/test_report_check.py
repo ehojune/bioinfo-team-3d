@@ -358,3 +358,15 @@ def test_review_flags_preserve_original_claims_without_deciding_resolution():
     assert "Direction reversed" in section and "Counts conflict" in section
     assert "Correct direction" in section and "Reconcile counts" in section
     assert "General concern" in section and "claim 연결 미확인" in section
+
+
+def test_group_direction_does_not_claim_effect_direction():
+    from labhq.evidence.report_consistency import check
+    tables = {"effect.tsv": "group\tOR\nup\t0.75\ndown\t1.24\n"}
+    for sentence in ("하향 유전자 군의 OR 1.24였습니다 ([표](effect.tsv)).",
+                     "상향 유전자 군의 OR 0.75였습니다 ([표](effect.tsv)).",
+                     "하향 OR은 1.24입니다 ([표](effect.tsv)).",
+                     "상향 유전자에서는 OR 0.75입니다 ([표](effect.tsv))."):
+        assert check(sentence, tables)["findings"] == []
+    findings = check("하향 유전자 군의 위험은 감소했습니다 (OR 1.24, [표](effect.tsv)).", tables)["findings"]
+    assert [item["kind"] for item in findings] == ["direction"]

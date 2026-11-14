@@ -913,10 +913,53 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             input_summary += " (" + ", ".join(
                 f"{reason} {count}" for reason, count in sorted(skipped_by_reason.items())) + ")"
 
-        stored_package = req.get("report_package")
+        draft_notice = ""
+        # Only a recorded, hash-verified report from a successful planned step can replace the failure summary.
+        review = req.get("review") or (req.get("research_contract") or {}).get("review") or {}
+        if (req.get("status") == "failed" and req.get("outcome") == "research_review_revise"
+                and isinstance(review, Mapping) and review.get("verdict") == "revise"):
+            for step in reversed(ordered_steps):
+                sid = str(step.get("id") or "")
+                result = results.get(sid) or {}
+                relative = f"steps/{sid}/outputs/report.md"
+                if (not isinstance(result, Mapping) or not result.get("ok")
+                        or "outputs/report.md" not in (step.get("outputs") or [])
+                        or not any(row["relative_path"] == relative and row["status"] == "copied" for row in rows)):
+                    continue
+                try:
+                    draft = (temp / relative).read_text(encoding="utf-8")
+                except (OSError, UnicodeError):
+                    continue
+                if not draft.strip():
+                    continue
+                # The source sits under this step's outputs; links copied to the bundle root need that prefix.
+                copied_paths = {row["relative_path"] for row in rows if row["status"] == "copied"}
+
+                def rebase_link(match: re.Match[str]) -> str:
+                    target = match.group(1)
+                    path = PurePosixPath(target)
+                    candidate = PurePosixPath("steps", sid, "outputs", path).as_posix()
+                    if not path.is_absolute() and ".." not in path.parts and candidate in copied_paths:
+                        return "](" + candidate + ")"
+                    return match.group(0)
+
+                report_text = re.sub(r"\]\(([^\s()<>]+)\)", rebase_link, draft)
+                p1 = [item for item in review.get("issues") or []
+                      if isinstance(item, Mapping) and item.get("priority", "P1") == "P1"]
+                issue_lines = [f"- {item.get('step_id', '-')}: {item.get('problem', '')} → {item.get('request', '')}"
+                               for item in p1]
+                draft_notice = ("**검증 전 초안 — 리뷰의 P1 지적이 반영되지 않았습니다.**\n\n"
+                                "미반영 P1:\n" + "\n".join(issue_lines or ["- 상세 기록 없음"]))
+                break
+        stored_package = req.get("report_package") if not draft_notice else None
         package = (ReportPackage.from_dict(dict(stored_package)) if isinstance(stored_package, Mapping)
                    else build_report_package(dict(req), report_text, dict(results)))
+        if draft_notice:
+            package.consistency = {}
         report = reader_markdown(with_report_front(report_text, package))
+        if draft_notice:
+            first, separator, rest = report.partition("\n")
+            report = first + separator + "\n" + draft_notice + "\n\n" + rest
         from .report_format import split_appendix
         appendix, legacy = split_appendix(str(req.get("report_appendix") or ""))
         tool_calls = _tool_calls_section(ordered_ids, results)
@@ -985,8 +1028,12 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             (temp / FIGURE_PLAN_FILE).write_text(
                 json.dumps({"key_figures": list(dict.fromkeys(key_figures))}, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8", newline="\n")
-        (temp / "README.md").write_text(_readme(req, ordered_steps, commands, unsafe, python_unknown, bool(links),
-                                                 claims, copied_job_scripts),
+        readme_req = {**req, "report_package": package.to_dict()} if draft_notice else req
+        readme = _readme(readme_req, ordered_steps, commands, unsafe, python_unknown, bool(links),
+                         claims, copied_job_scripts)
+        if draft_notice:
+            readme = readme.replace("# 요청 묶음\n", "# 요청 묶음\n\n" + draft_notice + "\n", 1)
+        (temp / "README.md").write_text(readme,
                                           encoding="utf-8", newline="\n")
 
         rewritten_files = 0
