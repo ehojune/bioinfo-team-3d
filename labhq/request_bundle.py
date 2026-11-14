@@ -937,13 +937,15 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
 
                 def rebase_link(match: re.Match[str]) -> str:
                     target = match.group(1)
-                    path = PurePosixPath(target)
+                    angled = target.startswith("<") and target.endswith(">")
+                    path = PurePosixPath(target[1:-1] if angled else target)
                     candidate = PurePosixPath("steps", sid, "outputs", path).as_posix()
                     if not path.is_absolute() and ".." not in path.parts and candidate in copied_paths:
-                        return "](" + candidate + ")"
+                        destination = f"<{candidate}>" if angled else candidate
+                        return "](" + destination + (match.group(2) or "") + ")"
                     return match.group(0)
 
-                report_text = re.sub(r"\]\(([^\s()<>]+)\)", rebase_link, draft)
+                report_text = re.sub(r'\]\(\s*(<[^>\n]+>|[^\s()<>]+)(\s+"[^"\n]*")?\s*\)', rebase_link, draft)
                 p1 = [item for item in review.get("issues") or []
                       if isinstance(item, Mapping) and item.get("priority", "P1") == "P1"]
                 issue_lines = [f"- {item.get('step_id', '-')}: {item.get('problem', '')} → {item.get('request', '')}"

@@ -145,7 +145,12 @@ def test_unresolved_review_bundle_uses_last_completed_report_as_draft(tmp_path):
     settings, req, tasks, *_ = request_fixture(tmp_path)
     result = req["results"]["s2"]
     source = Path(result["workdir"]) / "outputs/report.md"
-    write(source, "# Synthetic final report\n\n## 결과\n\nA provisional result.\n\n[detail](final.txt)\n")
+    write(source, '# Synthetic final report\n\n## 결과\n\nA provisional result.\n\n'
+                  '[detail](final.txt) [spaced](<final table.tsv> "data")\n')
+    spaced = source.parent / "final table.tsv"
+    write(spaced, "value\n1\n")
+    result["outputs"].append("outputs/final table.tsv")
+    result["output_sha256"]["outputs/final table.tsv"] = digest(spaced)
     result["outputs"].append("outputs/report.md")
     result["output_sha256"]["outputs/report.md"] = digest(source)
     req["plan"]["steps"][1]["outputs"].append("outputs/report.md")
@@ -158,6 +163,7 @@ def test_unresolved_review_bundle_uses_last_completed_report_as_draft(tmp_path):
     readme = (bundle / "README.md").read_text(encoding="utf-8")
     assert report.startswith("# Synthetic final report")
     assert "[detail](steps/s2/outputs/final.txt)" in report
+    assert '[spaced](<steps/s2/outputs/final table.tsv> "data")' in report
     for text in (report, readme):
         assert "검증 전 초안" in text and "Needs checking" in text and "Correct it" in text
         assert "A provisional result." in text
