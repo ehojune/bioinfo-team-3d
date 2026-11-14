@@ -475,6 +475,56 @@ async def test_matching_manifest_and_interpreter_keep_the_environment_step_succe
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('case', ['unchanged', 'changed', 'missing', 'other_step', 'other_request',
+                                  'other_revision', 'wrong_parent', 'changed_during_repair'])
+async def test_json_repair_inherits_only_unchanged_parent_outputs(tmp_path, monkeypatch, case):
+    from pathlib import Path
+
+    def produce(workdir):
+        _write(workdir, PRODUCER_LOCK, b'pandas==2.2\n')
+        _write(workdir, PRODUCER_MANIFEST, json.dumps(PRODUCER_BINDING).encode())
+        _write(workdir, PRODUCER_PYTHON, b'python')
+
+    runner = _runner(tmp_path, monkeypatch, produce)
+    runner.s.runner.id = PRODUCER_BINDING['runner_id']
+    first = await runner.run_task(_task(tid='first', outputs=[PRODUCER_LOCK, PRODUCER_MANIFEST],
+        step_id='env', session_runner=PRODUCER_BINDING['runner_id'], environment_binding=PRODUCER_BINDING))
+    assert first.ok, first.error
+    workdir = Path(first.workdir)
+    if case == 'changed':
+        _write(workdir, PRODUCER_MANIFEST, b'{}')
+    if case == 'missing':
+        (workdir / PRODUCER_MANIFEST).unlink()
+    def repair(folder):
+        if case == 'changed_during_repair':
+            _write(folder, PRODUCER_MANIFEST, b'{}')
+    _runner(tmp_path, monkeypatch, repair)  # installs a JSON-only fake adapter
+    task = _task(tid='repair', workdir=workdir, kind='result_correction',
+        parent_task='absent' if case == 'wrong_parent' else first.task_id,
+        step_id='other' if case == 'other_step' else 'env', revision=1 if case == 'other_revision' else 0,
+        session_runner=PRODUCER_BINDING['runner_id'], environment_binding=PRODUCER_BINDING)
+    if case == 'other_request':
+        task.request_id = 'other'
+    if case == 'other_step':
+        task.meta.pop('environment_binding')  # exercise the parent identity check, not binding preflight
+    result = await runner.run_task(task)
+    if case == 'unchanged':
+        assert result.ok, result.error
+        assert result.outputs == first.outputs
+        assert result.output_sha256 == first.output_sha256
+        record = json.loads((workdir / 'manifest.json').read_text(encoding='utf-8'))['runs']['repair']
+        assert record['outputs'] == first.outputs and record['output_sha256'] == first.output_sha256
+        assert record['observed_outputs'] == []
+        again = _task(tid='repair-again', workdir=workdir, kind='result_correction', parent_task=result.task_id,
+            step_id='env', session_runner=PRODUCER_BINDING['runner_id'], environment_binding=PRODUCER_BINDING)
+        second = await runner.run_task(again)
+        assert second.ok, second.error
+        assert second.outputs == first.outputs and second.output_sha256 == first.output_sha256
+    else:
+        assert not result.ok
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("manifest", [
     {}, {**PRODUCER_BINDING, "runner_id": "other"}, {**PRODUCER_BINDING, "step_id": "env_other"},
     {**PRODUCER_BINDING, "runtime": "wsl"}, {**PRODUCER_BINDING, "version": 2}], ids=["empty", "stale_runner", "stale_step",

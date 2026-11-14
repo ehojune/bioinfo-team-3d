@@ -116,6 +116,30 @@ def validate_runner_env(root, source, artifact, expected, request_id=None):
     return source / '.venv'
 
 
+def repair_outputs(manifest, task, records):
+    """Recover only the successful parent turn's collected files, retaining its original hashes."""
+    parent = task.meta.get('parent_task')
+    run = (manifest.get('runs') or {}).get(parent) if isinstance(parent, str) else None
+    origin = manifest.get('task') or {}
+    if (not isinstance(run, dict) or run.get('ok') is not True or
+            not task.request_id or origin.get('request_id') != task.request_id or
+            run.get('request_id') != task.request_id or run.get('step_id') != task.meta.get('step_id') or
+            not task.meta.get('step_id') or run.get('agent_id') != task.agent_id or
+            run.get('revision') != task.meta.get('revision', 0) or
+            run.get('kind') not in {'step', 'result_correction'}):
+        raise ValueError('result correction parent is not a successful turn of this step')
+    outputs, hashes = run.get('outputs'), run.get('output_sha256')
+    if (not isinstance(outputs, list) or not isinstance(hashes, dict) or
+            any(not isinstance(p, str) or output_relpath(p) != p for p in outputs) or
+            len(set(outputs)) != len(outputs) or set(outputs) != set(hashes) or
+            any(not isinstance(h, str) or not re.fullmatch('[a-f0-9]{64}', h) for h in hashes.values())):
+        raise ValueError('result correction parent output inventory is incomplete')
+    current = {row['path']: row.get('sha256') for row in records}
+    if any(current.get(path) != digest for path, digest in hashes.items()):
+        raise ValueError('result correction parent output is missing or changed')
+    return list(outputs), dict(hashes)
+
+
 def producer_environment_problem(root, workdir, outputs, hashes, binding):
     """Why a finished environment step does not match its pinned binding, or None when it does (#674).
 
