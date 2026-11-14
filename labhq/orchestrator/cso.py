@@ -17,6 +17,7 @@ import json
 import math
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path, PurePosixPath
@@ -6931,6 +6932,45 @@ class Orchestrator:
                 agents[aid] = {**agents.get(aid, {}), **identity}
         return research_continuation.tool_signatures(plan, agents, self.hub.s.engines)
 
+    async def _verify_continuation_outputs(self, rid: str, plan: dict, results: dict) -> dict:
+        """Fresh runner observation for remote-backed results; local-only results use the existing walker."""
+        remote, local = {}, {}
+        for sid, result in results.items():
+            provenance = result.get('provenance') or {}
+            (remote if isinstance(provenance, dict) and 'hpc_remote_data' in provenance else local)[sid] = result
+        failures = await asyncio.to_thread(research_continuation.verify_reuse, local, self.hub.s) if local else {}
+        if not remote:
+            return failures
+        req = self.hub.requests[rid]
+        location = req.get('execution_location') or {}
+        runner_id = location.get('runner_id')
+        agent_id = next((aid for aid, agent in hub_agents(self.hub, rid).items()
+                         if hub_runner(self.hub, aid, rid) == runner_id
+                         and agent.get('whole_request_hpc') is True and agent.get('hpc_tools')
+                         and 'hpc' in (agent.get('builtin_mcp') or [])), None)
+        if (location.get('mode') != 'hpc' or not agent_id or runner_id not in getattr(self.hub, 'runners', {})
+                or getattr(self.hub, 'runner_capabilities', {}).get(runner_id, {}).get('hpc_reuse_verify') is not True):
+            return {**failures, **{sid: 'remote output verification unavailable' for sid in remote}}
+        nonce = uuid.uuid4().hex
+        plan_hash = research_plan_sha256(plan)
+        task = Task(agent_id=agent_id, request_id=rid, prompt='', meta={
+            'kind': 'hpc_reuse_verify', 'execution_location': location, 'verification_id': nonce,
+            'plan_sha256': plan_hash, 'research_round': (req.get('research_contract') or {}).get('round'),
+            'results': remote})
+        try:
+            result = await self.hub.dispatch(task)
+            proof = result.structured if result.ok and isinstance(result.structured, dict) else {}
+            problems = proof.get('failures')
+            if (result.task_id != task.id or proof.get('runner_id') != runner_id
+                    or proof.get('verification_id') != nonce or proof.get('plan_sha256') != plan_hash
+                    or proof.get('request_id') != rid or not isinstance(problems, dict)
+                    or not set(problems) <= set(remote)
+                    or not all(isinstance(reason, str) and reason for reason in problems.values())):
+                raise ValueError('invalid observation')
+            return {**failures, **problems}
+        except Exception:
+            return {**failures, **{sid: 'remote output verification unavailable' for sid in remote}}
+
     async def _continuation_candidates(self, rid: str, plan: dict, sealed: dict | None = None):
         """Structural identity, declared-input proof, then the existing safe output walker."""
         req = self.hub.requests[rid]
@@ -6947,8 +6987,7 @@ class Orchestrator:
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
         try:
-            failures = (await asyncio.to_thread(research_continuation.verify_reuse, carry.results, self.hub.s)
-                        if carry.reuse else {})
+            failures = await self._verify_continuation_outputs(rid, plan, carry.results) if carry.reuse else {}
         except Exception:
             failures = {sid: 'output verification unavailable' for sid in carry.reuse}
         refused.update({sid: f'output hash check: {reason}' for sid, reason in failures.items()})
@@ -6983,8 +7022,8 @@ class Orchestrator:
             order = {step['id']: i for i, step in enumerate(plan['steps'])}
             carry.reuse.sort(key=order.__getitem__)
             try:
-                failures = await asyncio.to_thread(research_continuation.verify_reuse,
-                                                   {sid: carry.results[sid] for sid in completed}, self.hub.s)
+                failures = await self._verify_continuation_outputs(
+                    rid, plan, {sid: carry.results[sid] for sid in completed})
             except Exception as exc:
                 raise research_continuation.ReuseApprovalRequired(
                     'completed current-round output verification unavailable') from exc

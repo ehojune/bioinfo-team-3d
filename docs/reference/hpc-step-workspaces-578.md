@@ -22,6 +22,7 @@
 - HPC 선택·계획 검증은 요청별 roster와 runner view를 따른다. WSL에 pin된 요청이 native owner의 capability를 쓰지 않는다.
 - 요청 project/path-reference 입력은 선택 runner가 briefing 전 무모델 preflight로 검사한다. PI 승인 hash와 원본을 다시 대조해 단계 snapshot을 만들고, 전송본·제출 전 원본과 snapshot을 검증한다. 불일치·누락·검증 실패는 중단하며 직원에 설정된 project 입력은 계속 거부한다.
 - 저장된 HPC 선택도 `run_request` 입구에서 새 preflight를 실행한다. 복구 시 preflight 결과는 재사용하지 않으며 일반 완료 처리 작업의 복구는 유지한다. Slurm 고정 후보에는 `--nodes=1`을 함께 지정하고 충돌 옵션과 cluster 환경변수를 거부한다.
+- 수정 재계획의 원격 재사용은 성공 run의 목록과 결과 증빙을 대조하고 선택 runner에서 원격 hash와 로컬 충돌을 다시 검사한다. 계획·요청·검증 시도를 묶으며 재시작 후 오래된 검증 응답을 채택하지 않는다. 디렉터리 산출은 재사용하지 않는다.
 - runner는 configured project 입력이 없는 내장 scheduler 직원만 `whole_request_hpc: true`로 알린다. 경로는 roster에 내보내지 않는다. gateway는 이 capability가 true인 직원만 선택·계획에 허용한다. 일반 HPC 도구 지원 여부는 별도이며 capability 누락을 지원으로 추정하지 않는다. 관련 회귀 340 passed/7 skipped.
 - 마지막 eligibility 변경 뒤 실제 gateway 왕복 mock E2E 13 passed. 실제 모델·HPC 계정 전환은 실행하지 않았다.
 

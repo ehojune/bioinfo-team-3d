@@ -477,6 +477,41 @@ def remote_literature_warnings(artifacts, workspace_root):
     return warnings
 
 
+def verify_reuse_outputs(request_id, results, settings, transfer):
+    """Authenticate recorded inventories against their successful runs, then recheck remote and local files."""
+    from ..evidence.audit import locate_workdir
+    from ..hpc_transfer import local_copy_conflicts, verify_remote_data
+    from ..research.continuation import remote_artifacts, verify_reuse
+
+    root = settings.path(settings.runner.workspace_root).resolve(strict=True)
+    verified = {}
+    for step, result in results.items():
+        hashes = remote_artifacts(result, request_id)
+        if not hashes:
+            continue
+        if not isinstance(step, str) or not INPUT_STEP_ID.fullmatch(step):
+            raise ValueError('invalid remote step identity')
+        source, _ = locate_workdir(root, result)
+        if source is None:
+            raise ValueError('remote output workspace unavailable')
+        with _folder(root, source.relative_to(root).parts) as held:
+            record = _json(held, 'manifest.json', limit=16 * 1024 * 1024)
+        task = record.get('task') or {}
+        run = (record.get('runs') or {}).get(result.get('task_id')) or {}
+        manifests = (result.get('provenance') or {}).get('hpc_remote_data')
+        if (task.get('request_id') != request_id or task.get('meta', {}).get('step_id') != step or
+                run.get('ok') is not True or run.get('request_id') != request_id or run.get('step_id') != step or
+                run.get('hpc_remote_outputs') != manifests):
+            raise ValueError('remote output proof does not match the successful run')
+        local = result.get('output_sha256') or {}
+        if not isinstance(local, dict) or local_copy_conflicts(source, list(hashes), local, local):
+            raise ValueError('remote output has an unverified local alias')
+        for manifest in manifests:
+            verify_remote_data(transfer, manifest, request_id)
+        verified[step] = hashes
+    return verify_reuse(results, settings, verified)
+
+
 def remote_ancestor_inputs(ws, artifacts, workspace_root):
     """Runner-persisted names/sizes from successful ancestors of the same request."""
     from ..hpc_transfer import validate_remote_manifest

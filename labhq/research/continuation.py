@@ -218,6 +218,37 @@ def tool_signatures(plan: Mapping[str, Any], agents: Mapping[str, Any], engines:
     return signatures
 
 
+def remote_artifacts(result: Mapping[str, Any], request_id: str | None = None) -> dict[str, str]:
+    """Read candidate hashes only; the runner must independently authenticate and recheck this inventory."""
+    from ..hpc_transfer import TransferError, _require_remote_hashes, validate_remote_manifest
+    from ..util import output_relpath
+
+    provenance = result.get("provenance") or {}
+    manifests = provenance.get("hpc_remote_data") if isinstance(provenance, Mapping) else None
+    if manifests is None:
+        return {}
+    if not isinstance(manifests, list) or not manifests:
+        raise ValueError("invalid remote output proof")
+    found, names = {}, set()
+    outputs = result.get("outputs") or []
+    for manifest in manifests:
+        identity = request_id if request_id is not None else manifest.get("request_id") if isinstance(manifest, dict) else None
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("missing remote request identity")
+        try:
+            validate_remote_manifest(manifest, identity)
+            _require_remote_hashes(manifest)
+        except (TransferError, TypeError) as exc:
+            raise ValueError("invalid remote output proof") from exc
+        for row in manifest["files"]:
+            path = "outputs/" + row["path"]
+            if output_relpath(path) != path or path.casefold() in names or path not in outputs:
+                raise ValueError("ambiguous remote output proof")
+            names.add(path.casefold())
+            found[path] = row["sha256"]
+    return found
+
+
 def _artifacts(step: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, str]:
     """Recorded regular-file proof only. Directory outputs deliberately have no reuse contract."""
     from ..util import output_relpath
@@ -228,6 +259,7 @@ def _artifacts(step: Mapping[str, Any], result: Mapping[str, Any]) -> dict[str, 
     if (not required or None in required or not outputs or len(set(outputs)) != len(outputs)
             or not set(required) <= set(outputs) or not isinstance(hashes, Mapping)):
         raise ValueError("missing or ambiguous output proof")
+    hashes = {**remote_artifacts(result), **hashes}
     for path in outputs:
         if (not isinstance(path, str) or output_relpath(path) != path
                 or not isinstance(hashes.get(path), str) or not re.fullmatch(r"[0-9a-f]{64}", hashes[path])):
@@ -485,21 +517,34 @@ def restore_round(req: dict[str, Any], archived: Mapping[str, Any]) -> dict[str,
     return draft
 
 
-def verify_reuse(results: Mapping[str, Mapping[str, Any]], settings: Any) -> dict[str, str]:
+def verify_reuse(results: Mapping[str, Mapping[str, Any]], settings: Any,
+                 remote_verified: Mapping[str, Mapping[str, str]] | None = None) -> dict[str, str]:
     """{step: why its reuse is refused} after hashing every recorded output of the reused steps again.
 
     Uses the `labhq verify` walker. Anything but a matching hash refuses reuse: a changed, missing or unreadable file,
     an output without a recorded hash, or a work folder this PC cannot see."""
-    from ..evidence.audit import OK, verify_request
+    from ..evidence.audit import MISSING, OK, REMOTE, verify_request
 
-    empty = {sid: "missing recorded output proof" for sid, result in results.items()
-             if not result.get("outputs") or not result.get("output_sha256")}
-    report = verify_request({"results": dict(results)}, settings)
+    checked = copy.deepcopy(dict(results))
+    empty = {}
+    for sid, result in checked.items():
+        verified = (remote_verified or {}).get(sid) or {}
+        if verified and verified != remote_artifacts(result):
+            empty[sid] = "remote verification differs from recorded output proof"
+            continue
+        result["output_sha256"] = {**verified, **(result.get("output_sha256") or {})}
+        if not result.get("outputs") or not result["output_sha256"]:
+            empty[sid] = "missing recorded output proof"
+    report = verify_request({"results": checked}, settings)
     refused: dict[str, str] = dict(empty)
     for reason in report["reasons"]:
         sid, _, detail = str(reason).partition(": ")
         refused.setdefault(sid, detail or str(reason))
     for row in report["files"]:
+        verified = (remote_verified or {}).get(str(row["step_id"])) or {}
+        if (row["status"] in (MISSING, REMOTE) and row["path"] in verified
+                and row["recorded_sha256"] == verified[row["path"]]):
+            continue
         if row["status"] != OK:
             refused.setdefault(str(row["step_id"]), f"{row['path']} {row['status']}"
                                + (f" ({row['detail']})" if row.get("detail") else ""))
