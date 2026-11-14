@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 17:24 | [`026cbec`](https://github.com/ehojune/bioinfo-team-3d/commit/026cbec) | **HPC 수신 검사의 시험 환경을 새 잠금에 맞췄습니다.**<br>생성자를 건너뛰는 두 fixture에 fetch lock을 초기화하고 관련 poll 회귀를 확인했다 (#1413). |
+| 17:21 | [`b276d0d`](https://github.com/ehojune/bioinfo-team-3d/commit/b276d0d) | **상담 실패를 다시 물을 수 있는 조건을 명확히 했습니다.**<br>시작 전 파일을 찾지 못한 경우만 허용하고 권한 오류와 원인 미확인은 계속 차단한다 (#1413). |
+| 17:17 | [`24060cb`](https://github.com/ehojune/bioinfo-team-3d/commit/24060cb) | **상담을 시작하지 못한 경우 다시 물을 수 있고, HPC 결과 수신이 겹치지 않습니다.**<br>시작 전 실패를 명시적 대체 답변으로 해소하고 동시 fetch를 직렬화한다. 실제 사건 원인은 미확인이다 (#1413). |
 | 10:48 | [`2fdd7d0`](https://github.com/ehojune/bioinfo-team-3d/commit/2fdd7d0) | **끝난 HPC 단계의 검증된 원격 결과를 수정 계획에서 다시 쓸 수 있습니다.**<br>수정 재계획 전후에 성공 run의 원격 산출과 로컬 충돌을 선택 runner에서 재검증한다 (#1413). |
 | 10:09 | [`4b23148`](https://github.com/ehojune/bioinfo-team-3d/commit/4b23148) | **이전 runner 기준에서도 수정된 잡의 결과를 수집합니다.**<br>구형 산출 목록에 선택적 중첩 후보가 없어도 동명 파일 교체를 처리한다 (#1413). |
 | 10:03 | [`f82ed2e`](https://github.com/ehojune/bioinfo-team-3d/commit/f82ed2e) | **고쳐 제출한 HPC 잡의 결과를 이후 단계에 전달합니다.**<br>같은 단계의 성공 잡 산출을 제출 순서로 고르고 역순 수집과 release 복원을 기록한다 (#1413). |
