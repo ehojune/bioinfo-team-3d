@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 19:02 | [`b5c2d47`](https://github.com/ehojune/bioinfo-team-3d/pull/1434/commits/b5c2d47) | **결과 교정 중 확인 질문이 나와도 원래 산출을 지킵니다.**<br>blocking 응답에서도 부모 산출의 변경과 누락을 검사한다 (#1413). |
+| 18:52 | [`cc87657`](https://github.com/ehojune/bioinfo-team-3d/pull/1434/commits/cc87657) | **결과 JSON을 고칠 때 환경 준비 산출이 빠지는 문제를 고쳤습니다.**<br>같은 단계의 원래 산출 목록과 hash를 이어받고 파일 변경이나 누락을 거절한다 (#1413). |
 | 17:24 | [`026cbec`](https://github.com/ehojune/bioinfo-team-3d/commit/026cbec) | **HPC 수신 검사의 시험 환경을 새 잠금에 맞췄습니다.**<br>생성자를 건너뛰는 두 fixture에 fetch lock을 초기화하고 관련 poll 회귀를 확인했다 (#1413). |
 | 17:21 | [`b276d0d`](https://github.com/ehojune/bioinfo-team-3d/commit/b276d0d) | **상담 실패를 다시 물을 수 있는 조건을 명확히 했습니다.**<br>시작 전 파일을 찾지 못한 경우만 허용하고 권한 오류와 원인 미확인은 계속 차단한다 (#1413). |
 | 17:17 | [`24060cb`](https://github.com/ehojune/bioinfo-team-3d/commit/24060cb) | **상담을 시작하지 못한 경우 다시 물을 수 있고, HPC 결과 수신이 겹치지 않습니다.**<br>시작 전 실패를 명시적 대체 답변으로 해소하고 동시 fetch를 직렬화한다. 실제 사건 원인은 미확인이다 (#1413). |

@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1413 r60 — 결과 JSON 교정의 산출 계승
+
+## 결론
+같은 요청·단계·revision의 성공한 부모 산출과 원래 hash를 교정 실행에 넘긴다. blocking 응답에서도 변경·누락은 거절한다.
+
+## 검증
+- 수정 전 mock 회귀: `collected environment manifest is missing` 재현.
+- 환경·산출·입력 보호·계약 관련 mock 시험: 254 passed, 11 skipped. blocking 회귀 추가 후 환경 시험: 90 passed, 10 skipped. CI는 PR에서 확인한다.
+- 실제 직원 호출, HPC, PI 인스턴스와 배포는 범위 밖이다. 기존 실행의 오래된 부모 기록에 산출 목록이 없으면 교정은 거절된다.
+
 # #1413 상담 대체와 HPC 수신
 
 ## 결론
