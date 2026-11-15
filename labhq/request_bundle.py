@@ -921,10 +921,15 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
             for step in reversed(ordered_steps):
                 sid = str(step.get("id") or "")
                 result = results.get(sid) or {}
-                relative = f"steps/{sid}/outputs/report.md"
-                if (not isinstance(result, Mapping) or not result.get("ok")
-                        or "outputs/report.md" not in (step.get("outputs") or [])
-                        or not any(row["relative_path"] == relative and row["status"] == "copied" for row in rows)):
+                declared = [p for raw in step.get("outputs") or [] if isinstance(raw, str)
+                            and (p := _safe_output_path(raw)) is not None and p.suffix.casefold() == ".md"]
+                # Older plans had no phase; preserve their single conventional report only.
+                if step.get("phase") != "report":
+                    declared = [p for p in declared if step.get("phase") is None and str(p) == "outputs/report.md"]
+                if not isinstance(result, Mapping) or not result.get("ok") or len(declared) != 1:
+                    continue
+                relative = PurePosixPath("steps", sid, declared[0]).as_posix()
+                if not any(row["relative_path"] == relative and row["status"] == "copied" for row in rows):
                     continue
                 try:
                     draft = (temp / relative).read_text(encoding="utf-8")
@@ -938,7 +943,7 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                 def rebase_target(target: str) -> str:
                     angled = target.startswith("<") and target.endswith(">")
                     path = PurePosixPath(target[1:-1] if angled else target)
-                    candidate = PurePosixPath("steps", sid, "outputs", path).as_posix()
+                    candidate = (PurePosixPath(relative).parent / path).as_posix()
                     if not path.is_absolute() and ".." not in path.parts and candidate in copied_paths:
                         return f"<{candidate}>" if angled else candidate
                     return target

@@ -19,6 +19,8 @@ import copy
 import hashlib
 import json
 import math
+import ntpath
+import posixpath
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -272,6 +274,40 @@ def has_request_inputs(request: Mapping[str, Any]) -> bool:
     return any(request.get(key) for key in ('references', 'reference_dirs', 'project_dirs'))
 
 
+def _proved_external_ref(ref: str, proof: Mapping[str, Any] | None) -> bool:
+    """An exact file or directory in the matching, execution-time input manifest.
+
+    A relative name must resolve to one manifest path; a prefix, URL, traversal or ambiguous name is not proof.
+    """
+    if not isinstance(proof, Mapping) or not isinstance(ref, str) or not ref or '://' in ref:
+        return False
+    text = ref.replace('\\', '/')
+    if any(part == '..' for part in text.split('/')) or text.startswith('//'):
+        return False
+    drive, _ = ntpath.splitdrive(text)
+    if drive and not ntpath.isabs(text):
+        return False
+    absolute = bool(drive) or text.startswith('/')
+    wanted = text.rstrip('/').removeprefix('./')
+    matches = set()
+    for row in proof.get('files') or []:
+        if not isinstance(row, list) or len(row) != 3 or not all(isinstance(x, str) for x in row):
+            return False
+        root, relative, kind = row
+        if text.endswith('/') and kind != 'directory':
+            continue
+        rel = relative.removeprefix('./') if relative != '.' else ''
+        if '..' in relative.split('/') or relative.startswith('/'):
+            return False
+        windows = bool(ntpath.splitdrive(root)[0])
+        mod = ntpath if windows else posixpath
+        full = mod.normcase(mod.normpath(mod.join(root, rel)))
+        target = mod.normcase(mod.normpath(wanted))
+        if target == (full if absolute else mod.normcase(mod.normpath(rel))):
+            matches.add((windows, full))
+    return len(matches) == 1
+
+
 def proof_problems(previous: Mapping[str, Any], plan: Mapping[str, Any], carry: Carry,
                    tools: Mapping[str, str], current_request: Mapping[str, Any] | None = None,
                    input_proof: Mapping[str, Any] | None = None) -> dict[str, str]:
@@ -312,13 +348,20 @@ def proof_problems(previous: Mapping[str, Any], plan: Mapping[str, Any], carry: 
                     raise ValueError("missing dependency result")
                 _artifacts(steps[dep], carry.results[dep])
             for ref in step.get("input_refs") or []:
-                if not isinstance(ref, str) or not ref.startswith("step:"):
+                if not isinstance(ref, str):
                     raise ValueError("external input has no verified content proof")
-                source, sep, path = ref[5:].partition("/")
+                explicit = ref.startswith("step:")
+                source, sep, path = (ref[5:] if explicit else ref).partition("/")
                 from ..util import output_relpath
+                dependency = source in ancestors[sid]
+                if not explicit and not dependency:
+                    if recorded is not None and recorded == input_proof and _proved_external_ref(ref, recorded):
+                        continue
+                    raise ValueError("external input has no verified content proof")
                 normalized = output_relpath(path) if sep else None
                 if (source not in ancestors[sid] or source not in carry.results or normalized is None
-                        or normalized not in _artifacts(steps[source], carry.results[source])):
+                        or normalized not in _artifacts(steps[source], carry.results[source])
+                        or (not explicit and _proved_external_ref(ref, recorded))):
                     raise ValueError("missing or ambiguous declared dependency input")
         except (ValueError, TypeError, KeyError) as exc:
             problems[sid] = str(exc)
