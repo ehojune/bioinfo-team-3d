@@ -169,13 +169,20 @@ async def test_preparing_folder_registered_before_creation_and_cleaned(tmp_path,
 
 
 @pytest.mark.asyncio
-async def test_windows_codex_step_keeps_own_folder_and_denies_sibling(tmp_path, monkeypatch):
-    runner, ctx, sibling = await run_step(tmp_path, monkeypatch, Engine.codex, platform='win32')
+async def test_windows_codex_step_keeps_policy_denies_but_native_denies_only_private(tmp_path, monkeypatch):
+    protected = tmp_path / 'protected'
+    protected.mkdir()
+    def configure(settings, folder, artifact):
+        settings.policy.private_paths = [str(protected)]
+    runner, ctx, sibling = await run_step(tmp_path, monkeypatch, Engine.codex, mutate=configure, platform='win32')
     assert str(runner.ws_root.resolve()) not in ctx.private_paths
     assert str(sibling) in ctx.private_paths
     assert str(ctx.workdir / 'inputs') in ctx.private_paths
     assert str(ctx.workdir / 'inputs') not in ctx.native_deny_read_paths
-    assert str(sibling) in ctx.native_deny_read_paths
+    assert str(sibling) not in ctx.native_deny_read_paths
+    assert str(protected) in ctx.native_deny_read_paths
+    assert gate(ctx, 'Read', {'file_path': str(sibling / 'outputs' / 'table.tsv')}).action == 'deny'
+    assert gate(ctx, 'Read', {'file_path': str(protected / 'secret')}).action == 'deny'
     target = ctx.workdir / 'inputs' / 'fetch' / 'table.tsv'
     assert gate(ctx, 'Read', {'file_path': str(target)}).action == 'allow'
     assert gate(ctx, 'Write', {'file_path': str(target), 'content': 'x'}).action == 'deny'
@@ -186,7 +193,8 @@ async def test_windows_codex_step_keeps_own_folder_and_denies_sibling(tmp_path, 
                    if v.startswith('permissions.labhq_staff='))
     assert 'extends = ":read-only"' in profile
     assert f'{codex_mod._toml(str(ctx.workdir / "inputs"))} = "deny"' not in profile
-    assert f'{codex_mod._toml(str(sibling))} = "deny"' in profile
+    assert f'{codex_mod._toml(str(sibling))} = "deny"' not in profile
+    assert f'{codex_mod._toml(str(protected))} = "deny"' in profile
     assert ctx.read_only_inputs
     assert str(ctx.workdir) in ctx.private_open_reads
 
@@ -204,7 +212,8 @@ async def test_other_day_ancestor_is_staged_outside_native_deny(tmp_path, monkey
     runner, ctx, upstream = await run_step(tmp_path, monkeypatch, Engine.codex, platform='win32')
     target = ctx.workdir / 'inputs' / 'fetch' / 'table.tsv'
     denies = [Path(path).resolve() for path in ctx.native_deny_read_paths]
-    assert upstream.parent.resolve() in denies
+    assert upstream.parent.resolve() not in denies
+    assert str(upstream.parent) in ctx.private_paths
     assert target.read_bytes() == b'gene\nfixture\n'
     assert not any(target.resolve() == path or target.resolve().is_relative_to(path) for path in denies)
     assert gate(ctx, 'Read', {'file_path': str(target)}).action == 'allow'
@@ -257,7 +266,9 @@ async def test_empty_and_other_input_sources_use_scoped_profile(tmp_path, monkey
 async def test_empty_environment_producer_keeps_workspace_writable(tmp_path, monkeypatch):
     monkeypatch.setattr(daemon, 'sys', RuntimeProxy(daemon.sys, platform='win32'))
     monkeypatch.setattr(codex_mod, '_is_windows', lambda: True)
-    settings = _runner_settings(tmp_path, None)
+    protected = tmp_path / 'protected'
+    protected.mkdir()
+    settings = _runner_settings(tmp_path, [str(protected)])
     settings.recruit.enabled = True
     settings.engines.codex.windows_sandbox = 'elevated'
     settings.engines.codex.isolate_user_config = True
@@ -273,4 +284,6 @@ async def test_empty_environment_producer_keeps_workspace_writable(tmp_path, mon
     profile = next(v for v in codex_mod.CodexAdapter(settings).sandbox_flags(ctx)
                    if v.startswith('permissions.labhq_staff='))
     assert 'extends = ":workspace"' in profile
-    assert f'{codex_mod._toml(str(sibling.parent))} = "deny"' in profile
+    assert f'{codex_mod._toml(str(sibling.parent))} = "deny"' not in profile
+    assert f'{codex_mod._toml(str(protected))} = "deny"' in profile
+    assert str(sibling.parent) in ctx.private_paths
