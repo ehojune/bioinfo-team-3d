@@ -20,7 +20,7 @@ PowerShell:
 
 POSIX에서는 `./labhq.sh init`, `./labhq.sh -c config/labhq.yaml doctor`를 씁니다.
 
-Windows Codex의 선행 산출 단계는 시작 시 존재하는 다른 작업 폴더를 읽지 못하게 막습니다. 같은 runner에서 준비하거나 실행 중인 Codex 작업 폴더와 이후 새로 생긴 폴더는 이 보호에서 제외됩니다. 여러 Codex 직원이 겹쳐 실행되면 형제 폴더 읽기 거부가 실행 내내 유지된다고 보장하지 않습니다 (#1413).
+Windows Codex의 선행 산출 단계에서 다른 작업 폴더는 정책의 읽기 거부 목록에 남지만 native sandbox 읽기 거부에는 넣지 않습니다. 따라서 작업 폴더 사이의 OS 수준 읽기 차단은 보장하지 않습니다. 설정에서 해석된 PI 개인 경로는 native 거부 대상에 유지합니다 (#1413).
 
 Windows `doctor`의 `codex workspace ACL`은 작업 루트에 남은 Codex sandbox 읽기 거부를 확인합니다. 경고가 나오면 요청을 중지하고 `runner.workspace_root`를 새 빈 폴더로 바꾼 뒤 runner를 재시작하세요. 권한은 자동으로 고치지 않으며, 루트 검사만으로 하위 폴더의 권한까지 보증하지 않습니다.
 

@@ -18,7 +18,7 @@ Prerequisites: Python ≥ 3.10, Git, and the staff CLIs you configure installed 
 
 On POSIX use `./labhq.sh init` and `./labhq.sh -c config/labhq.yaml doctor`.
 
-On Windows, a Codex step with ancestor artifacts denies reads from other work folders present at startup. Codex work folders being prepared or run by the same runner, and folders created later, are excluded from this protection. When Codex staff runs overlap, sibling-folder read denial is not guaranteed to last throughout the run (#1413).
+On Windows, a Codex step with ancestor artifacts keeps other work folders in the policy read-deny list, but excludes them from native sandbox read denials. OS-level read isolation between work folders is therefore not guaranteed. PI private paths resolved from the configuration remain native deny targets (#1413).
 
 On Windows, the `codex workspace ACL` doctor row checks the workspace root for a lingering Codex sandbox read denial. If it warns, stop requests, set `runner.workspace_root` to a new empty folder, and restart the runner. It does not change permissions, and checking the root does not verify permissions on its descendants.
 
