@@ -192,6 +192,39 @@ def test_bundle_preserves_existing_report_when_draft_is_not_eligible(tmp_path, s
     assert "Existing body" in report and "Draft body." not in report
 
 
+@pytest.mark.parametrize('condition', ['valid', 'changed', 'ambiguous', 'wrong_phase'])
+def test_review_draft_uses_single_declared_nested_report(tmp_path, condition):
+    settings, req, tasks, *_ = request_fixture(tmp_path)
+    result = req['results']['s2']
+    step = req['plan']['steps'][1]
+    step['phase'] = 'analysis' if condition == 'wrong_phase' else 'report'
+    name = 'outputs/report/final_report.md'
+    source = Path(result['workdir']) / name
+    write(source, '# Nested draft\n\n## 결과\n\n[table](data.tsv) [sibling](../final.txt) '
+                  '[escape](../../../../outside.txt)\n')
+    table = source.parent / 'data.tsv'
+    write(table, 'value\n1\n')
+    for path in (source, table):
+        relative = path.relative_to(result['workdir']).as_posix()
+        result['outputs'].append(relative)
+        result['output_sha256'][relative] = digest(path)
+    step['outputs'].append(name)
+    if condition == 'ambiguous':
+        step['outputs'].append('outputs/another.md')
+    if condition == 'changed':
+        write(source, '# changed after run')
+    req.update(status='failed', outcome='research_review_revise', report='Existing body',
+               review={'verdict': 'revise', 'issues': []})
+    report = (Path(build_request_bundle(req, settings, tasks)['path']) / 'report.md').read_text(encoding='utf8')
+    if condition == 'valid':
+        assert 'Nested draft' in report and '검증 전 초안' in report
+        assert '[table](steps/s2/outputs/report/data.tsv)' in report
+        assert '[sibling](steps/s2/outputs/final.txt)' in report
+        assert '[escape](../../../../outside.txt)' in report
+    else:
+        assert 'Existing body' in report and 'Nested draft' not in report
+
+
 def test_nested_steps_keep_distinct_names_run_provenance_and_second_step_links(tmp_path):
     settings = configured(tmp_path)
     root = Path(settings.runner.workspace_root)

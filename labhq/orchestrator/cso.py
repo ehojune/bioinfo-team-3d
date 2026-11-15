@@ -7600,6 +7600,26 @@ class Orchestrator:
                                 return '입력 증빙 없음'
                             elif reason == 'request-level input hash changed or verification unavailable':
                                 return '입력 확인 실패'
+                            elif reason == 'external input has no verified content proof':
+                                return '선언 입력의 내용 증빙 없음'
+                            elif reason == 'missing or ambiguous declared dependency input':
+                                return '앞 단계 입력 증빙 누락 또는 불명확'
+                            elif reason == 'deferred paper skill has no pre-approval content proof':
+                                return '논문 도구 내용 증빙 없음'
+                            elif reason == 'missing or changed declared tool configuration':
+                                return '도구 설정 증빙 누락 또는 변경'
+                            elif reason in ('archived plan identity is missing or changed',
+                                            'result identity does not match the archived node',
+                                            'no result ledger to rebind') or (isinstance(reason, str) and
+                                            reason.startswith('result does not bind to the new plan:')):
+                                return '계획·결과 기록 불일치'
+                            elif reason in ('missing or ambiguous output proof',
+                                            'missing file hash (directory outputs need a verified manifest; reuse declined)',
+                                            'missing dependency result', 'invalid remote output proof',
+                                            'missing remote request identity', 'ambiguous remote output proof'):
+                                return '산출 증빙 누락 또는 불명확'
+                            elif reason == 'no completed result in the previous round':
+                                return '완료된 이전 결과 없음'
                             elif isinstance(reason, str) and reason.startswith('output hash check:'):
                                 return '산출 확인 실패'
                             elif reason in ('new step', 'spec changed',

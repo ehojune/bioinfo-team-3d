@@ -115,6 +115,52 @@ def test_missing_or_ambiguous_proof_fails_closed(bad):
     assert 's1' in c.proof_problems(old, old['plan'], carry, c.tool_signatures(old['plan'], AGENTS))
 
 
+@pytest.mark.parametrize('dependency', ['s1/outputs/result1.tsv', 's1:outputs/result1.tsv'])
+def test_proved_attached_input_and_unprefixed_dependency_can_reuse(dependency):
+    base = archive()
+    plan = copy.deepcopy(base['plan'])
+    plan['steps'][0]['input_refs'] = ['sample/', '/data/source/file.tsv']
+    plan['steps'][2]['input_refs'] = [dependency]
+    old = _round_one(plan)
+    old['reuse_tools'] = c.tool_signatures(plan, AGENTS)
+    proof = {'files': [['/data/source', '.', 'directory'], ['/data/source', './sample', 'directory'],
+                       ['/data/source', './sample/a', 'a' * 64], ['/data/source', './file.tsv', 'b' * 64]]}
+    old['reuse_input_proof'] = {s['id']: copy.deepcopy(proof) for s in plan['steps']}
+    for sid, result in old['results'].items():
+        path = 'outputs/result' + sid[1:] + '.tsv'
+        result.update(outputs=[path], output_sha256={path: sid[1:] * 64})
+    carry = c.carry_over(old, plan, {}, [])
+    tools = c.tool_signatures(plan, AGENTS)
+    assert not c.proof_problems(old, plan, carry, tools, {'project_dirs': ['/data/source']}, proof)
+    changed = copy.deepcopy(proof)
+    changed['files'][-1][-1] = 'c' * 64
+    assert set(c.proof_problems(old, plan, carry, tools, {'project_dirs': ['/data/source']}, changed)) == set(carry.reuse)
+    assert 's1' in c.proof_problems(old, plan, carry, tools, {'project_dirs': ['/data/source']}, None)
+
+
+def test_colon_dependency_requires_ancestor_and_recorded_output():
+    old = archive()
+    old['plan']['steps'][2]['input_refs'] = ['s1:outputs/other.tsv']
+    old['plan_sha256'] = plan_sha256(old['plan'])
+    for result in old['results'].values():
+        result['structured']['plan_sha256'] = old['plan_sha256']
+    carry = c.carry_over(old, old['plan'], {}, [])
+    problems = c.proof_problems(old, old['plan'], carry, c.tool_signatures(old['plan'], AGENTS))
+    assert problems['s3'] == 'missing or ambiguous declared dependency input'
+
+
+@pytest.mark.parametrize('ref', ['../sample', 'sample/missing', 'https://example.test/sample', 'C:sample'])
+def test_unproved_or_unsafe_attached_reference_is_rejected(ref):
+    proof = {'files': [['/data/source', './sample', 'directory']]}
+    assert not c._proved_external_ref(ref, proof)
+
+
+def test_ambiguous_relative_attached_reference_is_rejected():
+    proof = {'files': [['/one', './sample', 'directory'], ['/two', './sample', 'directory']]}
+    assert not c._proved_external_ref('sample/', proof)
+    assert not c._proved_external_ref('sample/', {'files': [['/one', './sample', 'a' * 64]]})
+
+
 def test_upstream_content_and_tool_signature_change_node_identity():
     old = archive()
     plan = old['plan']

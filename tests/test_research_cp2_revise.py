@@ -39,7 +39,9 @@ async def test_continuation_card_shows_safe_reasons_before_long_step_lists(tmp_p
     reasons = {f"step_{i:03d}": "request-level input hash record missing (including legacy execution)"
                for i in range(80)}
     reasons.update({"output_step": "output hash check: C:/private/secret.txt changed",
-                    "other": "unexpected /private/secret detail"})
+                    "other": "unexpected /private/secret detail",
+                    "external": "external input has no verified content proof",
+                    "dependency": "missing or ambiguous declared dependency input"})
     original_state = {}
 
     async def prepare(self, rid, plan):
@@ -65,6 +67,8 @@ async def test_continuation_card_shows_safe_reasons_before_long_step_lists(tmp_p
     assert detail["rerun"]["step_000"] == "입력 증빙 없음"
     assert detail["rerun"]["output_step"] == "산출 확인 실패"
     assert detail["rerun"]["other"] == "기타 사유"
+    assert detail["rerun"]["external"] == "선언 입력의 내용 증빙 없음"
+    assert detail["rerun"]["dependency"] == "앞 단계 입력 증빙 누락 또는 불명확"
     assert detail["reuse_snapshot"]["rerun"] == detail["rerun"]
     assert "표시용 요약" in detail["reuse_snapshot"]["label"]
     assert detail["reuse_snapshot"]["original_approval_sha256"] == original_state["reuse_snapshot"]["sha256"]
