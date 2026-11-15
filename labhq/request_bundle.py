@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import posixpath
 import re
 import shlex
 import shutil
@@ -943,8 +944,9 @@ def _build_request_bundle(req: Mapping[str, Any], settings: Any, tasks: Mapping[
                 def rebase_target(target: str) -> str:
                     angled = target.startswith("<") and target.endswith(">")
                     path = PurePosixPath(target[1:-1] if angled else target)
-                    candidate = (PurePosixPath(relative).parent / path).as_posix()
-                    if not path.is_absolute() and ".." not in path.parts and candidate in copied_paths:
+                    candidate = posixpath.normpath((PurePosixPath(relative).parent / path).as_posix())
+                    output_root = f"steps/{sid}/outputs/"
+                    if not path.is_absolute() and candidate.startswith(output_root) and candidate in copied_paths:
                         return f"<{candidate}>" if angled else candidate
                     return target
 

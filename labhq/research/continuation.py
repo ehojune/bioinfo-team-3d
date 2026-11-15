@@ -352,6 +352,10 @@ def proof_problems(previous: Mapping[str, Any], plan: Mapping[str, Any], carry: 
                     raise ValueError("external input has no verified content proof")
                 explicit = ref.startswith("step:")
                 source, sep, path = (ref[5:] if explicit else ref).partition("/")
+                if not explicit:
+                    colon_source, colon, colon_path = ref.partition(':')
+                    if colon and colon_source in ancestors[sid] and colon_path.startswith('outputs/'):
+                        source, sep, path = colon_source, colon, colon_path
                 from ..util import output_relpath
                 dependency = source in ancestors[sid]
                 if not explicit and not dependency:

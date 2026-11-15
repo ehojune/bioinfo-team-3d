@@ -115,11 +115,12 @@ def test_missing_or_ambiguous_proof_fails_closed(bad):
     assert 's1' in c.proof_problems(old, old['plan'], carry, c.tool_signatures(old['plan'], AGENTS))
 
 
-def test_proved_attached_input_and_unprefixed_dependency_can_reuse():
+@pytest.mark.parametrize('dependency', ['s1/outputs/result1.tsv', 's1:outputs/result1.tsv'])
+def test_proved_attached_input_and_unprefixed_dependency_can_reuse(dependency):
     base = archive()
     plan = copy.deepcopy(base['plan'])
     plan['steps'][0]['input_refs'] = ['sample/', '/data/source/file.tsv']
-    plan['steps'][2]['input_refs'] = ['s1/outputs/result1.tsv']
+    plan['steps'][2]['input_refs'] = [dependency]
     old = _round_one(plan)
     old['reuse_tools'] = c.tool_signatures(plan, AGENTS)
     proof = {'files': [['/data/source', '.', 'directory'], ['/data/source', './sample', 'directory'],
@@ -135,6 +136,17 @@ def test_proved_attached_input_and_unprefixed_dependency_can_reuse():
     changed['files'][-1][-1] = 'c' * 64
     assert set(c.proof_problems(old, plan, carry, tools, {'project_dirs': ['/data/source']}, changed)) == set(carry.reuse)
     assert 's1' in c.proof_problems(old, plan, carry, tools, {'project_dirs': ['/data/source']}, None)
+
+
+def test_colon_dependency_requires_ancestor_and_recorded_output():
+    old = archive()
+    old['plan']['steps'][2]['input_refs'] = ['s1:outputs/other.tsv']
+    old['plan_sha256'] = plan_sha256(old['plan'])
+    for result in old['results'].values():
+        result['structured']['plan_sha256'] = old['plan_sha256']
+    carry = c.carry_over(old, old['plan'], {}, [])
+    problems = c.proof_problems(old, old['plan'], carry, c.tool_signatures(old['plan'], AGENTS))
+    assert problems['s3'] == 'missing or ambiguous declared dependency input'
 
 
 @pytest.mark.parametrize('ref', ['../sample', 'sample/missing', 'https://example.test/sample', 'C:sample'])

@@ -200,7 +200,8 @@ def test_review_draft_uses_single_declared_nested_report(tmp_path, condition):
     step['phase'] = 'analysis' if condition == 'wrong_phase' else 'report'
     name = 'outputs/report/final_report.md'
     source = Path(result['workdir']) / name
-    write(source, '# Nested draft\n\n## 결과\n\n[table](data.tsv)\n')
+    write(source, '# Nested draft\n\n## 결과\n\n[table](data.tsv) [sibling](../final.txt) '
+                  '[escape](../../../../outside.txt)\n')
     table = source.parent / 'data.tsv'
     write(table, 'value\n1\n')
     for path in (source, table):
@@ -218,6 +219,8 @@ def test_review_draft_uses_single_declared_nested_report(tmp_path, condition):
     if condition == 'valid':
         assert 'Nested draft' in report and '검증 전 초안' in report
         assert '[table](steps/s2/outputs/report/data.tsv)' in report
+        assert '[sibling](steps/s2/outputs/final.txt)' in report
+        assert '[escape](../../../../outside.txt)' in report
     else:
         assert 'Existing body' in report and 'Nested draft' not in report
 
