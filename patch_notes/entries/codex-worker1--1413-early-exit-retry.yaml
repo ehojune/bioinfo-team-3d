@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 30d90c3c
+    at: '2026-11-16 16:00'
+    summary: 직원 프로그램의 이른 Windows 종료를 확인된 경우에 한해 다시 시도합니다.
+    text: Job 잔류·산출·비용과 기존 기한을 확인하고 gateway 예산 gate에서 한 번만 재시도한다 (#1413). UNKNOWN은 실패로 둔다.
