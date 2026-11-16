@@ -3077,6 +3077,8 @@ def research_stop_reason(result: TaskResult) -> str | None:
         return None
     if question := blocking_question(result):
         return question
+    if result.ok:
+        return None  # a completed step may report a stopped optional sub-analysis
     data = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
     failures = data.get("failures") if isinstance(data, dict) else None
     if not isinstance(failures, list):

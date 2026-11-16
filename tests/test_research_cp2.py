@@ -1137,6 +1137,12 @@ async def test_explicit_plan_stop_in_failures_goes_directly_to_continue():
     assert hub.requests["r"]["results"]["s1"]["error_kind"] == "research_stop"
 
 
+def test_completed_step_can_report_stopped_optional_analysis():
+    result = TaskResult(task_id="t", agent_id="worker", ok=True,
+                        structured={"failures": ["멈춤 조건을 따라 선택 분석은 시작하지 않았습니다."]})
+    assert cso.research_stop_reason(result) is None
+
+
 # ---------- P1: CP2 reads a structured choice, never the note ----------
 
 @pytest.mark.asyncio
