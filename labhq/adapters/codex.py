@@ -179,7 +179,9 @@ class CodexAdapter(AgentAdapter):
     enforces_read_only = True  # only own outputs/temp writable; no MCP, hooks/plugins/apps or user config
 
     def prepare(self, ctx: RunContext) -> None:
-        write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n" + role_footer(ctx))
+        write_owned(ctx.workdir, "AGENTS.md", ctx.agent.system_prompt.strip() + "\n"
+                    "Save large results to files page by page as you receive them.\n"
+                    "Do not put large bodies of data in shell command arguments.\n" + role_footer(ctx))
         if ctx.task.output_schema:
             ctx.write_meta("output_schema.json", json.dumps(openai_strict_schema(ctx.task.output_schema)))
 
