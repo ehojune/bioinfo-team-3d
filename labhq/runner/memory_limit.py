@@ -4,6 +4,7 @@ from __future__ import annotations
 import functools
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -270,6 +271,24 @@ class _WindowsJob:
             return 0
         return int(info.PeakJobMemoryUsed)
 
+    def active_processes(self) -> int | None:
+        """Read the actual Job member count while this wrapper still owns its handle."""
+        import ctypes
+        from ctypes import wintypes
+
+        class Accounting(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_longlong) for name in (
+                "TotalUserTime", "TotalKernelTime", "ThisPeriodTotalUserTime", "ThisPeriodTotalKernelTime")]
+            _fields_ += [(name, wintypes.DWORD) for name in (
+                "TotalPageFaultCount", "TotalProcesses", "ActiveProcesses", "TotalTerminatedProcesses")]
+
+        if not self._handle:
+            return None
+        info = Accounting()
+        if not self._kernel.QueryInformationJobObject(self._handle, 1, ctypes.byref(info), ctypes.sizeof(info), None):
+            return None
+        return int(info.ActiveProcesses)
+
     def close(self) -> None:
         if self._handle:
             self._kernel.CloseHandle(self._handle)
@@ -396,6 +415,7 @@ def _exec_with_limit(argv: list[str]) -> int:
 
 
 JOB_ACTIVE = "LABHQ_JOB_ACTIVE"
+JOB_EVIDENCE = "LABHQ_JOB_EVIDENCE"
 
 
 def job_activation_line(pid: int) -> str:
@@ -420,10 +440,34 @@ def _run_windows_job(argv: list[str]) -> int:
         # #863: the runner trusts only this first stderr line, written after the Job holds this wrapper and before the
         # CLI exists, so nothing the CLI prints can stand in for it.
         print(job_activation_line(os.getpid()), file=sys.stderr, flush=True)
-        completed = subprocess.run(command, check=False)
-        if completed.returncode and job.peak_bytes() >= int(limit * 0.98):
+        # The capability is announced before the CLI exists. It never enters the CLI's environment or arguments.
+        # Missing or untrusted evidence is UNKNOWN; the shared stderr stream alone is not a process count.
+        capability = secrets.token_hex(32)
+        print(f"{JOB_EVIDENCE} token={capability}", file=sys.stderr, flush=True)
+        completed = subprocess.Popen(command)
+        from .. import proc_tree
+        try:
+            child = proc_tree._open(completed.pid, terminate=False)
+        except (OSError, ValueError, AttributeError):
+            child = None
+        try:
+            created = child.created if child is not None else None
+        finally:
+            if child is not None:
+                child.close()
+        print(f"{JOB_EVIDENCE} token={capability} child_pid={completed.pid} child_created={created}",
+              file=sys.stderr, flush=True)
+        returncode = completed.wait()
+        try:
+            active = job.active_processes()
+        except (OSError, ValueError, AttributeError):
+            active = None
+        print(f"{JOB_EVIDENCE} token={capability} active_processes={active}", file=sys.stderr, flush=True)
+        if returncode and job.peak_bytes() >= int(limit * 0.98):
             print("out of memory: Windows Job object limit reached", file=sys.stderr)
-        return int(completed.returncode)
+        # CPython's SystemExit uses a signed C long on Windows. Preserve the 32-bit status rather than overflowing
+        # to 0xFFFFFFFF for NTSTATUS values such as CONTROL_C_EXIT.
+        return int(returncode - (1 << 32) if (1 << 31) <= returncode < (1 << 32) else returncode)
     except FileNotFoundError as exc:
         print(f"LABHQ_EXEC_NOT_FOUND: {exc}", file=sys.stderr)
         return 127

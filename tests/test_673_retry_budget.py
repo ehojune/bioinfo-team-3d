@@ -1,5 +1,9 @@
 """Regression for parallel JSON repair against a shared request budget."""
 import asyncio
+import os
+import sys
+import time
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +15,271 @@ from labhq.runner.structured_output import GATEWAY_RETRY, GATEWAY_RETRY_META, ru
 from labhq.settings import Settings
 from tests.test_cso import FakeHub
 from tests.test_structured_output_retry import ERROR, make_runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected_calls", [("success", 2), ("unknown_cost", 1),
+                                                  ("no_evidence", 1), ("second_failure", 2),
+                                                  ("exhausted", 1), ("halted", 1), ("shutdown", 1),
+                                                  ("already_claimed", 1), ("second_other_failure", 2)])
+async def test_early_exit_retry_uses_gateway_budget_and_never_repeats(case, expected_calls):
+    async def dispatch(task):
+        if task.meta.get("early_exit_retry"):
+            return TaskResult(task_id=task.id, agent_id="worker", ok=case == "success",
+                              text="done" if case == "success" else "", cost_usd=0.1,
+                              exit_code=0 if case == "success" else 1 if case == "second_other_failure" else 0xC000013A,
+                              error=None if case == "success" else "No module named missing" if case == "second_other_failure" else "timeout after failure",
+                              early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                          error="empty CLI stream: timeout", cost_usd=None if case == "unknown_cost" else 0.1,
+                          error_kind="halted" if case == "halted" else None,
+                          shutdown_evidence={"stopping": False} if case == "shutdown" else {},
+                          cost_known=case != "unknown_cost",
+                          early_exit_retry=None if case == "no_evidence" else
+                          {"deadline": time.monotonic() + 100, "clock_id": "runner"})
+
+    hub = FakeHub(dispatch)
+    if case == "second_other_failure":
+        async def forbidden(*args, **kwargs):
+            pytest.fail("a second failure must not launch facilities recovery")
+        hub.request_facilities_diagnosis = forbidden
+        hub.request_facilities_fix = forbidden
+    hub.requests["r"]["budget_usd"] = 0.1 if case == "exhausted" else 5
+    orch = Orchestrator(hub)
+    task = Task(agent_id="worker", request_id="r", prompt="work", budget_usd=0.5,
+                meta={"kind": "step", "step_id": "A"})
+    if case == "already_claimed":
+        hub.requests["r"]["early_exit_retries"] = {task.id: "earlier-task"}
+    result = await orch.run_step(task)
+    assert len(hub.calls) == expected_calls
+    assert result.ok is (case == "success")
+    if expected_calls == 2:
+        assert hub.calls[1].budget_usd == pytest.approx(0.4)
+        assert result.cost_usd == pytest.approx(0.2)
+        assert orch.cost["r"] == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserve", [False, True])
+@pytest.mark.parametrize("task_cap,agent_cap,policy_cap,spent,left", [
+    (30, 20, 5, 4, 1),
+    (30, 5, 20, 4, 1),
+    (5, 20, 30, 4, 1),
+    (30, 0, 5, 4, 1),
+    (30, 5, 0, 4, 1),
+    (30, 20, 5, 5, 0),
+    (30, 20, 5, 6, 0),
+])
+async def test_early_exit_retry_respects_smallest_turn_cap(reserve, task_cap, agent_cap, policy_cap, spent, left):
+    async def dispatch(task):
+        if task.meta.get("early_exit_retry"):
+            return TaskResult(task_id=task.id, agent_id="worker", ok=True, cost_usd=left)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                          cost_usd=spent, early_exit_retry={"deadline": time.monotonic() + 100,
+                                                            "clock_id": "runner"})
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"]["budget_usd"] = 100
+    hub.agents["worker"]["max_budget_usd"] = agent_cap
+    hub.s.policy.budget.per_task_usd = policy_cap
+    hub.s.policy.budget.reserve_before_dispatch = reserve
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=task_cap, meta={"kind": "step", "step_id": "A"}))
+    assert len(hub.calls) == (2 if left else 1)
+    if left:
+        assert hub.calls[1].budget_usd == pytest.approx(left)
+        assert result.cost_usd == pytest.approx(spent + left)
+    else:
+        assert not result.ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("halt_cost", [0.0, 0.1, 0.4, None])
+async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume, halt_cost):
+    calls = []
+    waits = []
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                              error="exit", cost_usd=0.1,
+                              early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
+        if len(calls) == 2:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error_kind="halted",
+                              error="halted", cost_usd=halt_cost, cost_known=halt_cost is not None)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done", cost_usd=0.1)
+
+    hub = FakeHub(dispatch)
+    async def wait_halted(*args):
+        waits.append(args)
+        return resume
+    hub.wait_halted = wait_halted
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=0.5))
+    dispatched_resume = resume and halt_cost is not None and halt_cost < 0.4
+    assert len(waits) == 1 and len(calls) == (3 if dispatched_resume else 2)
+    assert result.ok is dispatched_resume
+    if dispatched_resume:
+        assert calls[2].meta["early_exit_retry"] == calls[1].meta["early_exit_retry"]
+        assert calls[2].budget_usd == pytest.approx(0.4 - halt_cost)
+        assert result.cost_usd == pytest.approx(0.2 + halt_cost)
+    if halt_cost is None:
+        assert result.cost_usd is None and result.cost_known is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["expired", "runner_changed"])
+async def test_resumed_early_retry_keeps_original_runner_and_deadline(tmp_path, monkeypatch, reason):
+    runner, _ = make_runner(tmp_path, monkeypatch, 0)
+    proof = {"deadline": time.monotonic() - 1 if reason == "expired" else time.monotonic() + 100,
+             "clock_id": "old-runner" if reason == "runner_changed" else runner.process}
+    calls = []
+    class Adapter:
+        async def run(self, ctx):
+            refusal = ctx.before_spawn()
+            refusals.append(refusal)
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=False, error=refusal,
+                              cost_usd=0.0, cost_known=True)
+    refusals = []
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: Adapter())
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                              cost_usd=0.1, early_exit_retry=proof)
+        if len(calls) == 2:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error_kind="halted",
+                              cost_usd=0.0, cost_known=True)
+        return await runner.run_task(task)
+    hub = FakeHub(dispatch)
+    async def resume(*_args):
+        return True
+    hub.wait_halted = resume
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=0.5))
+    assert len(calls) == 3 and not result.ok
+    assert calls[2].meta["early_exit_retry"] == proof and result.cost_usd == pytest.approx(0.1)
+    assert refusals == ["original retry deadline or runner identity unavailable"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("halt_count", [1, 2])
+async def test_resumed_early_retry_does_not_repeat_transient_failure(halt_count):
+    calls = []
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                              error="exit", cost_usd=0.1,
+                              early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
+        if len(calls) <= halt_count + 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error_kind="halted",
+                              error="halted", cost_usd=0.0, cost_known=True)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, error="HTTP 503 overloaded", cost_usd=0.1)
+
+    hub = FakeHub(dispatch)
+    async def resume(*_args):
+        return True
+    hub.wait_halted = resume
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=0.5))
+    assert len(calls) == halt_count + 2
+    assert not result.ok and result.cost_usd == pytest.approx(0.2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("early_retry", [False, True])
+async def test_early_retry_halted_while_waiting_for_slot_has_zero_cost(tmp_path, monkeypatch, early_retry):
+    runner, calls = make_runner(tmp_path, monkeypatch, 0)
+    async def halted_slot(*_args):
+        return False
+    monkeypatch.setattr(runner, "_slot_or_halt", halted_slot)
+    task = Task(agent_id="worker", request_id="r", prompt="work",
+                meta={"early_exit_retry": {"deadline": time.monotonic() + 100, "clock_id": runner.process}}
+                if early_retry else {})
+    result = await runner.run_task(task)
+    assert not calls and result.error_kind == "halted"
+    assert (result.cost_known, result.cost_usd) == ((True, 0) if early_retry else (False, None))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["wait_ready", "halt_flag"])
+@pytest.mark.parametrize("early_retry", [False, True])
+async def test_early_retry_halted_before_adapter_spawn_has_zero_cost(tmp_path, monkeypatch, where, early_retry):
+    from labhq.adapters.claude_code import ClaudeCodeAdapter
+    from labhq.models import Engine
+
+    ctx = _ctx(tmp_path)
+    ctx.agent.engine = Engine.claude_code
+    if early_retry:
+        ctx.task.meta["early_exit_retry"] = {"deadline": time.monotonic() + 100, "clock_id": "runner"}
+    ctx.settings.engines.claude_code.bin = sys.executable
+    adapter = ClaudeCodeAdapter(ctx.settings)
+    monkeypatch.setattr(adapter, "prepare", lambda _ctx: None)
+    monkeypatch.setattr(adapter, "build_command", lambda _ctx: [sys.executable])
+    async def ready():
+        return where != "wait_ready"
+    async def write_meta(*_args):
+        pass
+    ctx.wait_ready = ready
+    ctx.awrite_meta = write_meta
+    ctx.halt = asyncio.Event()
+    if where == "halt_flag":
+        ctx.halt.set()
+    result = await adapter.run(ctx)
+    assert result.error_kind == "halted" and ctx.started_at is None
+    assert (result.cost_known, result.cost_usd) == ((True, 0) if early_retry else (False, None))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job object and CONTROL_C_EXIT")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected", [("success", 2), ("unknown_cost", 1), ("tools", 1),
+                                           ("outputs", 1), ("scan", 1), ("second_failure", 2)])
+async def test_fake_cli_early_exit_uses_original_runner_and_budget(tmp_path, monkeypatch, case, expected):
+    from labhq.adapters.claude_code import ClaudeCodeAdapter
+    from labhq.models import Engine
+
+    runner, _ = make_runner(tmp_path, monkeypatch, 0)
+    # The wrapper runs from the isolated workspace, not the test checkout's current directory.
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
+    runner.registry.agents["worker"] = AgentSpec(id="worker", name="worker", role="test", engine=Engine.claude_code)
+    runner.s.runner.step_memory_limit_gb = 0.5
+    script = tmp_path / "fake_staff.py"
+    marker = tmp_path / "attempts.txt"
+    script.write_text(
+        "import json, os, pathlib, time\n"
+        f"p = pathlib.Path({str(marker)!r})\n"
+        f"case = {case!r}\n"
+        "n = int(p.read_text()) + 1 if p.exists() else 1\n"
+        "p.write_text(str(n))\n"
+        "if n == 1 and case == 'tools':\n"
+        " print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'x','name':'Read','input':{}}]}}), flush=True)\n"
+        "if n == 1 and case == 'outputs':\n"
+        " pathlib.Path('outputs/written.txt').write_text('changed')\n"
+        "print(json.dumps({'type':'result','subtype':'success','result':'done',"
+        "'session_id':'fake','total_cost_usd':None if case == 'unknown_cost' else 0.1}), flush=True)\n"
+        "time.sleep(0.25)\n"
+        "os._exit(-1073741510 if n == 1 or case == 'second_failure' else 0)\n", encoding="utf-8")
+    runner.s.engines.claude_code.bin = sys.executable
+    runner.s.engines.claude_code.prefix_args = [str(script)]
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: ClaudeCodeAdapter(runner.s))
+    if case == "scan":
+        from labhq.runner.workspace import TaskWorkspace
+        original_scan = TaskWorkspace.scan_output_records
+        def incomplete_scan(self, *args, **kwargs):
+            rows, _note = original_scan(self, *args, **kwargs)
+            return rows, "fixture: incomplete scan"
+        monkeypatch.setattr(TaskWorkspace, "scan_output_records", incomplete_scan)
+    hub = FakeHub(runner.run_task)
+    hub.agents["worker"]["engine"] = "claude_code"
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work", budget_usd=0.5,
+                                                   meta={"kind": "step", "step_id": "A"}))
+    assert marker.read_text() == str(expected)
+    assert len(hub.calls) == expected and result.ok is (case == "success")
+    if expected == 2:
+        assert result.cost_usd == pytest.approx(0.2)
+        assert hub.calls[1].meta["early_exit_retry"]["clock_id"] == runner.process
 
 
 def _ctx(tmp_path, *, kind="step", budget=0.2):

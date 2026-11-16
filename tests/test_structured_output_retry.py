@@ -1,5 +1,6 @@
 """JSON transport failures are repaired before a PI decision or result-contract correction."""
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,71 @@ from labhq.settings import Settings
 from tests.test_cso import FakeHub, penguins_hub, replan_hub, result as task_result
 
 ERROR = "InputValidationError: StructuredOutput was called with input that could not be parsed as JSON"
+
+
+@pytest.mark.parametrize("change", ["tools", "unknown_tools", "child_unknown", "job_unknown", "time",
+                                     "deadline", "halt", "outputs", "scan", "retry", "deleted"])
+def test_early_exit_requires_every_piece_of_evidence(change):
+    from labhq.runner.structured_output import early_exit_retry_evidence
+    proof = {"end_observed": "process_exit", "job": "active", "wait": "completed", "job_active_processes": 1,
+             "wrapper_created": 123, "cli_pid": 10, "cli_created": 124, "tool_events": "none",
+             "halt_requested": False, "elapsed_s": 2.8, "deadline_monotonic": time.monotonic() + 60,
+             "clock_id": "runner"}
+    result = TaskResult(task_id="t", agent_id="a", ok=False, exit_code=0xC000013A, cleanup_evidence=proof)
+    before, after = {"outputs/a": (1,)}, {"outputs/a": (1,)}
+    incomplete = tool_calls = already = False
+    if change == "tools": tool_calls = True
+    if change == "unknown_tools": proof["tool_events"] = "UNKNOWN"
+    if change == "child_unknown": proof["cli_created"] = None
+    if change == "job_unknown": proof["job_active_processes"] = None
+    if change == "time": proof["elapsed_s"] = 30.1
+    if change == "deadline": proof["deadline_monotonic"] = time.monotonic() - 1
+    if change == "halt": proof["halt_requested"] = True
+    if change == "outputs": after = {"outputs/a": (2,)}
+    if change == "deleted": after = {}
+    if change == "scan": incomplete = True
+    if change == "retry": already = True
+    result.cleanup_evidence = proof
+    assert early_exit_retry_evidence(result, before=before, after=after, incomplete=incomplete,
+                                     tool_calls=tool_calls, already_retried=already) is None
+
+
+def test_early_exit_offers_one_retry_only_with_complete_evidence():
+    from labhq.runner.structured_output import early_exit_retry_evidence
+    deadline = time.monotonic() + 60
+    result = TaskResult(task_id="t", agent_id="a", ok=False, exit_code=0xC000013A, cleanup_evidence={
+        "end_observed": "process_exit", "job": "active", "wait": "completed", "job_active_processes": 1,
+        "wrapper_created": 123, "cli_pid": 10, "cli_created": 124, "tool_events": "none",
+        "halt_requested": False, "elapsed_s": 2.8, "deadline_monotonic": deadline, "clock_id": "runner"})
+    assert early_exit_retry_evidence(result, before={}, after={}, incomplete=False,
+                                     tool_calls=False, already_retried=False) == {"deadline": deadline, "clock_id": "runner"}
+
+
+def test_retry_output_shape_rejects_omitted_entries_and_scan_limits(tmp_path):
+    from labhq.runner.daemon import _retry_output_shape
+    root = tmp_path / "outputs"
+    root.mkdir()
+    (root / "nested").mkdir()
+    (root / "nested" / "existing.txt").write_text("unchanged", encoding="utf-8")
+    shape = _retry_output_shape(tmp_path, [], 10, 2)
+    assert set(shape[0]) == {"outputs/nested/existing.txt"} and shape[1] == {"outputs/nested"}
+    assert _retry_output_shape(tmp_path, [], 1, 2) is None
+    assert _retry_output_shape(tmp_path, [], 10, 0) is None
+    assert _retry_output_shape(tmp_path, [root / "nested"], 10, 2) is None
+
+
+def test_retry_shape_includes_and_compares_excluded_result_files(tmp_path):
+    from labhq.runner.daemon import _retry_output_shape, _retry_scan_complete
+    root = tmp_path / "outputs"
+    root.mkdir()
+    result = root / "RESULT_previous.md"
+    result.write_text("old", encoding="utf-8")
+    before = _retry_output_shape(tmp_path, [], 10, 2)
+    assert _retry_scan_complete(before, {})  # the normal scanner omits runner RESULT files
+    result.write_text("changed", encoding="utf-8")
+    assert _retry_output_shape(tmp_path, [], 10, 2) != before
+    (root / "unscanned.txt").write_text("not a RESULT file", encoding="utf-8")
+    assert not _retry_scan_complete(_retry_output_shape(tmp_path, [], 10, 2), {})
 
 
 def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, session="same-session",

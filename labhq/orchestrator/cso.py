@@ -4580,6 +4580,9 @@ class Orchestrator:
                 if not optional_support and not (kind is None and final_step):
                     await self._check_budget(rid, block=False)
                 previous_result = res
+                if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
+                    # No generic transient/login retry may bypass the stricter early-exit evidence gate below.
+                    return res
                 if kind is None:
                     return res
                 if rid in self.budget_denials:
@@ -4611,6 +4614,47 @@ class Orchestrator:
             tool_errors = list(res.tool_errors)
             format_tries = 0
             while True:
+                if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
+                    proof = res.early_exit_retry
+                    known = (res.cost_known is not False and isinstance(res.cost_usd, (int, float))
+                             and not isinstance(res.cost_usd, bool) and math.isfinite(res.cost_usd)
+                             and res.cost_usd >= 0)
+                    cap = self._turn_cap(turn, 0)
+                    left = None if cap is None or not known else cap - res.cost_usd
+                    request_left = self._request_budget_remaining(rid)
+                    if request_left is not None:
+                        request_left -= self._inflight_unheld(rid)
+                    if (not proof or not known or res.error_kind is not None or res.shutdown_evidence
+                            or res.pending_jobs or res.pending_asks
+                            or (left is not None and left <= 0) or (request_left is not None and request_left <= 0)
+                            or rid in self.budget_denials or current.meta.get("early_exit_retry")):
+                        return res
+                    def claim_early_retry(request):
+                        claims = request.setdefault("early_exit_retries", {})
+                        if not isinstance(claims, dict) or turn.id in claims:
+                            return False
+                        claims[turn.id] = res.task_id
+                        return True
+                    if not await update_request(self.hub, rid, claim_early_retry):
+                        return res  # a restart may not issue another automatic retry
+                    earlier = res
+                    current = current.model_copy(update={
+                        "id": new_id("task"),
+                        **({"budget_usd": left} if left is not None else {}),
+                        "meta": {**current.meta, "parent_task": res.task_id, "early_exit_retry": proof,
+                                 **({"workdir": res.workdir} if res.workdir else {})},
+                    })
+                    await self._emit(rid, "request.step_retry", {"step_id": turn_key(current),
+                        "reason": "early Windows console exit; one evidence-gated retry"})
+                    try:
+                        later = await dispatch_with_retry(current, max_attempts=1)
+                    except BudgetExceeded:
+                        return earlier
+                    res = _sum_repair_turns(earlier, merged_turn(earlier, later)).model_copy(
+                        update={"early_exit_attempted": True})
+                    if res.error_kind == "halted":
+                        continue  # park for an explicit PI resume, not another automatic retry
+                    return res  # no login/quota/format recovery may add an automatic third attempt
                 if (not turn.meta.get("nested_hpc_rerun") and res.error_kind == "structured_output_format" and res.format_retry
                         and format_tries < self.hub.s.runner.structured_output_retries and res.session_id):
                     # #673: the repair is a new dispatch of the same session, so it passes the request budget gate (and
@@ -4648,19 +4692,33 @@ class Orchestrator:
                     wait_halted = getattr(self.hub, "wait_halted", None)
                     if wait_halted is None or not await wait_halted(rid, turn_key(current), res):
                         return res
+                    halted_early_retry = bool(current.meta.get("early_exit_retry") or res.early_exit_attempted)
+                    if halted_early_retry:
+                        known = (res.cost_known is not False and isinstance(res.cost_usd, (int, float))
+                                 and not isinstance(res.cost_usd, bool) and math.isfinite(res.cost_usd)
+                                 and res.cost_usd >= 0)
+                        cap = self._turn_cap(turn, 0)
+                        left = None if cap is None or not known else cap - res.cost_usd
+                        if not known or (left is not None and left <= 0):
+                            return res
                     can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
                     current = current.model_copy(update={
                         "id": new_id("task"),
+                        **({"budget_usd": left} if halted_early_retry and left is not None else {}),
                         "prompt": continuation_prompt(turn, HALT_RESUME_PROMPT, resumable=can_resume,
                                                       previous_result=res,
                                                       context_chars=self.cfg.context_chars_per_step),
-                        "meta": {**current.meta, "kind": current.meta.get("kind", "step"),
+                        "meta": {**current.meta,
+                                 "kind": current.meta.get("kind", "step"),
                                  "parent_task": res.task_id,
                                  **({"workdir": res.workdir} if res.workdir else {})},
                         "resume_session_id": res.session_id if can_resume else None,
                     })
                     earlier = res
-                    res = merged_workspace_rerun(earlier, await dispatch_with_retry(current, max_attempts))
+                    res = merged_workspace_rerun(earlier, await dispatch_with_retry(
+                        current, 1 if halted_early_retry else max_attempts))
+                    if halted_early_retry:
+                        res = _sum_repair_turns(earlier, res).model_copy(update={"early_exit_attempted": True})
                     tool_errors.extend(res.tool_errors)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
                     continue
@@ -4744,6 +4802,10 @@ class Orchestrator:
                 res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
+        if not res.ok and (res.exit_code in (0xC000013A, -1073741510) or res.early_exit_attempted):
+            if final_step:
+                await self._check_budget(rid, block=False, final_turn=True)
+            return res  # no facilities, wake or wrap-up path may bypass the early-exit guard
         if task.meta.get("kind") in {"paper_skill", "recruit_check", "plan_recruit"}:
             return res  # optional advice never adds wake/wrap-up turns or delays CP1 on a failed conversion
         if task.meta.get("facilities_diagnosis"):

@@ -29,6 +29,8 @@ To use a solo staff member, write `id: solo`, `name`, `role`, `engine`, `model`,
 For Codex staff, state `web_search="live"` if `tools` has `WebSearch` or `WebFetch`, and `"disabled"` if not.
 `HPC*` is wired only when the scheduler is not `none`.
 
+Proposed #1413 (unmerged): if a Windows staff CLI exits with `0xC000013A` within 30 seconds, it is retried once within the original budget and deadline only when there was no cancellation, tool call or output change and the Job and cost are verified. Incomplete scans or UNKNOWN Job, process identity or cost block the retry. Codex currently reports cost as UNKNOWN, so its automatic retry is blocked. Real requests have not been verified.
+
 Codex staff are instructed to save large results to files page by page as they arrive and to avoid putting large bodies of data in shell command arguments. There is no automatic saving or result validation, and actual staff compliance is unverified.
 
 For an existing installation, after updating, add only the new `facilities.yaml` to `runner.agents_dir/core/`. The existing roster is not overwritten. The PI checks staff engine readiness with `labhq doctor --json`, and after work is finished restarts the runner, and it is registered. A staff member that fails the engine readiness check drops out of the roster.
