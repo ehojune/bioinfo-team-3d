@@ -6710,7 +6710,8 @@ class Orchestrator:
             carried = contract.get("continuation") or {}
             if carried.get("plan_sha256") == plan_hash:
                 prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
-                                                              approval_note(carried.get("pi_request")))
+                                                              approval_note(carried.get("pi_request")),
+                                                              trigger=carried.get("trigger") or "")
             prompt += blind_draft.review_block(contract.get(blind_draft.KEY))
             prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
             if contract.get("result_warnings"):
@@ -6902,7 +6903,8 @@ class Orchestrator:
                     detail={"gate": research_continuation.CONTINUE_GATE, "plan_sha256": plan_hash, "round": round_no,
                             "limit": limit, "p1_issues": issues})
             approved = bool(decision.get("approved"))
-            trigger = {"trigger": "cp2_revise"} if cp2_revise else {}
+            trigger = ({"trigger": "cp2_revise"} if cp2_revise else
+                       {"trigger": "research_stop"} if stops else {})
             decided = {"plan_sha256": plan_hash, "decision": "approved" if approved else "declined",
                        "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                        "note": "" if cp2_revise else str(decision.get("note") or "").strip(), **trigger,
@@ -6925,7 +6927,7 @@ class Orchestrator:
             return ("이어 가기 카드가 답 없이 닫혀 새 CP1을 열지 않았습니다." if decided.get("state") == "timed_out"
                     else "PI가 새 CP1로 이어 가기를 거절했습니다.")
         await self._emit(rid, "request.continued", {"round": contract.get("round"), "from_plan_sha256": plan_hash,
-                                                    **({"trigger": "cp2_revise"} if cp2_revise else {})})
+                                                    **({"trigger": decided["trigger"]} if decided.get("trigger") else {})})
         await self.run_request(rid, continuation=True)
         return None
 
@@ -7642,6 +7644,7 @@ class Orchestrator:
                     pinned_note = ""
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
+                                  else "연구 중단 사유 반영" if carried.get("trigger") == "research_stop"
                                   else "리뷰 P1 반영")
                         # Verifier errors can contain private paths. Use the same categories in
                         # the summary and both display copies, without changing the sealed record.
@@ -7972,7 +7975,8 @@ class Orchestrator:
                 cp2_revise = carried.get("trigger") == "cp2_revise"
                 continuation_note = (research_continuation.plan_prompt(
                     rounds[-1]["plan"], rounds[-1]["plan_sha256"], carried.get("p1_issues") or [],
-                    int(carried.get("round") or 2), pi_request=approval_note(carried.get("pi_request")))
+                    int(carried.get("round") or 2), pi_request=approval_note(carried.get("pi_request")),
+                    trigger=carried.get("trigger") or "")
                     if continuation and research_lane and rounds else "")
                 if continuation_note:  # the previous round's CP2 note and the 이어 가기 note (PI 점검 R11)
                     continuation_note += approval_note_block("이어 가기", [
@@ -9030,7 +9034,14 @@ class Orchestrator:
                                             **({"task_results": stray} if stray else {})}
         if req.get("outcome") == "model_refused" and carried.get("refusal_retry"):
             carried["refusal_retry"]["state"] = "refused"
-        if carried.get("trigger") == "cp2_revise":  # the CP2 revise it continued (R10)
+        if carried.get("trigger") == "research_stop":
+            issues = carried.get("p1_issues") or []
+            contract["failure"] = {"steps": [item.get("step_id") for item in issues],
+                                   "plan_sha256": previous.get("plan_sha256"), "reason": "research_stop"}
+            req["outcome"] = "research_failed"
+            ended = [f"{previous.get('round')}차 연구 단계가 중단된 결과입니다.", "",
+                     *(f"{item.get('step_id') or '-'}: {item.get('problem') or '-'}" for item in issues)]
+        elif carried.get("trigger") == "cp2_revise":  # the CP2 revise it continued (R10)
             req["outcome"] = "evidence_revision_requested"
             ended = [f"{previous.get('round')}차 결과와 CP2 수정 요청이 이 요청의 결과입니다.", "",
                      "CP2 evidence review: revision_requested.", f"PI 수정 요청: {carried.get('pi_request') or '-'}"]
