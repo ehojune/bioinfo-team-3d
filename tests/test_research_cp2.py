@@ -1104,6 +1104,8 @@ async def test_research_step_question_reaches_continue_without_rerunning(schema_
 
     assert "blocking_decision" in seen[0].output_schema["properties"]
     assert "blocking_decision" not in seen[0].output_schema["required"]
+    assert "The PI decides whether to revise the plan or end the request" in seen[0].prompt
+    assert "The CSO answers first; only hard-stop" not in seen[0].prompt
     assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_continue"]
     assert "Which donor group" in hub.approvals[1]["summary"] and len(seen) == 1
     assert hub.requests["r"]["outcome"] == "research_failed"

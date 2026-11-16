@@ -956,9 +956,8 @@ a received file even then, record an evidence row with status "unavailable" whos
 "도구 없음: <file> · <tool needed>" so the PI sees it at CP2. Deliver: what you did, key results with file
 paths, caveats and open questions. Do not quietly switch to a weaker method when one fails: keep debugging,
 and if you give it up, say what you tried and why you stopped. If you cannot proceed without a blocking decision,
-return JSON with "blocking_decision": "the specific question and choices". If a frozen plan stop condition has
-been met, also use blocking_decision and name the condition and why it was met. The PI decides whether to revise
-the plan or end the request. Write the question so the PI can answer it:
+return JSON with "blocking_decision": "the specific question and choices". The CSO answers first; only hard-stop
+questions go to the PI. Write the question so either can answer it:
 at most 700 characters, the question itself in the first sentence, then each choice on its own line starting
 with "- ". Inside the JSON string write each line break as \\n. Do not proceed with the blocked work.
 
@@ -975,10 +974,7 @@ environment, not only the runner login environment, writes the record under outp
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions.
 """ + FIGURE_OUTPUT_RULE + "\n\n" + HPC_WALLTIME_RULE
 
-STEP_PROMPT = RESEARCH_STEP_PROMPT.replace(
-    "If a frozen plan stop condition has\nbeen met, also use blocking_decision and name the condition and why it was met. The PI decides whether to revise\nthe plan or end the request. Write the question so the PI can answer it:",
-    "The CSO answers first; only hard-stop questions go to the PI. Write the question so either can answer it:",
-) + """
+STEP_PROMPT = RESEARCH_STEP_PROMPT + """
 
 Unless you are returning blocking_decision, end the answer with these exact headings, in this order:
 ## Findings
@@ -5753,6 +5749,11 @@ class Orchestrator:
 
         async def run_one(step: dict) -> TaskResult:
             template = RESEARCH_STEP_PROMPT if research_plan else STEP_PROMPT
+            if research_plan:
+                template = template.replace(
+                    "The CSO answers first; only hard-stop\nquestions go to the PI. Write the question so either can answer it:",
+                    "The PI decides whether to revise the plan or end the request. Write the question for the PI:",
+                )
             prompt = template.format(request=request, step_id=step["id"], instruction=step["instruction"])
             if research_plan:
                 contract = ((req_state or {}).get("research_contract") or {})
