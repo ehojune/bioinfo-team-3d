@@ -4,6 +4,7 @@ import builtins
 import os
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -160,15 +161,22 @@ def test_windows_wrapper_joins_job_before_it_starts_cli(monkeypatch):
         def peak_bytes(self):
             return 0
 
+        def active_processes(self):
+            return 1
+
         def close(self):
             events.append(("close",))
 
     class Completed:
-        returncode = 0
+        pid = 42
+
+        def wait(self):
+            return 0
 
     monkeypatch.setattr(memory_limit, "_WindowsJob", Job)
-    monkeypatch.setattr(memory_limit.subprocess, "run",
-                        lambda argv, check=False: events.append(("cli", argv, check)) or Completed())
+    monkeypatch.setattr(memory_limit.subprocess, "Popen",
+                        lambda argv: events.append(("cli", argv)) or Completed())
+    monkeypatch.setattr("labhq.proc_tree._open", lambda *a, **kw: None)
 
     assert memory_limit._run_windows_job(["--windows-job", "1024", "--", *command]) == 0
     assert [event[0] for event in events] == ["job", "cli"]
@@ -290,17 +298,28 @@ def test_windows_wrapper_announces_the_job_after_joining_it_and_before_the_cli(m
         def peak_bytes(self):
             return 0
 
-    class Completed:
-        returncode = 0
+        def active_processes(self):
+            return 1
 
-    def run(argv, check=False):
+    class Completed:
+        pid = 42
+
+        def wait(self):
+            return 0
+
+    def run(argv):
         events.append(("cli", capsys.readouterr().err))  # what the wrapper wrote before the CLI existed
         return Completed()
 
     monkeypatch.setattr(memory_limit, "_WindowsJob", Job)
-    monkeypatch.setattr(memory_limit.subprocess, "run", run)
+    monkeypatch.setattr(memory_limit.subprocess, "Popen", run)
+    monkeypatch.setattr("labhq.proc_tree._open", lambda *a, **kw: None)
     assert memory_limit._run_windows_job(["--windows-job", "1024", "--", "cli"]) == 0
-    assert events == ["job", ("cli", memory_limit.job_activation_line(os.getpid()) + "\n")]
+    assert events[0] == "job"
+    assert events[1][0] == "cli"
+    lines = events[1][1].splitlines()
+    assert lines[0] == memory_limit.job_activation_line(os.getpid())
+    assert lines[1].startswith(memory_limit.JOB_EVIDENCE + " token=")
 
 
 def test_a_job_that_cannot_be_joined_announces_nothing_and_starts_no_cli(monkeypatch, capsys):
@@ -451,6 +470,52 @@ async def test_without_a_job_the_end_is_unknown(tmp_path, monkeypatch):
 
     adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn, limit=0)
     assert (await adapter.run(ctx)).cleanup_evidence["reason"] == "windows_job_disabled"
+
+
+@pytest.mark.asyncio
+async def test_expired_original_deadline_never_starts_retry(tmp_path, monkeypatch):
+    async def spawn(*argv, **kwargs):
+        pytest.fail("retry started after its original deadline")
+
+    adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn)
+    ctx.early_retry_deadline = time.monotonic() - 1
+    result = await adapter.run(ctx)
+    assert not result.ok and result.error_kind == "timeout"
+    assert result.cost_usd == 0.0 and result.cost_known is True
+
+
+@pytest.mark.asyncio
+async def test_job_count_and_cli_identity_are_trusted_only_after_wrapper_handshake(tmp_path, monkeypatch):
+    token = "a" * 64
+    lines = [memory_limit.job_activation_line(4242), f"{memory_limit.JOB_EVIDENCE} token={token}",
+             f"{memory_limit.JOB_EVIDENCE} token={token} child_pid=4243 child_created=133000000000000001",
+             f"{memory_limit.JOB_EVIDENCE} token={token} active_processes=1"]
+
+    async def spawn(*argv, **kwargs):
+        return _Wrapper(lines, stdout=[], code=0xC000013A)
+
+    adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn)
+    result = await adapter.run(ctx)
+    evidence = result.cleanup_evidence
+    assert evidence["cli_pid"] == 4243 and evidence["cli_created"] == 133000000000000001
+    assert evidence["job_active_processes"] == 1 and evidence["active_processes_measured"] is True
+    assert token not in (ctx.workdir / ".labhq" / "stderr_tail.txt").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_job_never_promotes_reported_count_to_measured(tmp_path, monkeypatch):
+    token = "b" * 64
+    lines = [memory_limit.job_activation_line(4243), f"{memory_limit.JOB_EVIDENCE} token={token}",
+             f"{memory_limit.JOB_EVIDENCE} token={token} child_pid=4244 child_created=133000000000000001",
+             f"{memory_limit.JOB_EVIDENCE} token={token} active_processes=1"]
+
+    async def spawn(*argv, **kwargs):
+        return _Wrapper(lines, stdout=[], code=0xC000013A)
+
+    adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn)
+    evidence = (await adapter.run(ctx)).cleanup_evidence
+    assert evidence["status"] == "UNKNOWN" and evidence["reported_cli_pid"] == 4244
+    assert evidence["active_processes_measured"] is False and "job_active_processes" not in evidence
 
 
 @pytest.mark.parametrize("error, kind", [(FileNotFoundError("missing"), "not_found"),

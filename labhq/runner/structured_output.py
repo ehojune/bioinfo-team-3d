@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import math
+import time
 
 from ..adapters.base import RunContext
 from ..models import TaskResult
@@ -13,6 +15,27 @@ FORMAT_ERROR = "structured_output_format"
 # budget gate with the other turns. A task without the marker keeps the in-runner retries (direct runner use, tests).
 GATEWAY_RETRY_META = "format_retry"
 GATEWAY_RETRY = "gateway"
+EARLY_EXIT_META = "early_exit_retry"
+
+
+def early_exit_retry_evidence(result: TaskResult, *, before: dict | None, after: dict | None,
+                              incomplete: bool, tool_calls: bool, already_retried: bool) -> dict | None:
+    """Offer only evidence that the gateway can recheck before reserving a second dispatch."""
+    proof = result.cleanup_evidence or {}
+    elapsed, deadline = proof.get("elapsed_s"), proof.get("deadline_monotonic")
+    numeric = lambda value: isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    if (already_retried or result.ok or result.exit_code not in (0xC000013A, -1073741510)
+            or result.error_kind is not None or proof.get("end_observed") != "process_exit"
+            or proof.get("job") != "active" or proof.get("wait") != "completed"
+            or proof.get("job_active_processes") != 1 or not proof.get("wrapper_created")
+            or not proof.get("cli_pid") or not proof.get("cli_created")
+            or proof.get("tool_events") != "none" or tool_calls or proof.get("halt_requested") is not False
+            or not numeric(elapsed) or not 0 <= elapsed <= 30
+            or not numeric(deadline) or deadline <= time.monotonic() or not proof.get("clock_id")
+            or before is None or after is None or incomplete or before != after
+            or result.pending_jobs or result.pending_asks):
+        return None
+    return {"deadline": deadline, "clock_id": proof["clock_id"]}
 RETRY_PROMPT = (
     "StructuredOutput 형식 오류입니다. 내용(경로·명령·정규식 포함)은 한 글자도 바꾸지 말고, "
     "JSON 문자열 규칙에 맞게 역슬래시를 \\\\로, 따옴표를 \\\"로 escape해서 같은 내용을 다시 "

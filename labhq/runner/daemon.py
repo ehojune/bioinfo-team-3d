@@ -307,6 +307,46 @@ def output_identity(row: dict[str, Any]) -> tuple:
     return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
 
 
+def _retry_output_shape(workdir: Path, zones: list[Path], max_entries: int, max_depth: int) -> tuple[set, set] | None:
+    """Prove the normal output scan did not silently omit an entry, without following links."""
+    root = workdir / "outputs"
+    try:
+        if not os.path.lexists(root):
+            return set(), set()
+        from .workspace import _is_link, _is_mount, _utf8_name
+        real = root.resolve()
+        if _is_link(root) or _is_mount(root) or not root.is_dir() or overlaps_zone(real, zones):
+            return None
+        files, folders = set(), set()
+        count = 0
+        def walk(held: HeldDir, rel: Path, depth: int) -> None:
+            nonlocal count
+            entries = held.entries(max_entries - count + 1)
+            count += len(entries)
+            if count > max_entries:
+                raise ValueError("output scan limit")
+            for entry in entries:
+                child = rel / entry.name
+                if not _utf8_name(entry.name) or overlaps_zone(real / child, zones):
+                    raise ValueError("restricted or unreadable output")
+                name = (Path("outputs") / child).as_posix()
+                if entry.kind == "file":
+                    files.add(name)
+                elif entry.kind == "dir" and depth < max_depth and not _is_mount(root / child):
+                    folders.add(name)
+                    with held.child(entry.name, expect=entry.ident) as sub:
+                        walk(sub, child, depth + 1)
+                else:
+                    raise ValueError("unscanned output")
+        with HeldDir.hold(root) as top:
+            if not top.same_as(real):
+                return None
+            walk(top, Path(), 0)
+        return files, folders
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
 def _should_check_declared_outputs(result: TaskResult) -> bool:
     """Whether this successful turn finishes the step and can be held to its declared outputs."""
     if not result.ok or waiting(result):
@@ -2907,6 +2947,7 @@ class Runner:
             output_records: list[dict[str, Any]] = []
             observed_outputs: list[dict[str, Any]] = []
             output_scan_notes: list[str] = []
+            output_shape_before = None
             # A declared step artifact is a future ancestor input. Hash through the same admission cap;
             # Steps without declared artifacts retain their configured observation/output cap.
             artifact_hash_limit = self.s.runner.output_hash_max_bytes
@@ -2916,11 +2957,14 @@ class Runner:
 
             def before_spawn() -> str | None:
                 """Take both baselines after adapter preparation, immediately before its CLI spawn."""
-                nonlocal output_before
+                nonlocal output_before, output_shape_before
                 refused = watch.take_baseline() if watch else None
                 records, note = ws.scan_output_records(
                     zones, self.s.runner.reference_scan_max_entries, self.s.runner.reference_scan_max_depth)
                 output_before = {row["path"]: output_identity(row) for row in records}
+                if os.name == "nt" and self.s.runner.step_memory_limit_gb > 0:
+                    output_shape_before = _retry_output_shape(ws.dir, zones, self.s.runner.reference_scan_max_entries,
+                                                              self.s.runner.reference_scan_max_depth)
                 if whole_hpc:
                     # Keep the first submitting turn's view across sleeping jobs AND runner restarts.
                     # A later revision has its own baseline and never adopts a retired run's outputs.
@@ -2971,6 +3015,17 @@ class Runner:
                 from ..hooks.tool_use import add_claude_hook
 
                 engine_settings = add_control_hooks(add_claude_hook(engine_settings))
+            retry_info = task.meta.get("early_exit_retry")
+            retry_valid = (isinstance(retry_info, dict) and retry_info.get("clock_id") == getattr(self, "process", None)
+                           and isinstance(retry_info.get("deadline"), (int, float))
+                           and not isinstance(retry_info.get("deadline"), bool)
+                           and math.isfinite(retry_info["deadline"]))
+            original_before_spawn = before_spawn
+            def guarded_before_spawn() -> str | None:
+                if retry_info is not None and (not retry_valid or retry_info["deadline"] <= time.monotonic()):
+                    return "original retry deadline or runner identity unavailable"
+                return original_before_spawn()
+
             ctx = RunContext(
                 task=task, agent=agent, workdir=ws.dir, settings=self.s,
                 # Read-only staff get only Claude's scoped permission gate; no ask/HPC or staff MCP servers.
@@ -3003,7 +3058,9 @@ class Runner:
                 resume_baseline=self._resume_baseline(task, agent, ws),
                 read_only=read_only,
                 # Again after prepare(): the adapter's own files (Codex AGENTS.md) are not the agent's writes.
-                before_spawn=before_spawn,
+                before_spawn=guarded_before_spawn,
+                early_retry_clock=getattr(self, "process", None),
+                early_retry_deadline=retry_info["deadline"] if retry_valid else None,
                 halt=self.controls.halt_event(task.id),
                 halt_grace_s=HALT_GRACE_S if hooked else 0.0,
                 on_started=lambda: self.controls.started(task.id),
@@ -3157,6 +3214,20 @@ class Runner:
                            else read_ask_results(answers))
                 if outcome["status"] == "rejected":
                     result = rejected_step(result, outcome["reason"])
+                if result.exit_code in (0xC000013A, -1073741510):
+                    from .structured_output import early_exit_retry_evidence
+                    output_shape_after = _retry_output_shape(ws.dir, zones, self.s.runner.reference_scan_max_entries,
+                                                            self.s.runner.reference_scan_max_depth)
+                    complete_shape = (output_shape_before is not None and output_shape_before == output_shape_after
+                                      and output_before is not None and output_shape_before[0] == set(output_before)
+                                      and output_shape_after[0] == {row["path"] for row in output_records})
+                    result.early_exit_retry = early_exit_retry_evidence(
+                        result, before=output_before,
+                        after={row["path"]: output_identity(row) for row in output_records},
+                        incomplete=bool(output_scan_notes) or not complete_shape,
+                        tool_calls=bool(tool_calls.calls), already_retried=retry_info is not None)
+                else:
+                    result.early_exit_retry = None
             finally:
                 self.broker.revoke_task_token(broker_token)
                 try:
@@ -3184,6 +3255,19 @@ class Runner:
             self.jobs[jid].update(session_id=result.session_id, workdir=str(ws.dir))
             self.store.put("job", jid, self.jobs[jid])
         result.pending_jobs, result.workdir = pending, str(ws.dir)
+        if result.early_exit_retry:
+            # The broker and any in-flight submissions have now stopped. Recheck after that boundary, before any
+            # runner-owned RESULT files are written; a late output or a late tool event withdraws the offer.
+            await collect_observed_outputs()
+            shape = _retry_output_shape(ws.dir, zones, self.s.runner.reference_scan_max_entries,
+                                        self.s.runner.reference_scan_max_depth)
+            from .structured_output import early_exit_retry_evidence
+            result.early_exit_retry = early_exit_retry_evidence(
+                result, before=output_before, after={row["path"]: output_identity(row) for row in output_records},
+                incomplete=(bool(output_scan_notes) or output_shape_before is None or shape != output_shape_before
+                            or output_before is None or output_shape_before[0] != set(output_before)
+                            or shape is None or shape[0] != {row["path"] for row in output_records}),
+                tool_calls=bool(tool_calls.calls) or bool(ctx.halt and ctx.halt.is_set()), already_retried=False)
         blocking = result.blocking_decision or (result.structured.get("blocking_decision")
                                                if isinstance(result.structured, dict) else None)
         if whole_hpc and result.ok and not pending and not result.pending_asks and not blocking:
@@ -3478,7 +3562,7 @@ class Runner:
         except OwnedPathError:
             error = "작업 폴더의 outputs가 실행 중에 링크로 바뀌어 결과 파일을 쓰지 않았습니다"
             await emit("agent.log", {"level": "alert", "text": error})
-            result = result.model_copy(update={"ok": False, "error": error})
+            result = result.model_copy(update={"ok": False, "error": error, "early_exit_retry": None})
         else:
             # RESULT.md is runner-owned and absent from the staff output scan. Check it only after all response
             # normalization and the owned write, so a retry never checks the preceding turn's response.
@@ -3507,6 +3591,10 @@ class Runner:
         if not result.ok and result.quota_reset_at is None:  # only this machine knows the CLI's zone
             result.quota_reset_at = quota_reset_instant(agent.engine.value, result.error)
         self._shutdown_result(result)
+        if result.early_exit_retry and (tool_calls.calls or result.pending_jobs or result.pending_asks
+                                        or result.error_kind is not None or result.shutdown_evidence
+                                        or (ctx.halt and ctx.halt.is_set())):
+            result.early_exit_retry = None
         state = "hibernating" if waiting(result) else ("done" if result.ok else "error")
         extra = ({"jobs": pending, "asks": result.pending_asks} if waiting(result) else
                  ({"error": short(result.error, 200)} if result.error else {}))

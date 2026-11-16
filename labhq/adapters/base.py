@@ -243,9 +243,11 @@ def cleanup_verdict(record: dict[str, Any]) -> dict[str, Any]:
 
     `job_close_contract_enforced` needs the wrapper's own activation line before the CLI started and a completed wait
     for that wrapper: it held the only KILL_ON_CLOSE handle, so its end makes Windows end the rest of the Job. That is
-    the Job close contract, not a measured empty Job (no ActiveProcesses query). A non-zero exit, including labhq's
+    the Job close contract, not by itself a measured empty Job. If the authenticated wrapper reported an actual
+    ActiveProcesses count, it is recorded separately. A non-zero exit, including labhq's
     own kill, is not a failed cleanup. Anything less is UNKNOWN; a spawn that created nothing is `not_started`."""
-    evidence = {**record, "active_processes_measured": False}
+    evidence = {**record, "active_processes_measured": (record.get("job") == "active"
+                and type(record.get("job_active_processes")) is int)}
     if record.get("spawn") == "failed":
         evidence["status"] = "not_started"
     elif record.get("spawn") == "cancelled":
@@ -599,6 +601,9 @@ class RunContext:
     on_started: Callable[[], None] | None = None
     # Runner hook (#863): the cleanup evidence of a run that ends by cancellation, which returns no TaskResult.
     on_cleanup: Callable[[dict], None] | None = None
+    # A retry may only use a monotonic deadline from this same running runner process.
+    early_retry_clock: str | None = None
+    early_retry_deadline: float | None = None
     # Explicit benchmark runner only. Callback accepts identifiers/counts, never prompt/command text.
     bench_observer: Callable[..., None] | None = None
     process_boundary: ProcessBoundaryGate = field(default_factory=ProcessBoundaryGate)
@@ -701,6 +706,7 @@ class _ToolActivity:
     identified: set[str] = field(default_factory=set)
     anonymous: dict[str, int] = field(default_factory=dict)
     interpretable: bool = field(init=False)
+    seen: bool = False
 
     def __post_init__(self) -> None:
         self.interpretable = self.engine in {"codex", "claude_code"}
@@ -764,13 +770,27 @@ class _ToolActivity:
         tool_kind = (kind in {"command_execution", "mcp_tool_call", "function_call", "custom_tool_call",
                               "web_search"} or kind.endswith("_tool_call"))
         if tool_kind:
+            self.seen = True
             self._change(kind, item, event_type == "item.started")
+        elif kind == "file_change":
+            self.seen = True
         elif kind not in {"agent_message", "assistant_message", "reasoning", "file_change"}:
             # A new started-item kind could be a tool the adapter does not yet understand.
             self.unreadable()
 
     def _observe_claude(self, event: dict) -> None:
         event_type = event.get("type")
+        if event_type == "stream_event":
+            inner = event.get("event")
+            if not isinstance(inner, dict):
+                self.unreadable()
+            elif inner.get("type") == "content_block_start":
+                block = inner.get("content_block")
+                if not isinstance(block, dict):
+                    self.unreadable()
+                elif block.get("type") == "tool_use":
+                    self.seen = True
+            return
         if event_type not in {"assistant", "user"}:
             return
         message = event.get("message")
@@ -784,6 +804,7 @@ class _ToolActivity:
                 return
             block_type = block.get("type")
             if block_type == "tool_use":
+                self.seen = True
                 call_id = block.get("id")
                 if not isinstance(call_id, str) or not call_id:
                     self.unreadable()
@@ -1162,12 +1183,20 @@ class AgentAdapter(ABC):
                               error="halted before the CLI started", session_id=ctx.task.resume_session_id)
         refused = ctx.before_spawn() if ctx.before_spawn else None
         if refused:
-            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused,
+                              **({"cost_usd": 0.0, "cost_known": True}
+                                 if ctx.task.meta.get("early_exit_retry") is not None else {}))
         if ctx.halt is not None and ctx.halt.is_set():  # halted while labhq prepared the run: nothing starts
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
                               error="halted before the CLI started", session_id=ctx.task.resume_session_id)
+        if ctx.early_retry_deadline is not None and time.monotonic() >= ctx.early_retry_deadline:
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="timeout",
+                              error="original CLI deadline expired before retry", cost_usd=0.0, cost_known=True)
         bench_spawn_id = object() if ctx.bench_observer is not None else None
         ctx.started_at = time.time()
+        started_at = time.monotonic()  # before spawn: a slow handover never understates the CLI's lifetime
+        deadline = (ctx.early_retry_deadline if ctx.early_retry_deadline is not None
+                    else started_at + self.settings.runner.task_timeout_s)
         try:
             group_args = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                           if os.name == "nt" else {"start_new_session": True})
@@ -1238,7 +1267,6 @@ class AgentAdapter(ABC):
                                   error=f"runner could not record the CLI start: {type(exc).__name__}: {exc}",
                                   cleanup_evidence=self._cleanup_evidence(cleanup, proc))
         st = RunState()
-        started_at = time.monotonic()
         tool_activity = _ToolActivity(self.engine)
         stderr_tail: deque[str] = deque(maxlen=60)
         result_arrived = asyncio.Event()
@@ -1264,6 +1292,7 @@ class AgentAdapter(ABC):
                 if st.stop_reason and proc.returncode is None:
                     reason, st.stop_reason = st.stop_reason, None
                     await ctx.emit("agent.log", {"level": "warn", "text": reason})
+                    cleanup["end_observed"] = "adapter_stop"
                     await self._kill(proc)
                 if st.result_seen:
                     result_arrived.set()
@@ -1289,17 +1318,48 @@ class AgentAdapter(ABC):
             nonlocal last_output
             assert proc.stderr
             first = True
+            capability = None
+            expecting_capability = False
             async for raw in proc.stderr:
                 last_output = time.monotonic()
                 text = raw.decode(errors="replace").rstrip()
                 if first:
                     first = False
                     if cleanup["job"] == "pending":  # only the wrapper can write before the CLI exists (#863)
+                        advertised = re.fullmatch(r"LABHQ_JOB_ACTIVE pid=(\d+) kill_on_close=1", text)
+                        if advertised:
+                            reported_pid = int(advertised.group(1))
+                            cleanup["job_reported_pid"] = reported_pid
+                            cleanup["job_reported_created"] = _wrapper_identity(reported_pid)
+                            expecting_capability = True
                         confirmed = (type(wrapper_pid) is int and
                                      getattr(memory_guard, "job_confirmed", lambda *_args: False)(text, wrapper_pid))
                         cleanup["job"] = "active" if confirmed else "unconfirmed"
                         if confirmed:
+                            expecting_capability = True
                             continue
+                        if advertised:
+                            stderr_tail.append(text)
+                            continue
+                if expecting_capability:
+                    expecting_capability = False
+                    match = re.fullmatch(r"LABHQ_JOB_EVIDENCE token=([0-9a-f]{64})", text)
+                    if match:
+                        capability = match.group(1)
+                        continue
+                if capability and text.startswith(f"LABHQ_JOB_EVIDENCE token={capability} "):
+                    body = text.split(" ", 2)[2]
+                    child = re.fullmatch(r"child_pid=(\d+) child_created=(\d+|None)", body)
+                    count = re.fullmatch(r"active_processes=(\d+|None)", body)
+                    if child:
+                        prefix = "" if cleanup["job"] == "active" else "reported_"
+                        cleanup[prefix + "cli_pid"] = int(child.group(1))
+                        cleanup[prefix + "cli_created"] = int(child.group(2)) if child.group(2) != "None" else None
+                        continue
+                    if count:
+                        if cleanup["job"] == "active":
+                            cleanup["job_active_processes"] = int(count.group(1)) if count.group(1) != "None" else None
+                        continue
                 stderr_tail.append(text)
 
         async def feed_stdin() -> None:
@@ -1443,7 +1503,8 @@ class AgentAdapter(ABC):
         watch = asyncio.create_task(stall_watch())
         halting = asyncio.create_task(halt_watch())
         try:
-            await asyncio.wait_for(asyncio.shield(drain), timeout=self.settings.runner.task_timeout_s)
+            remaining = max(0.0, deadline - time.monotonic()) if ctx.early_retry_deadline is not None else self.settings.runner.task_timeout_s
+            await asyncio.wait_for(asyncio.shield(drain), timeout=remaining)
         except asyncio.TimeoutError:
             cleanup["end_observed"] = "timeout"
             st.error = f"timeout after {self.settings.runner.task_timeout_s}s"
@@ -1494,6 +1555,14 @@ class AgentAdapter(ABC):
         res.exit_code = returncode
         cleanup.setdefault("end_observed", "result_guard" if ended_after_result else "process_exit")
         res.cleanup_evidence = self._cleanup_evidence(cleanup, proc)
+        if returncode in (0xC000013A, -1073741510):
+            res.cleanup_evidence.update(
+                elapsed_s=time.monotonic() - started_at,
+                tool_events=("UNKNOWN" if not tool_activity.interpretable else "present" if tool_activity.seen else "none"),
+                halt_requested=ctx.halt.is_set() if ctx.halt is not None else None,
+                deadline_monotonic=deadline if ctx.early_retry_clock else None,
+                clock_id=ctx.early_retry_clock,
+            )
         ctx.commands_ran = st.commands_ran
         secrets = self._secret_values(ctx, env)
         if res.error and stderr and ("empty CLI stream" in res.error or "IneligibleTierError" in stderr):
@@ -1638,7 +1707,10 @@ class AgentAdapter(ABC):
     def _cleanup_evidence(record: dict[str, Any], proc: Any) -> dict[str, Any]:
         """The verdict on the wrapper the runner held, from its own observations only (#863)."""
         returncode = getattr(proc, "returncode", None)
-        observed = {key: record[key] for key in ("job", "wrapper_pid", "wrapper_created", "spawn") if key in record}
+        observed = {key: record[key] for key in ("job", "wrapper_pid", "wrapper_created", "spawn",
+                                                    "cli_pid", "cli_created", "job_active_processes",
+                                                    "job_reported_pid", "job_reported_created",
+                                                    "reported_cli_pid", "reported_cli_created") if key in record}
         if isinstance(record.get("kill"), dict):  # a test double's kill returns no record
             observed["kill"] = {key: value for key, value in record["kill"].items()
                                 if key in ("requested", "tree", "wait")}

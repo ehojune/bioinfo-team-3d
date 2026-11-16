@@ -1,5 +1,9 @@
 """Regression for parallel JSON repair against a shared request budget."""
 import asyncio
+import os
+import sys
+import time
+from pathlib import Path
 
 import pytest
 
@@ -11,6 +15,93 @@ from labhq.runner.structured_output import GATEWAY_RETRY, GATEWAY_RETRY_META, ru
 from labhq.settings import Settings
 from tests.test_cso import FakeHub
 from tests.test_structured_output_retry import ERROR, make_runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected_calls", [("success", 2), ("unknown_cost", 1),
+                                                  ("no_evidence", 1), ("second_failure", 2),
+                                                  ("exhausted", 1), ("halted", 1), ("shutdown", 1),
+                                                  ("already_claimed", 1)])
+async def test_early_exit_retry_uses_gateway_budget_and_never_repeats(case, expected_calls):
+    async def dispatch(task):
+        if task.meta.get("early_exit_retry"):
+            return TaskResult(task_id=task.id, agent_id="worker", ok=case == "success",
+                              text="done" if case == "success" else "", cost_usd=0.1,
+                              exit_code=0 if case == "success" else 0xC000013A,
+                              error=None if case == "success" else "timeout after failure",
+                              early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                          error="empty CLI stream: timeout", cost_usd=None if case == "unknown_cost" else 0.1,
+                          error_kind="halted" if case == "halted" else None,
+                          shutdown_evidence={"stopping": False} if case == "shutdown" else {},
+                          cost_known=case != "unknown_cost",
+                          early_exit_retry=None if case == "no_evidence" else
+                          {"deadline": time.monotonic() + 100, "clock_id": "runner"})
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"]["budget_usd"] = 0.1 if case == "exhausted" else 5
+    orch = Orchestrator(hub)
+    task = Task(agent_id="worker", request_id="r", prompt="work", budget_usd=0.5,
+                meta={"kind": "step", "step_id": "A"})
+    if case == "already_claimed":
+        hub.requests["r"]["early_exit_retries"] = {task.id: "earlier-task"}
+    result = await orch.run_step(task)
+    assert len(hub.calls) == expected_calls
+    assert result.ok is (case == "success")
+    if expected_calls == 2:
+        assert hub.calls[1].budget_usd == pytest.approx(0.4)
+        assert result.cost_usd == pytest.approx(0.2)
+        assert orch.cost["r"] == pytest.approx(0.2)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Job object and CONTROL_C_EXIT")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case,expected", [("success", 2), ("unknown_cost", 1), ("tools", 1),
+                                           ("outputs", 1), ("scan", 1), ("second_failure", 2)])
+async def test_fake_cli_early_exit_uses_original_runner_and_budget(tmp_path, monkeypatch, case, expected):
+    from labhq.adapters.claude_code import ClaudeCodeAdapter
+    from labhq.models import Engine
+
+    runner, _ = make_runner(tmp_path, monkeypatch, 0)
+    # The wrapper runs from the isolated workspace, not the test checkout's current directory.
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
+    runner.registry.agents["worker"] = AgentSpec(id="worker", name="worker", role="test", engine=Engine.claude_code)
+    runner.s.runner.step_memory_limit_gb = 0.5
+    script = tmp_path / "fake_staff.py"
+    marker = tmp_path / "attempts.txt"
+    script.write_text(
+        "import json, os, pathlib, time\n"
+        f"p = pathlib.Path({str(marker)!r})\n"
+        f"case = {case!r}\n"
+        "n = int(p.read_text()) + 1 if p.exists() else 1\n"
+        "p.write_text(str(n))\n"
+        "if n == 1 and case == 'tools':\n"
+        " print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'x','name':'Read','input':{}}]}}), flush=True)\n"
+        "if n == 1 and case == 'outputs':\n"
+        " pathlib.Path('outputs/written.txt').write_text('changed')\n"
+        "print(json.dumps({'type':'result','subtype':'success','result':'done',"
+        "'session_id':'fake','total_cost_usd':None if case == 'unknown_cost' else 0.1}), flush=True)\n"
+        "time.sleep(0.25)\n"
+        "os._exit(-1073741510 if n == 1 or case == 'second_failure' else 0)\n", encoding="utf-8")
+    runner.s.engines.claude_code.bin = sys.executable
+    runner.s.engines.claude_code.prefix_args = [str(script)]
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: ClaudeCodeAdapter(runner.s))
+    if case == "scan":
+        from labhq.runner.workspace import TaskWorkspace
+        original_scan = TaskWorkspace.scan_output_records
+        def incomplete_scan(self, *args, **kwargs):
+            rows, _note = original_scan(self, *args, **kwargs)
+            return rows, "fixture: incomplete scan"
+        monkeypatch.setattr(TaskWorkspace, "scan_output_records", incomplete_scan)
+    hub = FakeHub(runner.run_task)
+    hub.agents["worker"]["engine"] = "claude_code"
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work", budget_usd=0.5,
+                                                   meta={"kind": "step", "step_id": "A"}))
+    assert marker.read_text() == str(expected)
+    assert len(hub.calls) == expected and result.ok is (case == "success")
+    if expected == 2:
+        assert result.cost_usd == pytest.approx(0.2)
+        assert hub.calls[1].meta["early_exit_retry"]["clock_id"] == runner.process
 
 
 def _ctx(tmp_path, *, kind="step", budget=0.2):

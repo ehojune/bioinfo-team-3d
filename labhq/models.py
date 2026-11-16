@@ -382,6 +382,8 @@ class TaskResult(BaseModel):
     # "plain" or "compact" when the turn ended with a StructuredOutput format error that a resumed turn may repair; the
     # orchestrator sends that repair as a new dispatch (#673). None: no repair is offered.
     format_retry: str | None = None
+    # Runner evidence for one gateway-gated early-exit retry. Missing evidence never authorizes a retry.
+    early_exit_retry: dict[str, Any] | None = None
     cost_usd: float | None = None
     cost_known: bool | None = None
     usage: dict[str, int] = {}
