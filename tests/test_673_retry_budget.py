@@ -95,7 +95,8 @@ async def test_early_exit_retry_respects_smallest_turn_cap(reserve, task_cap, ag
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resume", [False, True])
-async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume):
+@pytest.mark.parametrize("halt_cost", [0.0, 0.1, None])
+async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume, halt_cost):
     calls = []
     waits = []
     async def dispatch(task):
@@ -106,7 +107,7 @@ async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume):
                               early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
         if len(calls) == 2:
             return TaskResult(task_id=task.id, agent_id="worker", ok=False, error_kind="halted",
-                              error="halted", cost_usd=0.1)
+                              error="halted", cost_usd=halt_cost, cost_known=halt_cost is not None)
         return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done", cost_usd=0.1)
 
     hub = FakeHub(dispatch)
@@ -119,7 +120,54 @@ async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume):
     assert result.ok is resume
     if resume:
         assert "early_exit_retry" not in calls[2].meta
-        assert result.cost_usd == pytest.approx(0.3)
+        if halt_cost is None:
+            assert result.cost_usd is None and result.cost_known is False
+        else:
+            assert result.cost_usd == pytest.approx(0.2 + halt_cost)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("early_retry", [False, True])
+async def test_early_retry_halted_while_waiting_for_slot_has_zero_cost(tmp_path, monkeypatch, early_retry):
+    runner, calls = make_runner(tmp_path, monkeypatch, 0)
+    async def halted_slot(*_args):
+        return False
+    monkeypatch.setattr(runner, "_slot_or_halt", halted_slot)
+    task = Task(agent_id="worker", request_id="r", prompt="work",
+                meta={"early_exit_retry": {"deadline": time.monotonic() + 100, "clock_id": runner.process}}
+                if early_retry else {})
+    result = await runner.run_task(task)
+    assert not calls and result.error_kind == "halted"
+    assert (result.cost_known, result.cost_usd) == ((True, 0) if early_retry else (False, None))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("where", ["wait_ready", "halt_flag"])
+@pytest.mark.parametrize("early_retry", [False, True])
+async def test_early_retry_halted_before_adapter_spawn_has_zero_cost(tmp_path, monkeypatch, where, early_retry):
+    from labhq.adapters.claude_code import ClaudeCodeAdapter
+    from labhq.models import Engine
+
+    ctx = _ctx(tmp_path)
+    ctx.agent.engine = Engine.claude_code
+    if early_retry:
+        ctx.task.meta["early_exit_retry"] = {"deadline": time.monotonic() + 100, "clock_id": "runner"}
+    ctx.settings.engines.claude_code.bin = sys.executable
+    adapter = ClaudeCodeAdapter(ctx.settings)
+    monkeypatch.setattr(adapter, "prepare", lambda _ctx: None)
+    monkeypatch.setattr(adapter, "build_command", lambda _ctx: [sys.executable])
+    async def ready():
+        return where != "wait_ready"
+    async def write_meta(*_args):
+        pass
+    ctx.wait_ready = ready
+    ctx.awrite_meta = write_meta
+    ctx.halt = asyncio.Event()
+    if where == "halt_flag":
+        ctx.halt.set()
+    result = await adapter.run(ctx)
+    assert result.error_kind == "halted" and ctx.started_at is None
+    assert (result.cost_known, result.cost_usd) == ((True, 0) if early_retry else (False, None))
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job object and CONTROL_C_EXIT")

@@ -1180,7 +1180,9 @@ class AgentAdapter(ABC):
         payload = self.stdin_payload(ctx)
         if ctx.wait_ready and not await ctx.wait_ready():
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
-                              error="halted before the CLI started", session_id=ctx.task.resume_session_id)
+                              error="halted before the CLI started", session_id=ctx.task.resume_session_id,
+                              **({"cost_usd": 0.0, "cost_known": True}
+                                 if ctx.task.meta.get("early_exit_retry") is not None else {}))
         refused = ctx.before_spawn() if ctx.before_spawn else None
         if refused:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error=refused,
@@ -1188,7 +1190,9 @@ class AgentAdapter(ABC):
                                  if ctx.task.meta.get("early_exit_retry") is not None else {}))
         if ctx.halt is not None and ctx.halt.is_set():  # halted while labhq prepared the run: nothing starts
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="halted",
-                              error="halted before the CLI started", session_id=ctx.task.resume_session_id)
+                              error="halted before the CLI started", session_id=ctx.task.resume_session_id,
+                              **({"cost_usd": 0.0, "cost_known": True}
+                                 if ctx.task.meta.get("early_exit_retry") is not None else {}))
         if ctx.early_retry_deadline is not None and time.monotonic() >= ctx.early_retry_deadline:
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=False, error_kind="timeout",
                               error="original CLI deadline expired before retry", cost_usd=0.0, cost_known=True)

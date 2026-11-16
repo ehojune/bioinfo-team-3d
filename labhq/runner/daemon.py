@@ -2534,7 +2534,8 @@ class Runner:
             self.event_buffers.pop(task.id, None)
             result = self.controls.halted(task.id, TaskResult(
                 task_id=task.id, agent_id=agent.id, ok=False, error_kind="halted",
-                error="halted before the turn started", session_id=task.resume_session_id))
+                error="halted before the turn started", session_id=task.resume_session_id,
+                **({"cost_usd": 0.0, "cost_known": True} if task.meta.get("early_exit_retry") is not None else {})))
             await emit("agent.log", {"level": "info", "text": "시작하기 전에 멈췄어요. 받은 방향 수정은 같은 단계의 다음 turn에 남깁니다"})
             await emit_final({"state": "idle", "halted": True}, result.model_dump(mode="json"))
             return result
