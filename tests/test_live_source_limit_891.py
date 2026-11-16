@@ -253,7 +253,7 @@ def test_the_note_helper_is_empty_without_a_cap_and_a_fact_with_one(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_step_resumed_after_a_pi_answer_gets_the_current_usage_in_its_updates(tmp_path):
+async def test_research_continuation_after_a_stop_gets_current_usage_in_its_updates(tmp_path):
     from labhq.models import TaskResult
     from labhq.orchestrator.cso import Orchestrator
     from tests.test_research_cp2 import CP1, MiniHub, _cp2_result, _settings
@@ -270,7 +270,7 @@ async def test_a_step_resumed_after_a_pi_answer_gets_the_current_usage_in_its_up
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
         seen.append(task)
         plan_hash = hub.requests["r"]["research_contract"]["plan_sha256"]
-        if len(seen) == 1:  # the first turn asks the PI and, meanwhile, the request spends lookups
+        if len(seen) == 1:  # the first round stops after the request spends lookups
             admission = admission_for(settings)
             for _ in range(7):
                 admission.admit("r", task.id, "lit_scout", "fulltext", "www.ebi.ac.uk")
@@ -283,7 +283,8 @@ async def test_a_step_resumed_after_a_pi_answer_gets_the_current_usage_in_its_up
                           structured={**_cp2_result(hub, task), "blocking_decision": ""}, outputs=[path])
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
-    decisions = [CP1, {"approved": True, "note": "a"}, {"approved": True, "choice": "approve", "note": ""}]
+    decisions = [CP1, {"approved": True, "note": "a"}, CP1,
+                 {"approved": True, "choice": "approve", "note": ""}]
 
     async def approval(**kwargs):
         hub.approvals.append(kwargs)
@@ -292,6 +293,52 @@ async def test_a_step_resumed_after_a_pi_answer_gets_the_current_usage_in_its_up
     hub.request_approval = approval
     await Orchestrator(hub).run_request("r")
 
+    assert [call.meta["kind"] for call in hub.calls] == ["plan", "step", "plan", "step"]
+    assert [approval["kind"] for approval in hub.approvals] == [
+        "research_plan", "research_continue", "research_plan", "research_evidence"]
+    assert not decisions
+    assert hub.requests["r"]["status"] != "failed", hub.requests["r"].get("report")
+    assert hub.requests["r"]["research_contract"]["rounds"][0]["results"]["s1"]["error_kind"] == "research_stop"
     assert len(seen) == 2
     assert "0 of 60 used, 60 left" in seen[0].prompt  # the first turn started before any lookup
+    assert "7 of 60 used, 53 left" in seen[1].prompt.rsplit("Continuation updates:", 1)[-1]
+
+
+@pytest.mark.asyncio
+async def test_general_step_resumed_after_a_pi_answer_gets_current_usage(tmp_path):
+    from labhq.orchestrator.cso import Orchestrator
+    from tests.test_cso import FakeHub, result
+
+    seen = []
+    steps = [{"id": "A", "agent_id": "worker", "instruction": "Compare cohorts", "depends_on": []}]
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            return result(task, structured={"steps": steps})
+        if task.meta["kind"] != "step":
+            return result(task, text="done")
+        seen.append(task)
+        if len(seen) == 1:
+            admission = admission_for(hub.s)
+            for _ in range(7):
+                admission.admit("r", task.id, "worker", "fulltext", "www.ebi.ac.uk")
+            return result(task, text='{"blocking_decision": "Which group?\\n- cases\\n- controls"}')
+        return result(task, text="done")
+
+    hub = FakeHub(dispatch)
+    hub.s.runner.state_dir = str(tmp_path / "state")
+    hub.s.annot.request_lookup_limit = 60
+    hub.s.orchestrator.reviewer_agent = None
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {"approved": True, "note": "cases"}
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    assert hub.requests["r"]["status"] == "done"
+    assert [item["kind"] for item in hub.approvals] == ["clarify"]
+    assert len(seen) == 2
+    assert "0 of 60 used, 60 left" in seen[0].prompt
     assert "7 of 60 used, 53 left" in seen[1].prompt.rsplit("Continuation updates:", 1)[-1]
