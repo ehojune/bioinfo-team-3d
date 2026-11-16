@@ -54,6 +54,35 @@ async def test_early_exit_retry_uses_gateway_budget_and_never_repeats(case, expe
         assert orch.cost["r"] == pytest.approx(0.2)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resume", [False, True])
+async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume):
+    calls = []
+    waits = []
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                              error="exit", cost_usd=0.1,
+                              early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
+        if len(calls) == 2:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error_kind="halted",
+                              error="halted", cost_usd=0.1)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=True, text="done", cost_usd=0.1)
+
+    hub = FakeHub(dispatch)
+    async def wait_halted(*args):
+        waits.append(args)
+        return resume
+    hub.wait_halted = wait_halted
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
+    assert len(waits) == 1 and len(calls) == (3 if resume else 2)
+    assert result.ok is resume
+    if resume:
+        assert "early_exit_retry" not in calls[2].meta
+        assert result.cost_usd == pytest.approx(0.3)
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows Job object and CONTROL_C_EXIT")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case,expected", [("success", 2), ("unknown_cost", 1), ("tools", 1),

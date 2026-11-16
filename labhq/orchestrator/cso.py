@@ -4652,7 +4652,10 @@ class Orchestrator:
                         later = await dispatch_with_retry(current, max_attempts=1)
                     except BudgetExceeded:
                         return earlier
-                    return _sum_repair_turns(earlier, merged_turn(earlier, later))
+                    res = _sum_repair_turns(earlier, merged_turn(earlier, later))
+                    if res.error_kind == "halted":
+                        continue  # park for an explicit PI resume, not another automatic retry
+                    return res  # no login/quota/format recovery may add an automatic third attempt
                 if (not turn.meta.get("nested_hpc_rerun") and res.error_kind == "structured_output_format" and res.format_retry
                         and format_tries < self.hub.s.runner.structured_output_retries and res.session_id):
                     # #673: the repair is a new dispatch of the same session, so it passes the request budget gate (and
@@ -4690,19 +4693,23 @@ class Orchestrator:
                     wait_halted = getattr(self.hub, "wait_halted", None)
                     if wait_halted is None or not await wait_halted(rid, turn_key(current), res):
                         return res
+                    halted_early_retry = bool(current.meta.get("early_exit_retry"))
                     can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
                     current = current.model_copy(update={
                         "id": new_id("task"),
                         "prompt": continuation_prompt(turn, HALT_RESUME_PROMPT, resumable=can_resume,
                                                       previous_result=res,
                                                       context_chars=self.cfg.context_chars_per_step),
-                        "meta": {**current.meta, "kind": current.meta.get("kind", "step"),
+                        "meta": {**{k: v for k, v in current.meta.items() if k != "early_exit_retry"},
+                                 "kind": current.meta.get("kind", "step"),
                                  "parent_task": res.task_id,
                                  **({"workdir": res.workdir} if res.workdir else {})},
                         "resume_session_id": res.session_id if can_resume else None,
                     })
                     earlier = res
                     res = merged_workspace_rerun(earlier, await dispatch_with_retry(current, max_attempts))
+                    if halted_early_retry:
+                        res = _sum_repair_turns(earlier, res)
                     tool_errors.extend(res.tool_errors)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
                     continue
