@@ -60,10 +60,25 @@ def test_retry_output_shape_rejects_omitted_entries_and_scan_limits(tmp_path):
     root.mkdir()
     (root / "nested").mkdir()
     (root / "nested" / "existing.txt").write_text("unchanged", encoding="utf-8")
-    assert _retry_output_shape(tmp_path, [], 10, 2) == ({"outputs/nested/existing.txt"}, {"outputs/nested"})
+    shape = _retry_output_shape(tmp_path, [], 10, 2)
+    assert set(shape[0]) == {"outputs/nested/existing.txt"} and shape[1] == {"outputs/nested"}
     assert _retry_output_shape(tmp_path, [], 1, 2) is None
     assert _retry_output_shape(tmp_path, [], 10, 0) is None
     assert _retry_output_shape(tmp_path, [root / "nested"], 10, 2) is None
+
+
+def test_retry_shape_includes_and_compares_excluded_result_files(tmp_path):
+    from labhq.runner.daemon import _retry_output_shape, _retry_scan_complete
+    root = tmp_path / "outputs"
+    root.mkdir()
+    result = root / "RESULT_previous.md"
+    result.write_text("old", encoding="utf-8")
+    before = _retry_output_shape(tmp_path, [], 10, 2)
+    assert _retry_scan_complete(before, {})  # the normal scanner omits runner RESULT files
+    result.write_text("changed", encoding="utf-8")
+    assert _retry_output_shape(tmp_path, [], 10, 2) != before
+    (root / "unscanned.txt").write_text("not a RESULT file", encoding="utf-8")
+    assert not _retry_scan_complete(_retry_output_shape(tmp_path, [], 10, 2), {})
 
 
 def make_runner(tmp_path, monkeypatch, failures, *, limit=2, error=ERROR, session="same-session",

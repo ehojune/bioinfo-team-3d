@@ -307,17 +307,17 @@ def output_identity(row: dict[str, Any]) -> tuple:
     return (bool(row.get("link")), row.get("size"), row.get("mtime_ns"), row.get("ino"), row.get("ctime_ns"))
 
 
-def _retry_output_shape(workdir: Path, zones: list[Path], max_entries: int, max_depth: int) -> tuple[set, set] | None:
+def _retry_output_shape(workdir: Path, zones: list[Path], max_entries: int, max_depth: int) -> tuple[dict, set] | None:
     """Prove the normal output scan did not silently omit an entry, without following links."""
     root = workdir / "outputs"
     try:
         if not os.path.lexists(root):
-            return set(), set()
+            return {}, set()
         from .workspace import _is_link, _is_mount, _utf8_name
         real = root.resolve()
         if _is_link(root) or _is_mount(root) or not root.is_dir() or overlaps_zone(real, zones):
             return None
-        files, folders = set(), set()
+        files, folders = {}, set()
         count = 0
         def walk(held: HeldDir, rel: Path, depth: int) -> None:
             nonlocal count
@@ -331,7 +331,13 @@ def _retry_output_shape(workdir: Path, zones: list[Path], max_entries: int, max_
                     raise ValueError("restricted or unreadable output")
                 name = (Path("outputs") / child).as_posix()
                 if entry.kind == "file":
-                    files.add(name)
+                    fd = held.open_read_file(entry.name)
+                    with os.fdopen(fd, "rb") as stream:
+                        info = os.fstat(stream.fileno())
+                        if entry.ident is not None and (info.st_dev, info.st_ino) != entry.ident:
+                            raise ValueError("output replaced while scanning")
+                        files[name] = output_identity({"size": info.st_size, "mtime_ns": info.st_mtime_ns,
+                            "ino": info.st_ino, "ctime_ns": None if os.name == "nt" else info.st_ctime_ns})
                 elif entry.kind == "dir" and depth < max_depth and not _is_mount(root / child):
                     folders.add(name)
                     with held.child(entry.name, expect=entry.ident) as sub:
@@ -345,6 +351,13 @@ def _retry_output_shape(workdir: Path, zones: list[Path], max_entries: int, max_
         return files, folders
     except (OSError, ValueError, RuntimeError):
         return None
+
+
+def _retry_scan_complete(shape: tuple[dict, set] | None, records: dict | None) -> bool:
+    """Only runner RESULT files may be absent from the normal manifest; their identities are still compared."""
+    if shape is None or records is None or any(shape[0].get(path) != value for path, value in records.items()):
+        return False
+    return all(re.fullmatch(r"outputs/RESULT(?:_[^/]+)?\.md", path) for path in shape[0].keys() - records.keys())
 
 
 def _should_check_declared_outputs(result: TaskResult) -> bool:
@@ -3218,9 +3231,10 @@ class Runner:
                     from .structured_output import early_exit_retry_evidence
                     output_shape_after = _retry_output_shape(ws.dir, zones, self.s.runner.reference_scan_max_entries,
                                                             self.s.runner.reference_scan_max_depth)
+                    after_identities = {row["path"]: output_identity(row) for row in output_records}
                     complete_shape = (output_shape_before is not None and output_shape_before == output_shape_after
-                                      and output_before is not None and output_shape_before[0] == set(output_before)
-                                      and output_shape_after[0] == {row["path"] for row in output_records})
+                                      and _retry_scan_complete(output_shape_before, output_before)
+                                      and _retry_scan_complete(output_shape_after, after_identities))
                     result.early_exit_retry = early_exit_retry_evidence(
                         result, before=output_before,
                         after={row["path"]: output_identity(row) for row in output_records},
@@ -3265,8 +3279,9 @@ class Runner:
             result.early_exit_retry = early_exit_retry_evidence(
                 result, before=output_before, after={row["path"]: output_identity(row) for row in output_records},
                 incomplete=(bool(output_scan_notes) or output_shape_before is None or shape != output_shape_before
-                            or output_before is None or output_shape_before[0] != set(output_before)
-                            or shape is None or shape[0] != {row["path"] for row in output_records}),
+                            or not _retry_scan_complete(output_shape_before, output_before)
+                            or not _retry_scan_complete(shape, {row["path"]: output_identity(row)
+                                                                for row in output_records})),
                 tool_calls=bool(tool_calls.calls) or bool(ctx.halt and ctx.halt.is_set()), already_retried=False)
         blocking = result.blocking_decision or (result.structured.get("blocking_decision")
                                                if isinstance(result.structured, dict) else None)
