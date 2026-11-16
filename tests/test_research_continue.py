@@ -133,6 +133,28 @@ def _kinds(hub):
 
 
 @pytest.mark.asyncio
+async def test_stopped_step_continues_only_after_new_plan_and_cp1(tmp_path):
+    hub = _hub(tmp_path, [CP1, CONTINUE, CP1, APPROVE], reviews=[ACCEPT])
+    original = hub.reply
+    reason = "QC failed; should we revise the plan or stop?"
+
+    async def reply(task):
+        if task.meta["kind"] == "step" and task.meta["step_id"] == "s2" and not task.meta.get("research_round"):
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"blocking_decision": reason})
+        return await original(task)
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+    assert _kinds(hub) == ["research_plan", "research_continue", "research_plan", "research_evidence"]
+    assert _steps(hub) == ["plan", "s1", "s2", "plan", "s2", "review", "synthesis"]
+    assert reason in hub.approvals[1]["summary"]
+    assert reason in hub.calls[3].prompt
+    assert hub.requests["r"]["research_contract"]["rounds"][0]["results"]["s2"]["error_kind"] == "research_stop"
+    assert hub.requests["r"]["outcome"] == "research_reported"
+
+
+@pytest.mark.asyncio
 async def test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step(tmp_path):
     hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
     await Orchestrator(hub).run_request("r")

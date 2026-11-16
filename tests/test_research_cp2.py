@@ -1071,8 +1071,9 @@ async def test_a_plan_frozen_before_reasoned_skips_resumes_and_records_the_reaso
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("schema_shaped", [True, False])
-async def test_research_step_question_reaches_the_pi_and_the_step_reruns(schema_shaped):
+async def test_research_step_question_reaches_continue_without_rerunning(schema_shaped):
     settings = _settings()
+    settings.research.revise_continuations = 1
     holder, seen = {}, []
 
     async def reply(task):
@@ -1092,7 +1093,7 @@ async def test_research_step_question_reaches_the_pi_and_the_step_reruns(schema_
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=result, outputs=[path])
 
     hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare conditions")
-    decisions = [CP1, {"approved": True, "note": "a"}, {"approved": True, "choice": "approve", "note": ""}]
+    decisions = [CP1, {"approved": False}]
 
     async def approval(**kwargs):
         hub.approvals.append(kwargs)
@@ -1103,11 +1104,37 @@ async def test_research_step_question_reaches_the_pi_and_the_step_reruns(schema_
 
     assert "blocking_decision" in seen[0].output_schema["properties"]
     assert "blocking_decision" not in seen[0].output_schema["required"]
-    assert [item["kind"] for item in hub.approvals] == ["research_plan", "clarify", "research_evidence"]
-    assert "Which donor group" in hub.approvals[1]["summary"] and len(seen) == 2
-    assert hub.requests["r"]["outcome"] == "evidence_approved"
-    ledger = hub.approvals[2]["detail"]["results"]["s1"]
-    assert ledger["claims"][0]["id"] == "c1" and "blocking_decision" not in ledger
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_continue"]
+    assert "Which donor group" in hub.approvals[1]["summary"] and len(seen) == 1
+    assert hub.requests["r"]["outcome"] == "research_failed"
+    assert hub.requests["r"]["results"]["s1"]["error_kind"] == "research_stop"
+
+
+@pytest.mark.asyncio
+async def test_explicit_plan_stop_in_failures_goes_directly_to_continue():
+    settings = _settings()
+    settings.research.revise_continuations = 1
+    holder, seen = {}, []
+    reason = "이 단계를 시작하지 않았습니다. 동결 계획의 멈춤 조건은 QC가 FAIL이면 넘어가지 않는다입니다."
+
+    async def reply(task):
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+        seen.append(task)
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False,
+                          error="incomplete: missing outputs: result1.tsv", missing_outputs=["result1.tsv"],
+                          structured={"failures": [reason]})
+
+    hub = holder["hub"] = MiniHub(settings, reply, mode="orchestrate", work_kind="research", text="compare")
+    decisions = [CP1, {"approved": False}]
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return decisions.pop(0)
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+    assert [item["kind"] for item in hub.approvals] == ["research_plan", "research_continue"]
+    assert len(seen) == 1 and reason in hub.approvals[-1]["summary"]
+    assert hub.requests["r"]["results"]["s1"]["error_kind"] == "research_stop"
 
 
 # ---------- P1: CP2 reads a structured choice, never the note ----------
