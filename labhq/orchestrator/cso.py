@@ -3088,7 +3088,7 @@ def research_stop_reason(result: TaskResult) -> str | None:
             continue
         # Require both an explicit plan condition and a statement that this step stopped.
         if (re.search(r"(?:멈춤|중단)\s*조건|stop\s+conditions?", line, re.I)
-                and re.search(r"시작하지\s*않았|멈췄|중단했|stopp?ed|did not start", line, re.I)):
+                and re.search(r"(?:시작|실행)하지\s*않았|멈췄|중단했|stopp?ed|did not start", line, re.I)):
             return line.strip()
     return None
 

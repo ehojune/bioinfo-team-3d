@@ -58,6 +58,8 @@ Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="l
 | 엔진 기능 | Codex 웹 검색 | WebSearch / WebFetch → web_search="live" | [lit_scout](../../agents/core/lit_scout.yaml), [sci_reviewer](../../agents/core/sci_reviewer.yaml) | [adapter](../../labhq/adapters/codex.py) · [직원 설정](../../agents/core/) |
 <!-- integrations:end -->
 
+연구 단계가 `blocking_decision` 또는 명시된 계획 멈춤 사유로 끝나면 같은 단계를 바로 다시 돌리지 않습니다. 이어 가기 횟수가 남으면 CP2·연구 리뷰 대신 단계와 사유를 담은 PI 이어 가기 카드가 뜹니다. 승인하면 사유를 반영해 새 계획과 CP1을 거치고, 거절하거나 횟수가 없으면 요청이 끝납니다. 작업 중 `labhq_ask` 질문은 위 표의 별도 경로입니다.
+
 ### HPC 도구와 세션 (#1295)
 
 `labhq_hpc`는 `hpc_submit`(제출), `hpc_status`(상태), `hpc_queue`(큐), `hpc_cancel`(취소)을 줍니다. 제출은 PI 승인 정책(11장)을 따르고, 취소는 직원이 `hpc_submit`으로 낸 잡만 됩니다.

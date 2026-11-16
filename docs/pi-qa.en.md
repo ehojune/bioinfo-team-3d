@@ -87,8 +87,13 @@ After this answer, the PI gave the version definitions (v0.25 to v1.25). The cur
 ### If I cannot answer a card right away, does the request fail? (10-08)
 
 - It does not fail. Clarifying-question, staff-question, budget, scope, CP1, CP2, continuation and resume cards wait for 7 days, and meanwhile the request stays stopped as `waiting_pi` (waiting for a PI decision). If you come back and answer the card, it continues.
-- After 7 days, the clarifying-question, scope, CP1, CP2 and resume cards end the request as `*_timed_out` (for example `evidence_timed_out`). A budget card ends an ordinary request as `budget_timed_out` and a research request as `research_failed`. A continuation card does not open a new CP1 and ends as `research_review_revise`. A staff question is passed to the staff member as "no answer" and the request continues. Either way it is a different record from a decline, so the report and audit tell them apart. Change the deadline with `policy.approvals.pi_decision_timeout_s`.
+- After 7 days, the clarifying-question, scope, CP1, CP2 and resume cards end the request as `*_timed_out` (for example `evidence_timed_out`). A budget card ends an ordinary request as `budget_timed_out` and a research request as `research_failed`. A continuation card ends without a new CP1: `research_failed` after a research stop, or `research_review_revise` after a review revise. A staff question is passed to the staff member as "no answer" and the request continues. Either way it is a different record from a decline, so the report and audit tell them apart. Change the deadline with `policy.approvals.pi_decision_timeout_s`.
 - Gate cards such as tool permission still close after `policy.approvals.timeout_s` (1 hour). Only that step is handled as declined.
+
+### How does a stopped research step continue? (#1413)
+
+- When a staff member states a `blocking_decision` or a plan stop reason and a continuation remains, a continuation card shows the step and reason instead of CP2 and the research review. The step is not immediately rerun under the same plan.
+- Approving continuation leads to a revised plan and a new CP1. Declining or exhausting the continuation limit ends the request. An in-session staff question (`labhq_ask`) is separate.
 
 ### If the evidence is insufficient at CP2, how do I have it fixed? (10-08)
 
@@ -100,7 +105,7 @@ After this answer, the PI gave the version definitions (v0.25 to v1.25). The cur
 
 - Press **Request revision** on the CP1 card and write what to fix in the note (it is not sent without a note). The current request ends as `plan_revision_requested` without running steps, and a **new request** with the note attached to the same request sentence, reference material and clarifying-question answers starts at once. The new request plans again and raises a new CP1.
 - A decline only ends the request as now.
-- The CP1 of a continuation round (after a review revise or a CP2 revision request) has no revision request. It is a plan that continues the earlier round's results, so it cannot be moved to a new request.
+- The CP1 of a continuation round (after a research stop, review revise or CP2 revision request) has no revision request. It is a plan that continues the earlier round's results, so it cannot be moved to a new request.
 
 ## Decisions made
 

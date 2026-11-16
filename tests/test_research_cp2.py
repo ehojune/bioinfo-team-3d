@@ -1111,11 +1111,14 @@ async def test_research_step_question_reaches_continue_without_rerunning(schema_
 
 
 @pytest.mark.asyncio
-async def test_explicit_plan_stop_in_failures_goes_directly_to_continue():
+@pytest.mark.parametrize("reason", [
+    "이 단계를 시작하지 않았습니다. 동결 계획의 멈춤 조건은 QC가 FAIL이면 넘어가지 않는다입니다.",
+    "s2 QC가 FAIL이라 동결 계획의 중단 조건에 따라 s3를 실행하지 않았습니다.",
+])
+async def test_explicit_plan_stop_in_failures_goes_directly_to_continue(reason):
     settings = _settings()
     settings.research.revise_continuations = 1
     holder, seen = {}, []
-    reason = "이 단계를 시작하지 않았습니다. 동결 계획의 멈춤 조건은 QC가 FAIL이면 넘어가지 않는다입니다."
 
     async def reply(task):
         if task.meta["kind"] == "plan":

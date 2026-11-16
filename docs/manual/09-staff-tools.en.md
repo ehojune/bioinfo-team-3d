@@ -56,6 +56,8 @@ A list built from the regular staff configs (`agents/core/*.yaml`) and labhq's w
 | Engine feature | Codex | Staff execution engine | [editor](../../agents/core/editor.yaml), [engineer](../../agents/core/engineer.yaml), [facilities](../../agents/core/facilities.yaml), [lit_scout](../../agents/core/lit_scout.yaml), [sci_reviewer](../../agents/core/sci_reviewer.yaml) | [staff config](../../agents/core/) |
 | Engine feature | Codex web search | WebSearch / WebFetch → web_search="live" | [lit_scout](../../agents/core/lit_scout.yaml), [sci_reviewer](../../agents/core/sci_reviewer.yaml) | [adapter](../../labhq/adapters/codex.py) · [staff config](../../agents/core/) |
 
+When a research step ends with a `blocking_decision` or an explicitly stated plan stop, it is not immediately rerun. If a continuation remains, a PI continuation card shows the step and reason instead of CP2 and the research review. Approval leads to a revised plan and a new CP1; declining or exhausting the continuation limit ends the request. An in-session `labhq_ask` question follows the separate path in the table above.
+
 ### HPC tools and the session (#1295)
 
 A site profile's queue and node pin applies to every submission, including profiles without a connect command. A conflicting queue or separate node selection is refused before upload or approval. Without a pin, existing submission settings apply.
