@@ -14,6 +14,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:56 | [`8edcd2f`](https://github.com/ehojune/bioinfo-team-3d/commit/8edcd2f) | **재개한 조기 재시도에도 기존 기한을 적용합니다.**<br>halt 뒤에도 원래 기한과 runner 신원을 보존하고 기한 만료나 runner 변경 시 시작을 막는다 (#1413). |
+| 16:49 | [`752d7e1`](https://github.com/ehojune/bioinfo-team-3d/commit/752d7e1) | **조기 재시도를 재개해도 자동 호출과 예산을 제한합니다.**<br>halt 뒤 재개할 때 남은 상한을 다시 계산하고 transient 오류의 추가 자동 시도를 막는다 (#1413). |
+| 16:42 | [`5d443b1`](https://github.com/ehojune/bioinfo-team-3d/commit/5d443b1) | **재시도가 시작 전에 멈춰도 앞서 확인한 비용을 보존합니다.**<br>조기 재시도의 CLI 실행 전 halt만 비용 0으로 기록하고 실행 후 미확인 비용은 그대로 둔다 (#1413). |
+| 16:28 | [`faac914`](https://github.com/ehojune/bioinfo-team-3d/commit/faac914) | **조기 종료 재시도에도 처음 정한 예산 상한을 지킵니다.**<br>작업·직원·정책 상한 중 가장 작은 금액에서 앞선 비용을 뺀 뒤 재시도한다 (#1413). |
+| 16:18 | [`15e65af`](https://github.com/ehojune/bioinfo-team-3d/commit/15e65af) | **이전 결과 파일이 남은 작업 폴더도 변경 여부를 확인합니다.**<br>일반 산출 목록에서 빠지는 RESULT 파일도 별도로 비교하고 스캔 누락은 계속 차단한다 (#1413). |
+| 16:14 | [`adcb5a5`](https://github.com/ehojune/bioinfo-team-3d/commit/adcb5a5) | **조기 종료 재시도가 실패하면 추가 자동 복구를 막습니다.**<br>두 번째 실패의 오류 종류가 달라도 facilities 경로로 세 번째 실행을 열지 않는다 (#1413). |
+| 16:10 | [`f255b84`](https://github.com/ehojune/bioinfo-team-3d/commit/f255b84) | **조기 종료 재시도 중 멈춤 요청을 받으면 PI의 재개를 기다립니다.**<br>halt 뒤 명시적 재개와 비용 누적을 보존하고 자동 재시도는 한 번으로 제한한다 (#1413). |
+| 16:00 | [`7b55dd6`](https://github.com/ehojune/bioinfo-team-3d/commit/7b55dd6) | **직원 프로그램의 이른 Windows 종료를 확인된 경우에 한해 다시 시도합니다.**<br>Job 잔류·산출·비용과 기존 기한을 확인하고 gateway 예산 gate에서 한 번만 재시도한다 (#1413). UNKNOWN은 실패로 둔다. |
 | 11:02 | [`01f3833`](https://github.com/ehojune/bioinfo-team-3d/commit/01f3833) | **큰 결과 저장 안내를 한영 매뉴얼에 반영합니다.**<br>페이지별 저장과 shell 인자 지침, 실제 직원 준수 미검증 한계를 적습니다 (#1413). |
 | 10:49 | [`dbe1714`](https://github.com/ehojune/bioinfo-team-3d/commit/dbe1714) | **직원이 큰 검색 결과를 나누어 저장하도록 안내합니다.**<br>Codex 공통 지시에 페이지별 파일 저장과 큰 셸 인자 금지를 추가한다 (#1413). |
 | 10:25 | [`f4111dd`](https://github.com/ehojune/bioinfo-team-3d/commit/f4111dd) | **연구 중단 뒤 새 계획을 받는 흐름을 매뉴얼에 맞췄습니다.**<br>연구 재계획과 일반 단계 재개의 사용량 전달을 각각 검사한다 (#1413). |
