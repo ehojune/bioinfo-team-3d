@@ -14,6 +14,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:25 | [`f4111dd`](https://github.com/ehojune/bioinfo-team-3d/commit/f4111dd) | **연구 중단 뒤 새 계획을 받는 흐름을 매뉴얼에 맞췄습니다.**<br>연구 재계획과 일반 단계 재개의 사용량 전달을 각각 검사한다 (#1413). |
+| 10:11 | [`1b64880`](https://github.com/ehojune/bioinfo-team-3d/commit/1b64880) | **이전 차수의 연구 중단 사유를 최종 보고에 남깁니다.**<br>보관한 중단 단계와 사유를 최종 보고 작성과 실행 기록에 전달한다 (#1413). |
+| 10:04 | [`d216498`](https://github.com/ehojune/bioinfo-team-3d/commit/d216498) | **연구 중단 뒤 이어 가는 계획과 리뷰에 중단 사유를 전달합니다.**<br>중단 출처를 보존하고 계획 실패 시에도 이전 리뷰가 있었다고 표시하지 않는다 (#1413). |
+| 09:46 | [`d53123a`](https://github.com/ehojune/bioinfo-team-3d/commit/d53123a) | **기존 공통 지시문을 보존하면서 연구 중단 결정 경로를 안내합니다.**<br>연구 단계 실행 시에만 PI 이어 가기 지시를 넣고 기존 prompt 보호 검사를 유지한다 (#1413). |
+| 09:35 | [`8c921cc`](https://github.com/ehojune/bioinfo-team-3d/commit/8c921cc) | **연구 중단 뒤 이어 가는 방법을 문서에 알기 쉽게 적었습니다.**<br>기록에 나온 중단 표현도 인식하고 한영 매뉴얼과 PI 답변에 결정 흐름을 반영한다 (#1413). |
+| 09:27 | [`0a96823`](https://github.com/ehojune/bioinfo-team-3d/commit/0a96823) | **완료한 단계의 선택 분석 중단 기록은 전체 중단으로 처리하지 않습니다.**<br>과거 형식의 failures 판정은 필수 산출이 빠진 단계에만 적용한다 (#1413). |
+| 09:20 | [`2260ef2`](https://github.com/ehojune/bioinfo-team-3d/commit/2260ef2) | **연구 단계가 중단을 요청하면 사유를 이어 가기 결정에 전달합니다.**<br>blocking 질문과 명시된 중단 조건을 보존하고 재실행과 결과 검토 전에 수정 계획 여부를 묻는다 (#1413). |
 | 06:29 | [`a9c44f2`](https://github.com/ehojune/bioinfo-team-3d/commit/a9c44f2) | **이어 가는 분석의 입력 표기와 보고서의 상대 링크를 보완했습니다.**<br>앞 단계의 콜론 형식 입력도 검증하고 복사한 산출 안의 상위 폴더 링크를 연결한다 (#1413). |
 | 06:23 | [`7ea2f1c`](https://github.com/ehojune/bioinfo-team-3d/commit/7ea2f1c) | **완료된 분석을 다시 쓰고 수정 전 보고서를 묶음에서 찾는 조건을 바로잡았습니다.**<br>입력과 앞 단계 산출의 증명을 확인하고 선언된 보고서 사본에 미반영 리뷰를 표시한다 (#1413). |
 | 03:21 | [`36417be`](https://github.com/ehojune/bioinfo-team-3d/pull/1438/commits/36417be) | **이전 작업 폴더의 읽기 거부가 새 작업을 막지 않게 합니다.**<br>선행 산출 단계에서 다른 작업 폴더를 Windows Codex native 읽기 거부에서 제외하고 개인 경로는 유지합니다. 작업 폴더 간 OS 읽기 차단은 보장하지 않습니다. |
