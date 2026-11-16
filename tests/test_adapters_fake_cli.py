@@ -109,6 +109,14 @@ async def test_codex_adapter(tmp_path):
     assert "model_id" not in run_fields
 
 
+async def test_codex_staff_receives_large_result_guidance(tmp_path):
+    res, _, _, wd, _ = await _run(tmp_path, Engine.codex, "codex")
+    assert res.ok
+    instructions = (wd / "AGENTS.md").read_text(encoding="utf-8")
+    assert "Save large results to files page by page as you receive them." in instructions
+    assert "Do not put large bodies of data in shell command arguments." in instructions
+
+
 async def test_gemini_adapter(tmp_path):
     res, argv, events, wd, run_fields = await _run(tmp_path, Engine.gemini, "gemini")
     assert res.ok and res.text == "문헌 3편 요약\n" and res.session_id == "g-1"

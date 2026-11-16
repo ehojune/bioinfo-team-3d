@@ -29,6 +29,8 @@ PI 2026-10-19 승인 배정 기준([#732](https://github.com/ehojune/bioinfo-tea
 Codex 직원은 `tools`에 `WebSearch`나 `WebFetch`가 있으면 `web_search="live"`, 없으면 `"disabled"`를 명시합니다.
 `HPC*`는 scheduler가 `none`이 아닐 때만 배선됩니다.
 
+Codex 직원에게 큰 결과는 받는 대로 페이지별 파일에 저장하고, 큰 본문은 shell 명령 인자에 넣지 않도록 안내합니다. 자동 저장이나 결과 검증 기능은 없으며 직원의 실제 준수 여부는 미검증입니다.
+
 기존 설치는 업데이트 뒤 `runner.agents_dir/core/`에 새 `facilities.yaml`만 추가하세요. 기존 roster는 덮어쓰지 않습니다. PI가 `labhq doctor --json`으로 직원 엔진 준비를 확인하고 작업이 끝난 뒤 runner를 다시 시작하면 등록됩니다. 엔진 준비 검사에 실패한 직원은 roster에서 빠집니다.
 
 ### 연결된 도구
