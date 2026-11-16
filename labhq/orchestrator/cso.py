@@ -4652,7 +4652,8 @@ class Orchestrator:
                         later = await dispatch_with_retry(current, max_attempts=1)
                     except BudgetExceeded:
                         return earlier
-                    res = _sum_repair_turns(earlier, merged_turn(earlier, later))
+                    res = _sum_repair_turns(earlier, merged_turn(earlier, later)).model_copy(
+                        update={"early_exit_attempted": True})
                     if res.error_kind == "halted":
                         continue  # park for an explicit PI resume, not another automatic retry
                     return res  # no login/quota/format recovery may add an automatic third attempt
@@ -4709,7 +4710,7 @@ class Orchestrator:
                     earlier = res
                     res = merged_workspace_rerun(earlier, await dispatch_with_retry(current, max_attempts))
                     if halted_early_retry:
-                        res = _sum_repair_turns(earlier, res)
+                        res = _sum_repair_turns(earlier, res).model_copy(update={"early_exit_attempted": True})
                     tool_errors.extend(res.tool_errors)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
                     continue
@@ -4793,7 +4794,7 @@ class Orchestrator:
                 res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
-        if not res.ok and res.exit_code in (0xC000013A, -1073741510):
+        if not res.ok and (res.exit_code in (0xC000013A, -1073741510) or res.early_exit_attempted):
             if final_step:
                 await self._check_budget(rid, block=False, final_turn=True)
             return res  # no facilities, wake or wrap-up path may bypass the early-exit guard

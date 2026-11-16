@@ -21,14 +21,14 @@ from tests.test_structured_output_retry import ERROR, make_runner
 @pytest.mark.parametrize("case,expected_calls", [("success", 2), ("unknown_cost", 1),
                                                   ("no_evidence", 1), ("second_failure", 2),
                                                   ("exhausted", 1), ("halted", 1), ("shutdown", 1),
-                                                  ("already_claimed", 1)])
+                                                  ("already_claimed", 1), ("second_other_failure", 2)])
 async def test_early_exit_retry_uses_gateway_budget_and_never_repeats(case, expected_calls):
     async def dispatch(task):
         if task.meta.get("early_exit_retry"):
             return TaskResult(task_id=task.id, agent_id="worker", ok=case == "success",
                               text="done" if case == "success" else "", cost_usd=0.1,
-                              exit_code=0 if case == "success" else 0xC000013A,
-                              error=None if case == "success" else "timeout after failure",
+                              exit_code=0 if case == "success" else 1 if case == "second_other_failure" else 0xC000013A,
+                              error=None if case == "success" else "No module named missing" if case == "second_other_failure" else "timeout after failure",
                               early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
         return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
                           error="empty CLI stream: timeout", cost_usd=None if case == "unknown_cost" else 0.1,
@@ -39,6 +39,11 @@ async def test_early_exit_retry_uses_gateway_budget_and_never_repeats(case, expe
                           {"deadline": time.monotonic() + 100, "clock_id": "runner"})
 
     hub = FakeHub(dispatch)
+    if case == "second_other_failure":
+        async def forbidden(*args, **kwargs):
+            pytest.fail("a second failure must not launch facilities recovery")
+        hub.request_facilities_diagnosis = forbidden
+        hub.request_facilities_fix = forbidden
     hub.requests["r"]["budget_usd"] = 0.1 if case == "exhausted" else 5
     orch = Orchestrator(hub)
     task = Task(agent_id="worker", request_id="r", prompt="work", budget_usd=0.5,

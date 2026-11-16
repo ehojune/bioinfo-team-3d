@@ -384,6 +384,7 @@ class TaskResult(BaseModel):
     format_retry: str | None = None
     # Runner evidence for one gateway-gated early-exit retry. Missing evidence never authorizes a retry.
     early_exit_retry: dict[str, Any] | None = None
+    early_exit_attempted: bool = False
     cost_usd: float | None = None
     cost_known: bool | None = None
     usage: dict[str, int] = {}
