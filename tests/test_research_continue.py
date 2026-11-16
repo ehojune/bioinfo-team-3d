@@ -156,6 +156,9 @@ async def test_stopped_step_continues_only_after_new_plan_and_cp1(tmp_path):
     assert reason in hub.calls[5].prompt and "previous review asked" not in hub.calls[5].prompt
     assert "연구 중단 사유 반영" in hub.approvals[2]["summary"]
     assert hub.requests["r"]["research_contract"]["rounds"][0]["results"]["s2"]["error_kind"] == "research_stop"
+    assert reason in hub.calls[6].prompt  # synthesis sees why the earlier round stopped
+    assert reason in hub.requests["r"]["execution_record"]
+    assert reason in hub.requests["r"]["report"]  # fallback when the writer omits earlier rounds
     assert hub.requests["r"]["outcome"] == "research_reported"
 
 

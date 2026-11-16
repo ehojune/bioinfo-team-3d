@@ -1576,6 +1576,9 @@ def earlier_round_lines(contract: dict) -> list[str]:
         if not isinstance(archived, dict):
             continue
         number, review = archived.get("round"), archived.get("review") or {}
+        for stop in archived.get("research_stops") or []:
+            lines.append(f"Round {number} research stop · {stop.get('step_id') or '-'}: "
+                         f"{short(str(stop.get('reason') or ''), 600)}")
         issues = research_continuation.p1_issues(review)
         if issues:
             lines.append(f"Round {number} review: {review.get('verdict')} with {len(issues)} P1 issue(s):")
@@ -2002,6 +2005,8 @@ def _earlier_rounds_fallback(contract: dict) -> str:
         if not isinstance(archived, dict):
             continue
         number = archived.get("round")
+        rows += [f"- {number}차 연구 중단 · {stop.get('step_id') or '-'}: {short(str(stop.get('reason') or ''), 200)}"
+                 for stop in archived.get("research_stops") or []]
         rows += [f"- {number}차 리뷰 P1 · {issue.get('step_id') or '-'}: {short(str(issue.get('problem') or ''), 200)}"
                  for issue in research_continuation.p1_issues(archived.get("review"))]
         receipt = archived.get("cp2") or {}
@@ -6914,7 +6919,9 @@ class Orchestrator:
                 # Everything this round's frozen plan owns, so an unstarted continuation can put it back whole.
                 rounds.append({**research_continuation.archive_round(
                     req, {sid: result.model_dump(mode="json") for sid, result in results.items()}),
-                    "round": len(rounds) + 1})
+                    "round": len(rounds) + 1,
+                    **({"research_stops": [{"step_id": sid, "reason": reason} for sid, reason in stops]}
+                       if stops else {})})
                 contract["rounds"] = rounds
                 contract["round"] = round_no
                 # The note rides with the continuation: adopting the new plan drops continue_decision (R11).
