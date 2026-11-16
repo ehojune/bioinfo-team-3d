@@ -4692,10 +4692,19 @@ class Orchestrator:
                     wait_halted = getattr(self.hub, "wait_halted", None)
                     if wait_halted is None or not await wait_halted(rid, turn_key(current), res):
                         return res
-                    halted_early_retry = bool(current.meta.get("early_exit_retry"))
+                    halted_early_retry = bool(current.meta.get("early_exit_retry") or res.early_exit_attempted)
+                    if halted_early_retry:
+                        known = (res.cost_known is not False and isinstance(res.cost_usd, (int, float))
+                                 and not isinstance(res.cost_usd, bool) and math.isfinite(res.cost_usd)
+                                 and res.cost_usd >= 0)
+                        cap = self._turn_cap(turn, 0)
+                        left = None if cap is None or not known else cap - res.cost_usd
+                        if not known or (left is not None and left <= 0):
+                            return res
                     can_resume = bool(res.session_id and self.hub.supports_resume(current.agent_id))
                     current = current.model_copy(update={
                         "id": new_id("task"),
+                        **({"budget_usd": left} if halted_early_retry and left is not None else {}),
                         "prompt": continuation_prompt(turn, HALT_RESUME_PROMPT, resumable=can_resume,
                                                       previous_result=res,
                                                       context_chars=self.cfg.context_chars_per_step),
@@ -4706,7 +4715,8 @@ class Orchestrator:
                         "resume_session_id": res.session_id if can_resume else None,
                     })
                     earlier = res
-                    res = merged_workspace_rerun(earlier, await dispatch_with_retry(current, max_attempts))
+                    res = merged_workspace_rerun(earlier, await dispatch_with_retry(
+                        current, 1 if halted_early_retry else max_attempts))
                     if halted_early_retry:
                         res = _sum_repair_turns(earlier, res).model_copy(update={"early_exit_attempted": True})
                     tool_errors.extend(res.tool_errors)

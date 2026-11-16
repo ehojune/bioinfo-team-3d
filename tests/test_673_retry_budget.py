@@ -95,7 +95,7 @@ async def test_early_exit_retry_respects_smallest_turn_cap(reserve, task_cap, ag
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resume", [False, True])
-@pytest.mark.parametrize("halt_cost", [0.0, 0.1, None])
+@pytest.mark.parametrize("halt_cost", [0.0, 0.1, 0.4, None])
 async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume, halt_cost):
     calls = []
     waits = []
@@ -115,15 +115,42 @@ async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume, ha
         waits.append(args)
         return resume
     hub.wait_halted = wait_halted
-    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work"))
-    assert len(waits) == 1 and len(calls) == (3 if resume else 2)
-    assert result.ok is resume
-    if resume:
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=0.5))
+    dispatched_resume = resume and halt_cost is not None and halt_cost < 0.4
+    assert len(waits) == 1 and len(calls) == (3 if dispatched_resume else 2)
+    assert result.ok is dispatched_resume
+    if dispatched_resume:
         assert "early_exit_retry" not in calls[2].meta
-        if halt_cost is None:
-            assert result.cost_usd is None and result.cost_known is False
-        else:
-            assert result.cost_usd == pytest.approx(0.2 + halt_cost)
+        assert calls[2].budget_usd == pytest.approx(0.4 - halt_cost)
+        assert result.cost_usd == pytest.approx(0.2 + halt_cost)
+    if halt_cost is None:
+        assert result.cost_usd is None and result.cost_known is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("halt_count", [1, 2])
+async def test_resumed_early_retry_does_not_repeat_transient_failure(halt_count):
+    calls = []
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                              error="exit", cost_usd=0.1,
+                              early_exit_retry={"deadline": time.monotonic() + 100, "clock_id": "runner"})
+        if len(calls) <= halt_count + 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error_kind="halted",
+                              error="halted", cost_usd=0.0, cost_known=True)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, error="HTTP 503 overloaded", cost_usd=0.1)
+
+    hub = FakeHub(dispatch)
+    async def resume(*_args):
+        return True
+    hub.wait_halted = resume
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=0.5))
+    assert len(calls) == halt_count + 2
+    assert not result.ok and result.cost_usd == pytest.approx(0.2)
 
 
 @pytest.mark.asyncio
