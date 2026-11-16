@@ -60,6 +60,40 @@ async def test_early_exit_retry_uses_gateway_budget_and_never_repeats(case, expe
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reserve", [False, True])
+@pytest.mark.parametrize("task_cap,agent_cap,policy_cap,spent,left", [
+    (30, 20, 5, 4, 1),
+    (30, 5, 20, 4, 1),
+    (5, 20, 30, 4, 1),
+    (30, 0, 5, 4, 1),
+    (30, 5, 0, 4, 1),
+    (30, 20, 5, 5, 0),
+    (30, 20, 5, 6, 0),
+])
+async def test_early_exit_retry_respects_smallest_turn_cap(reserve, task_cap, agent_cap, policy_cap, spent, left):
+    async def dispatch(task):
+        if task.meta.get("early_exit_retry"):
+            return TaskResult(task_id=task.id, agent_id="worker", ok=True, cost_usd=left)
+        return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                          cost_usd=spent, early_exit_retry={"deadline": time.monotonic() + 100,
+                                                            "clock_id": "runner"})
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"]["budget_usd"] = 100
+    hub.agents["worker"]["max_budget_usd"] = agent_cap
+    hub.s.policy.budget.per_task_usd = policy_cap
+    hub.s.policy.budget.reserve_before_dispatch = reserve
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=task_cap, meta={"kind": "step", "step_id": "A"}))
+    assert len(hub.calls) == (2 if left else 1)
+    if left:
+        assert hub.calls[1].budget_usd == pytest.approx(left)
+        assert result.cost_usd == pytest.approx(spent + left)
+    else:
+        assert not result.ok
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("resume", [False, True])
 async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume):
     calls = []

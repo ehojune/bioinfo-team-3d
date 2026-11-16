@@ -4619,9 +4619,7 @@ class Orchestrator:
                     known = (res.cost_known is not False and isinstance(res.cost_usd, (int, float))
                              and not isinstance(res.cost_usd, bool) and math.isfinite(res.cost_usd)
                              and res.cost_usd >= 0)
-                    cap = next((float(v) for v in (turn.budget_usd,
-                                                   (hub_agents(self.hub, turn.request_id).get(turn.agent_id) or {}).get("max_budget_usd"),
-                                                   self.hub.s.policy.budget.per_task_usd) if _usd_amount(v)), None)
+                    cap = self._turn_cap(turn, 0)
                     left = None if cap is None or not known else cap - res.cost_usd
                     request_left = self._request_budget_remaining(rid)
                     if request_left is not None:
