@@ -1576,6 +1576,9 @@ def earlier_round_lines(contract: dict) -> list[str]:
         if not isinstance(archived, dict):
             continue
         number, review = archived.get("round"), archived.get("review") or {}
+        for stop in archived.get("research_stops") or []:
+            lines.append(f"Round {number} research stop · {stop.get('step_id') or '-'}: "
+                         f"{short(str(stop.get('reason') or ''), 600)}")
         issues = research_continuation.p1_issues(review)
         if issues:
             lines.append(f"Round {number} review: {review.get('verdict')} with {len(issues)} P1 issue(s):")
@@ -2002,6 +2005,8 @@ def _earlier_rounds_fallback(contract: dict) -> str:
         if not isinstance(archived, dict):
             continue
         number = archived.get("round")
+        rows += [f"- {number}차 연구 중단 · {stop.get('step_id') or '-'}: {short(str(stop.get('reason') or ''), 200)}"
+                 for stop in archived.get("research_stops") or []]
         rows += [f"- {number}차 리뷰 P1 · {issue.get('step_id') or '-'}: {short(str(issue.get('problem') or ''), 200)}"
                  for issue in research_continuation.p1_issues(archived.get("review"))]
         receipt = archived.get("cp2") or {}
@@ -3065,6 +3070,28 @@ def blocking_question(result: TaskResult) -> str | None:
     question = result.blocking_decision or (structured.get("blocking_decision") if isinstance(structured, dict)
                                             else None)
     return question.strip() if isinstance(question, str) and question.strip() else None
+
+
+def research_stop_reason(result: TaskResult) -> str | None:
+    """Keep an explicit question or a stated plan stop, never infer a stop from QC alone."""
+    if not result.ok and not (result.error or "").startswith("incomplete: missing outputs"):
+        return None
+    if question := blocking_question(result):
+        return question
+    if result.ok:
+        return None  # a completed step may report a stopped optional sub-analysis
+    data = result.structured if isinstance(result.structured, dict) else extract_json(result.text)
+    failures = data.get("failures") if isinstance(data, dict) else None
+    if not isinstance(failures, list):
+        return None
+    for line in failures:
+        if not isinstance(line, str):
+            continue
+        # Require both an explicit plan condition and a statement that this step stopped.
+        if (re.search(r"(?:멈춤|중단)\s*조건|stop\s+conditions?", line, re.I)
+                and re.search(r"(?:시작|실행)하지\s*않았|멈췄|중단했|stopp?ed|did not start", line, re.I)):
+            return line.strip()
+    return None
 
 
 PI_STOP_ERROR_KINDS = frozenset({"ask_rejected", "halted"})
@@ -5727,6 +5754,11 @@ class Orchestrator:
 
         async def run_one(step: dict) -> TaskResult:
             template = RESEARCH_STEP_PROMPT if research_plan else STEP_PROMPT
+            if research_plan:
+                template = template.replace(
+                    "The CSO answers first; only hard-stop\nquestions go to the PI. Write the question so either can answer it:",
+                    "The PI decides whether to revise the plan or end the request. Write the question for the PI:",
+                )
             prompt = template.format(request=request, step_id=step["id"], instruction=step["instruction"])
             if research_plan:
                 contract = ((req_state or {}).get("research_contract") or {})
@@ -5740,9 +5772,9 @@ class Orchestrator:
                            "Each artifact_refs path is one of your declared outputs (outputs/<name>; for a declared folder, "
                            "a file inside it as outputs/<folder>/<file>, never the folder itself) or an upstream "
                            "artifact written as <workdir_id>/<path>; evidence citing any other path is refused at CP2. "
-                           "If you cannot proceed without a blocking decision, return the same schema with every "
-                           "list empty and the question with its choices in blocking_decision. The CSO answers first; "
-                           "only hard-stop questions go to the PI. You re-run with the answer."
+                           "If you cannot proceed or a plan stop condition is met, return the same schema with every "
+                           "list empty and the reason and choices in blocking_decision. The PI decides whether "
+                           "to revise the plan or end the request."
                            "\n\nCross-field result rules (the JSON schema cannot express these):\n" +
                            RESEARCH_RESULT_FIELD_RULES +
                            "\n\nFrozen question, hypotheses and protocol, approved by the PI at CP1:\n" +
@@ -6114,6 +6146,9 @@ class Orchestrator:
             ready = [sid for sid in todo if not any(d in todo or d in running for d in ancestors[sid])]
             for sid in ready:
                 todo.discard(sid)
+                if research_plan and any(r.error_kind == "research_stop" for r in results.values()):
+                    await skip(sid, "research step stopped for a continuation decision")
+                    continue
                 if rid in self.budget_denials:
                     await skip(sid, self.budget_denials[rid])
                     continue
@@ -6158,8 +6193,11 @@ class Orchestrator:
                         outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error="cancelled")
                     except Exception as e:
                         outcome = TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False, error=str(e))
-                    # A step that stops for a PI decision did not do the blocked work: its question goes to the
-                    # PI below and the step re-runs, so outputs and the research ledger are checked on that run.
+                    # Research stop questions go to continuation; ordinary step questions still use the ask path.
+                    stop = research_stop_reason(outcome) if research_plan else None
+                    if stop:
+                        outcome = outcome.model_copy(update={"ok": False, "error_kind": "research_stop",
+                                                             "error": stop, "missing_outputs": []})
                     asked = blocking_question(outcome) if outcome.ok else None
                     if outcome.ok and not asked:
                         outcome = apply_declared_output_status(by_id[sid], outcome)
@@ -6171,7 +6209,7 @@ class Orchestrator:
                             "tool_errors": list(dict.fromkeys([*previous.tool_errors, *outcome.tool_errors])),
                             **merged_tool_call_update(previous, outcome)})
                     await save_result(results, sid, outcome)
-                    if not outcome.ok and failure_kind(outcome) not in {"environment", "login", "quota"}:
+                    if not outcome.ok and outcome.error_kind != "research_stop" and failure_kind(outcome) not in {"environment", "login", "quota"}:
                         (await self._record_dev_failure(rid, sid, outcome.error or "unknown error",
                                                  outcome.error_kind or failure_kind(outcome) or "terminal"))
                     progress_storage = getattr(self.hub, "result_storage", None)
@@ -6261,6 +6299,19 @@ class Orchestrator:
         """
         req = self.hub.requests[rid]
         contract = req["research_contract"]
+        stopped = [(s["id"], results[s["id"]].error or "") for s in steps
+                   if s["id"] in results and results[s["id"]].error_kind == "research_stop"]
+        if stopped and rid not in self.budget_denials:
+            ended = await self._research_continue(rid, None, results, stops=stopped)
+            if ended is None:
+                return
+            contract["failure"] = {"steps": [sid for sid, _ in stopped], "plan_sha256": contract["plan_sha256"],
+                                   "reason": "research_stop"}
+            req["outcome"] = "research_failed"
+            await persist_request(self.hub, rid)
+            await self._finish(rid, self.report_results(steps, results, n) + "\n\n" + ended,
+                               serialized(), ok=False)
+            return
         failed = [s["id"] for s in steps if s["id"] not in results or not results[s["id"]].ok]
         successful = [s for s in steps if s["id"] not in failed]
         branch_of = {s["id"]: s.get("branch") for s in steps}
@@ -6664,7 +6715,8 @@ class Orchestrator:
             carried = contract.get("continuation") or {}
             if carried.get("plan_sha256") == plan_hash:
                 prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
-                                                              approval_note(carried.get("pi_request")))
+                                                              approval_note(carried.get("pi_request")),
+                                                              trigger=carried.get("trigger") or "")
             prompt += blind_draft.review_block(contract.get(blind_draft.KEY))
             prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
             if contract.get("result_warnings"):
@@ -6810,7 +6862,7 @@ class Orchestrator:
             not check["problems"] and rid not in self.budget_denials, review))
 
     async def _research_continue(self, rid: str, review: dict | None, results: dict[str, TaskResult], *,
-                                 cp2_note: str | None = None) -> str | None:
+                                 cp2_note: str | None = None, stops: list[tuple[str, str]] | None = None) -> str | None:
         """Continue through a new plan and CP1 after a research review "revise" or a CP2 revise (#90, #58, R10).
 
         After a review "revise" the PI is asked on a ``research_continue`` card. After a CP2 revise (``cp2_note``, the
@@ -6837,7 +6889,9 @@ class Orchestrator:
                             "세우지 않았습니다.")
                 return (f"이어 가기 상한(research.revise_continuations={limit})에 닿아 새 CP1을 묻지 않았습니다."
                         if limit else "")
-            issues = [] if cp2_revise else research_continuation.p1_issues(review)
+            issues = ([{"step_id": sid, "priority": "P1", "problem": reason,
+                        "request": "Resolve the stopped step in the revised plan."} for sid, reason in stops]
+                      if stops else [] if cp2_revise else research_continuation.p1_issues(review))
             round_no = len(rounds) + 2
             if cp2_revise:  # the CP2 card that asked for the revision is the decision
                 receipt = (contract.get("checkpoints") or {}).get("cp2") or {}
@@ -6846,13 +6900,16 @@ class Orchestrator:
             else:
                 decision = await self.hub.request_approval(
                     kind=research_continuation.CONTINUE_GATE, request_id=rid,
-                    summary=(f"연구 리뷰가 revise(P1 {len(issues)}건)로 끝났습니다. 리뷰 지적을 넣은 새 계획으로 "
+                    summary=(("연구 단계가 멈췄습니다:\n" + "\n".join(f"{sid}: {reason}" for sid, reason in stops) +
+                              "\n수정 계획으로 이어 갈까요? 승인하면 새 CP1을 받습니다. 거절하면 요청을 끝냅니다.") if stops else
+                             (f"연구 리뷰가 revise(P1 {len(issues)}건)로 끝났습니다. 리뷰 지적을 넣은 새 계획으로 "
                              f"이어 갈까요({round_no}차)? 승인하면 CSO가 새 계획을 쓰고 새 CP1을 받습니다. 사양이 같고 "
-                             "산출 hash가 그대로인 완료 단계는 다시 돌리지 않습니다. 거절하면 지금처럼 끝납니다."),
+                             "산출 hash가 그대로인 완료 단계는 다시 돌리지 않습니다. 거절하면 지금처럼 끝납니다.")),
                     detail={"gate": research_continuation.CONTINUE_GATE, "plan_sha256": plan_hash, "round": round_no,
                             "limit": limit, "p1_issues": issues})
             approved = bool(decision.get("approved"))
-            trigger = {"trigger": "cp2_revise"} if cp2_revise else {}
+            trigger = ({"trigger": "cp2_revise"} if cp2_revise else
+                       {"trigger": "research_stop"} if stops else {})
             decided = {"plan_sha256": plan_hash, "decision": "approved" if approved else "declined",
                        "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
                        "note": "" if cp2_revise else str(decision.get("note") or "").strip(), **trigger,
@@ -6862,7 +6919,9 @@ class Orchestrator:
                 # Everything this round's frozen plan owns, so an unstarted continuation can put it back whole.
                 rounds.append({**research_continuation.archive_round(
                     req, {sid: result.model_dump(mode="json") for sid, result in results.items()}),
-                    "round": len(rounds) + 1})
+                    "round": len(rounds) + 1,
+                    **({"research_stops": [{"step_id": sid, "reason": reason} for sid, reason in stops]}
+                       if stops else {})})
                 contract["rounds"] = rounds
                 contract["round"] = round_no
                 # The note rides with the continuation: adopting the new plan drops continue_decision (R11).
@@ -6875,7 +6934,7 @@ class Orchestrator:
             return ("이어 가기 카드가 답 없이 닫혀 새 CP1을 열지 않았습니다." if decided.get("state") == "timed_out"
                     else "PI가 새 CP1로 이어 가기를 거절했습니다.")
         await self._emit(rid, "request.continued", {"round": contract.get("round"), "from_plan_sha256": plan_hash,
-                                                    **({"trigger": "cp2_revise"} if cp2_revise else {})})
+                                                    **({"trigger": decided["trigger"]} if decided.get("trigger") else {})})
         await self.run_request(rid, continuation=True)
         return None
 
@@ -7592,6 +7651,7 @@ class Orchestrator:
                     pinned_note = ""
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
+                                  else "연구 중단 사유 반영" if carried.get("trigger") == "research_stop"
                                   else "리뷰 P1 반영")
                         # Verifier errors can contain private paths. Use the same categories in
                         # the summary and both display copies, without changing the sealed record.
@@ -7922,7 +7982,8 @@ class Orchestrator:
                 cp2_revise = carried.get("trigger") == "cp2_revise"
                 continuation_note = (research_continuation.plan_prompt(
                     rounds[-1]["plan"], rounds[-1]["plan_sha256"], carried.get("p1_issues") or [],
-                    int(carried.get("round") or 2), pi_request=approval_note(carried.get("pi_request")))
+                    int(carried.get("round") or 2), pi_request=approval_note(carried.get("pi_request")),
+                    trigger=carried.get("trigger") or "")
                     if continuation and research_lane and rounds else "")
                 if continuation_note:  # the previous round's CP2 note and the 이어 가기 note (PI 점검 R11)
                     continuation_note += approval_note_block("이어 가기", [
@@ -8980,7 +9041,14 @@ class Orchestrator:
                                             **({"task_results": stray} if stray else {})}
         if req.get("outcome") == "model_refused" and carried.get("refusal_retry"):
             carried["refusal_retry"]["state"] = "refused"
-        if carried.get("trigger") == "cp2_revise":  # the CP2 revise it continued (R10)
+        if carried.get("trigger") == "research_stop":
+            issues = carried.get("p1_issues") or []
+            contract["failure"] = {"steps": [item.get("step_id") for item in issues],
+                                   "plan_sha256": previous.get("plan_sha256"), "reason": "research_stop"}
+            req["outcome"] = "research_failed"
+            ended = [f"{previous.get('round')}차 연구 단계가 중단된 결과입니다.", "",
+                     *(f"{item.get('step_id') or '-'}: {item.get('problem') or '-'}" for item in issues)]
+        elif carried.get("trigger") == "cp2_revise":  # the CP2 revise it continued (R10)
             req["outcome"] = "evidence_revision_requested"
             ended = [f"{previous.get('round')}차 결과와 CP2 수정 요청이 이 요청의 결과입니다.", "",
                      "CP2 evidence review: revision_requested.", f"PI 수정 요청: {carried.get('pi_request') or '-'}"]

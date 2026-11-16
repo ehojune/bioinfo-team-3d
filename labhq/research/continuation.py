@@ -599,10 +599,18 @@ def verify_reuse(results: Mapping[str, Mapping[str, Any]], settings: Any,
 
 
 def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: list[Mapping[str, Any]],
-                round_no: int, pi_request: str = "") -> str:
+                round_no: int, pi_request: str = "", trigger: str = "") -> str:
     """Appended to the research PLAN prompt of a continuation round. ``pi_request`` is the PI's CP2 revise note: the
     round continues a CP2 revise, not a review "revise" (R10)."""
-    if pi_request:
+    if trigger == "research_stop":
+        why = ("A research step stopped the previous frozen plan before scientific review. "
+               "Return a complete new research PLAN addressing the stop reasons below; the PI approves it at a new CP1.\n")
+        named = "no stop reason names the step, "
+        scope = ("Change or add only the steps needed to address the stop reasons, and use a new id for a step "
+                 "that does different work.\n")
+        listed = "Stopped steps and reasons:\n" + "\n".join(
+            f"- {issue.get('step_id') or '-'}: {issue.get('problem')}" for issue in issues)
+    elif pi_request:
         why = ("At CP2 the PI did not approve the evidence of the previous frozen plan and asked for a revision. "
                "Return a complete new research PLAN that does what the PI's revision request below asks; the PI "
                "approves it at a new CP1.\n")
@@ -634,9 +642,14 @@ def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: 
         listed + f"\n\nPrevious frozen plan (plan_sha256 {previous_sha256}):\n{_canonical(previous_plan)}")
 
 
-def review_prompt(issues: list[Mapping[str, Any]], pi_request: str = "") -> str:
+def review_prompt(issues: list[Mapping[str, Any]], pi_request: str = "", trigger: str = "") -> str:
     """Appended to the research review prompt of a continuation round: the issues the new plan was meant to fix, or
     the PI's CP2 revision request it was written from (R10)."""
+    if trigger == "research_stop":
+        return ("\n\nThis plan was approved at a new CP1 after a research step stopped the previous plan "
+                "before scientific review. Check whether the results address these stop reasons and file an issue "
+                "where they do not:\n" +
+                "\n".join(f"- {issue.get('step_id') or '-'}: {issue.get('problem')}" for issue in issues))
     if pi_request:
         return ("\n\nThis plan is a continuation approved at a new CP1 after the PI asked at CP2 for this revision "
                 "instead of approving the earlier evidence. Check whether the results address it and file an issue "

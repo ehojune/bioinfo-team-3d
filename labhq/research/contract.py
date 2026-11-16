@@ -676,11 +676,11 @@ RESEARCH_RESULT_SCHEMA: dict[str, Any] = _without(
 )
 # What a research step's engine is held to: the result, or the same shape with empty ledger lists and the question
 # in ``blocking_decision`` when the step cannot go on without a PI decision (STEP_PROMPT). The question is handled
-# before the ledger is validated, and the step re-runs with the answer (#90 CP2).
+# before the ledger is validated; a continuation requires a new plan and CP1.
 RESEARCH_STEP_SCHEMA: dict[str, Any] = json.loads(json.dumps(RESEARCH_RESULT_SCHEMA))
 RESEARCH_STEP_SCHEMA["properties"]["blocking_decision"] = {
     "type": "string", "title": "Blocking Decision",
-    "description": "Only when the step cannot proceed without a PI decision: the question and its choices."}
+    "description": "When blocked or a plan stop condition is met: the reason, question and choices."}
 
 
 def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = None) -> dict[str, Any]:

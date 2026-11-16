@@ -133,6 +133,56 @@ def _kinds(hub):
 
 
 @pytest.mark.asyncio
+async def test_stopped_step_continues_only_after_new_plan_and_cp1(tmp_path):
+    hub = _hub(tmp_path, [CP1, CONTINUE, CP1, APPROVE], reviews=[ACCEPT])
+    original = hub.reply
+    reason = "QC failed; should we revise the plan or stop?"
+
+    async def reply(task):
+        if task.meta["kind"] == "step" and task.meta["step_id"] == "s2" and not task.meta.get("research_round"):
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"blocking_decision": reason})
+        return await original(task)
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+    assert _kinds(hub) == ["research_plan", "research_continue", "research_plan", "research_evidence"]
+    assert _steps(hub) == ["plan", "s1", "s2", "plan", "s2", "review", "synthesis"]
+    assert reason in hub.approvals[1]["summary"]
+    assert reason in hub.calls[3].prompt
+    carried = hub.requests["r"]["research_contract"]["continuation"]
+    assert carried["trigger"] == "research_stop"
+    assert "stopped" in hub.calls[3].prompt and 'verdict "revise"' not in hub.calls[3].prompt
+    assert reason in hub.calls[5].prompt and "previous review asked" not in hub.calls[5].prompt
+    assert "연구 중단 사유 반영" in hub.approvals[2]["summary"]
+    assert hub.requests["r"]["research_contract"]["rounds"][0]["results"]["s2"]["error_kind"] == "research_stop"
+    assert reason in hub.calls[6].prompt  # synthesis sees why the earlier round stopped
+    assert reason in hub.requests["r"]["execution_record"]
+    assert reason in hub.requests["r"]["report"]  # fallback when the writer omits earlier rounds
+    assert hub.requests["r"]["outcome"] == "research_reported"
+
+
+@pytest.mark.asyncio
+async def test_stopped_step_remains_the_source_if_continuation_planning_fails(tmp_path):
+    hub = _hub(tmp_path, [CP1, CONTINUE], fail_round2_plan=True)
+    original = hub.reply
+    reason = "QC failed; should we revise the plan or stop?"
+
+    async def reply(task):
+        if task.meta["kind"] == "step" and task.meta["step_id"] == "s2":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={"blocking_decision": reason})
+        return await original(task)
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_failed"
+    assert req["research_contract"]["failure"]["reason"] == "research_stop"
+    assert reason in req["report"] and "Research review" not in req["report"]
+
+
+@pytest.mark.asyncio
 async def test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step(tmp_path):
     hub = _hub(tmp_path, [CP1, APPROVE, CONTINUE, CP1, APPROVE])
     await Orchestrator(hub).run_request("r")
@@ -163,8 +213,10 @@ async def test_revise_continues_through_a_new_cp1_and_runs_only_the_changed_step
 
     plan_prompt = hub.calls[4].prompt
     assert "Continuation (research round 2)" in plan_prompt and P1["problem"] in plan_prompt
+    assert 'verdict "revise"' in plan_prompt
     assert first["plan_sha256"] in plan_prompt
     assert P1["problem"] in hub.calls[6].prompt  # the second reviewer checks the earlier P1 issue
+    assert "previous review asked" in hub.calls[6].prompt
     assert all(task.meta.get("research_round") == 2 for task in hub.calls[4:])
     assert all("research_round" not in task.meta for task in hub.calls[:4])
     assert "reused from plan" in req["execution_record"]
