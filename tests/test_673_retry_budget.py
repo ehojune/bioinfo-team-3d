@@ -121,11 +121,46 @@ async def test_halt_during_early_exit_retry_waits_for_explicit_resume(resume, ha
     assert len(waits) == 1 and len(calls) == (3 if dispatched_resume else 2)
     assert result.ok is dispatched_resume
     if dispatched_resume:
-        assert "early_exit_retry" not in calls[2].meta
+        assert calls[2].meta["early_exit_retry"] == calls[1].meta["early_exit_retry"]
         assert calls[2].budget_usd == pytest.approx(0.4 - halt_cost)
         assert result.cost_usd == pytest.approx(0.2 + halt_cost)
     if halt_cost is None:
         assert result.cost_usd is None and result.cost_known is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["expired", "runner_changed"])
+async def test_resumed_early_retry_keeps_original_runner_and_deadline(tmp_path, monkeypatch, reason):
+    runner, _ = make_runner(tmp_path, monkeypatch, 0)
+    proof = {"deadline": time.monotonic() - 1 if reason == "expired" else time.monotonic() + 100,
+             "clock_id": "old-runner" if reason == "runner_changed" else runner.process}
+    calls = []
+    class Adapter:
+        async def run(self, ctx):
+            refusal = ctx.before_spawn()
+            refusals.append(refusal)
+            return TaskResult(task_id=ctx.task.id, agent_id="worker", ok=False, error=refusal,
+                              cost_usd=0.0, cost_known=True)
+    refusals = []
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: Adapter())
+    async def dispatch(task):
+        calls.append(task)
+        if len(calls) == 1:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, exit_code=0xC000013A,
+                              cost_usd=0.1, early_exit_retry=proof)
+        if len(calls) == 2:
+            return TaskResult(task_id=task.id, agent_id="worker", ok=False, error_kind="halted",
+                              cost_usd=0.0, cost_known=True)
+        return await runner.run_task(task)
+    hub = FakeHub(dispatch)
+    async def resume(*_args):
+        return True
+    hub.wait_halted = resume
+    result = await Orchestrator(hub).run_step(Task(agent_id="worker", request_id="r", prompt="work",
+                                                  budget_usd=0.5))
+    assert len(calls) == 3 and not result.ok
+    assert calls[2].meta["early_exit_retry"] == proof and result.cost_usd == pytest.approx(0.1)
+    assert refusals == ["original retry deadline or runner identity unavailable"]
 
 
 @pytest.mark.asyncio

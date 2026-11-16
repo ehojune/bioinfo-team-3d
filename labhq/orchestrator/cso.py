@@ -4708,7 +4708,7 @@ class Orchestrator:
                         "prompt": continuation_prompt(turn, HALT_RESUME_PROMPT, resumable=can_resume,
                                                       previous_result=res,
                                                       context_chars=self.cfg.context_chars_per_step),
-                        "meta": {**{k: v for k, v in current.meta.items() if k != "early_exit_retry"},
+                        "meta": {**current.meta,
                                  "kind": current.meta.get("kind", "step"),
                                  "parent_task": res.task_id,
                                  **({"workdir": res.workdir} if res.workdir else {})},
