@@ -1,5 +1,9 @@
 pr: 1451
 rows:
+  - sha: "aa87662"
+    at: "2026-11-17 14:56"
+    summary: "부분 문헌 결과의 시간 초과 기록을 일치시킵니다."
+    text: "공유 deadline 뒤에도 부분 manifest를 반환하며 admission·lookup 상태 모두 timeout을 보존한다. 응답 대기와 실제 ledger를 포함한 회귀 210 passed, 3 skipped (#1446)."
   - sha: "cf45e91"
     at: "2026-11-17 14:49"
     summary: "부분 문헌 조회의 실패도 품질 기록에 남깁니다."
