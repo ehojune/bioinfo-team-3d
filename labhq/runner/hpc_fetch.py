@@ -11,7 +11,8 @@ def missing_received_outputs(required, manifests, local_hashes):
     for manifest in manifests:
         receipts = manifest.get('_local_copy_sha256', {})
         skipped = {row['path']: row for row in manifest.get('_fetch_skipped', [])
-                   if isinstance(row, dict) and isinstance(row.get('path'), str)}
+                   if isinstance(row, dict) and isinstance(row.get('path'), str)
+                   and row.get('reason') != 'environment folder'}
         for row in manifest.get('files', []):
             name = row['path']
             path = 'outputs/' + name

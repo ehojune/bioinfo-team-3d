@@ -445,7 +445,8 @@ def test_local_receipt_report_handles_multiple_jobs_and_partial_directory():
         {'files': [{'path': 'dir/a', 'bytes': 4}, {'path': 'dir/b', 'bytes': 9}],
          '_local_copy_sha256': {'dir/a': 'sha-a'},
          '_fetch_skipped': [{'path': 'dir/b', 'bytes': 9, 'reason': 'retained in request remote data'},
-                            {'path': 'dir/c', 'reason': 'depth limit'}]},
+                            {'path': 'dir/c', 'reason': 'depth limit'},
+                            {'path': 'dir/env', 'reason': 'environment folder'}]},
         {'files': [{'path': 'dir/d', 'bytes': 3}, {'path': 'unrelated', 'bytes': 8}],
          '_local_copy_sha256': {'dir/d': 'sha-d'}},
     ]
