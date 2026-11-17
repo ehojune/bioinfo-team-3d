@@ -33,30 +33,37 @@ def test_request_grant_excludes_mixed_internal_commands(tail):
     assert classify("Bash", command, policy, workdir="/work") is None
 
 
-def test_request_grant_category_uses_runner_policy():
+def test_request_grant_category_uses_runner_policy(tmp_path, monkeypatch):
     from labhq.approval_grants import classify
+    monkeypatch.setattr("labhq.workspace_commands._resolve_executable", lambda *a: (True, "test"))
 
-    policy = PolicySettings(data_zones=[DataZone(path="/data/internal", level="internal")])
-    assert classify("Bash", {"command": "cat /data/internal/a"}, policy,
-                    workdir="/work") == "internal_read"
-    assert classify("Bash", {"command": "echo harmless"}, policy, workdir="/work") is None
-    assert classify("Read", {"file_path": "/data/internal/a"}, policy, workdir="/work") is None
+    internal = tmp_path / "internal"
+    internal.mkdir()
+    policy = PolicySettings(data_zones=[DataZone(path=internal.as_posix(), level="internal")])
+    assert classify("Bash", {"command": f'cat "{internal.as_posix()}/a"'}, policy,
+                    workdir=tmp_path.as_posix()) == "internal_read"
+    assert classify("Bash", {"command": "echo harmless"}, policy, workdir=tmp_path.as_posix()) is None
+    assert classify("Read", {"file_path": internal.as_posix()}, policy, workdir=tmp_path.as_posix()) is None
 
 
-def test_request_grant_parent_private_path_preserves_exclusions():
+def test_request_grant_parent_private_path_preserves_exclusions(tmp_path, monkeypatch):
     from labhq.approval_grants import classify
+    monkeypatch.setattr("labhq.workspace_commands._resolve_executable", lambda *a: (True, "test"))
 
     policy = PolicySettings()
+    work = tmp_path / "work"
+    work.mkdir()
     def category(cmd):
-        return classify("Bash", {"command": cmd}, policy, workdir="/home/test/work",
-                        private_paths=("/home/test",), private_enabled=True)
+        return classify("Bash", {"command": cmd}, policy, workdir=work.as_posix(),
+                        private_paths=(tmp_path.as_posix(),), private_enabled=True)
 
-    assert category("cat /home/test/work/a") == "workspace"
-    assert category("cat /home/test/secret/a") is None
-    assert category("cat /home/test/work/a > ../secret/out") is None
-    assert category("cat /home/test/work/.ssh/id_rsa") is None
+    # Already allowed by the ordinary policy, so there is no grant card.
+    assert category(f'cat "{work.as_posix()}/a"') is None
+    assert category(f'cat "{tmp_path.as_posix()}/secret/a"') is None
+    assert category("cat a > ../secret/out") is None
+    assert category("cat .ssh/id_rsa") is None
     assert category("cat $HOME/secret/a") is None
-    assert category("python -c x") == "unresolved_path"
+    assert category("python -c x") is None
 
 
 def test_request_grant_cd_write_scope(tmp_path):
@@ -71,9 +78,9 @@ def test_request_grant_cd_write_scope(tmp_path):
         return classify("Bash", {"command": command}, policy, workdir=work.as_posix(),
                         private_paths=(tmp_path.as_posix(),), private_enabled=True)
 
-    assert category(f'cd "{nested.as_posix()}" && echo x > output.txt') == "workspace"
+    assert category(f'cd "{nested.as_posix()}" && echo x > output.txt') is None
     assert category(f'cd "{nested.as_posix()}" && echo x > ../../outside.txt') is None
-    assert category('cd "$UNKNOWN" && echo x > output.txt') == "unresolved_path"
+    assert category('cd "$UNKNOWN" && echo x > output.txt') is None
 
 
 @pytest.fixture
@@ -349,9 +356,10 @@ async def test_request_grant_unfinished_commit_fails_closed_on_replay(request_gr
     assert hub.store.get("approval_grants", "r1") is None
 
 
-async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path):
+async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path, monkeypatch):
     from labhq.models import ApprovalRequest, Engine
     from labhq.runner.daemon import Runner
+    monkeypatch.setattr("labhq.workspace_commands._resolve_executable", lambda *a: (True, "test"))
     hub, events, sent = request_grant_hub
     internal = tmp_path / "internal"
     internal.mkdir()
@@ -384,6 +392,19 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path)
     await runner._on_approval(second)
     assert hub.store.get("approval_decision", second.id)["grant_source"] == first.id
     assert sent[-1]["approved"] is True and events[-1]["data"]["automatic"] is True
+
+    for i, command in enumerate([
+        "unlink a", "shred -u a", "python -c 'import os; os.remove(\"a\")'",
+        "python -c 'from os import remove as r; r(\"a\")'",
+        "python -c 'import os; getattr(os, \"remove\")(\"a\")'", "python script.py",
+        "bash -c 'cat a'", "cat $(echo a)", "cat a; unlink a",
+    ]):
+        unsafe = card(f"unsafe-{i}")
+        unsafe.detail["tool_input"]["command"] = command
+        await runner._on_approval(unsafe)
+        assert not unsafe.detail.get("grant_category")
+        assert hub.store.get("approval_decision", unsafe.id) is None
+        assert unsafe.id in hub.approvals
 
 
 def _long_separator_runs(fraction=1):

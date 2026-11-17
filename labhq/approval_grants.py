@@ -14,6 +14,7 @@ from .policy import (SHELL_TOOLS, Unresolved, _absolute, _candidate_paths, _eval
                      _inside, _norm, _private_decision, _real, _zone_hit, evaluate_tool,
                      _shell_write_targets, git_bash_command, restricted_paths, touches, touches_resolved)
 from .private_paths import _CD, credential_path, registry_access, shell_cd_bases
+from .workspace_commands import literal_commands, workspace_command
 
 
 _EXCLUDED_COMMAND = re.compile(
@@ -50,6 +51,20 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         return excluded("policy_" + decision.action)
     checked = git_bash_command(tool, tool_input, roots)
     command = str(checked.get("command") or "")
+    # Grant only a small, literal, read-only grammar. Executable and operand
+    # checks are shared with the existing workspace permission proof; unknown
+    # scripts, shell syntax and writes retain an individual decision.
+    parts, _ = literal_commands(command)
+    safe = {"cd", "pwd", "cat", "ls", "head", "tail", "grep", "sed",
+            "find", "wc", "od", "sha256sum"}
+    if (tool != "Bash" or parts is None
+            or any(words[0] not in safe for words in parts)
+            or any(word in {">", ">>", "<"} for words in parts for word in words)
+            or not workspace_command(command, workdir,
+                    [p for p in private_paths if not _inside(_norm(workdir), _norm(p))],
+                    read_roots=[*extra_dirs, *(z.path for z in policy.data_zones if z.level == "internal")],
+                    forbidden=restricted_paths(policy))):
+        return excluded("unproven_literal_read")
     if _EXCLUDED_COMMAND.search(command):
         return excluded("network_or_delete_mention")
     if registry_access(command):
