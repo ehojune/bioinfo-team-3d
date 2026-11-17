@@ -62,3 +62,6 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - 해당 수리 뒤 관련 4개 파일: 749 passed, 10 skipped.
 - indexed pushd·미호출 함수 P1 2건도 수리했다. selector를 stack 회전으로 판정하고 선언 본문은 직접 호출될 때만 반영한다. 양방향 5건 추가, 표적 72건 통과.
 - 해당 수리 뒤 관련 4개 파일: 754 passed, 10 skipped.
+- `pushd --`·reserved word 뒤 선언·함수 return P1 3건과 재귀 확장 상한을 보완했다. 호출 경계를 보존하고 확장은 수·깊이를 제한하며 남은 직접 경로 근거는 유지한다. 회귀 5건 추가, 표적 77건 통과.
+- 해당 수리 뒤 관련 4개 파일: 759 passed, 10 skipped. 재귀 상한은 판정 함수 직접 호출과 열린 경로 대조 2건을 별도로 확인했다.
+- 이전 head d7d8d006의 clean-install은 설치·mock 검증 뒤 Visual Studio telemetry의 임시 파일 잠금(WinError 32)으로 실패했다([job](https://github.com/ehojune/bioinfo-team-3d/actions/runs/44079060520/job/134024868070)). 새 코드 head의 CI는 별도 확인한다.

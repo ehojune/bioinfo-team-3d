@@ -188,6 +188,9 @@ def test_unknown_read_keeps_lexical_evidence_past_resolution_cap(tmp_path, monke
     ('f() { cd {plugin}; }; wc -l ../notes.txt', False),
     ('f() { cd {plugin}; }; f; wc -l ../notes.txt', True),
     ('function f { cd {plugin}; }; wc -l ../notes.txt', False),
+    ('if true; then f() { cd {plugin}; }; fi; wc -l ../notes.txt', False),
+    ('f() { cd {plugin}; return; cd {task}; }; f; wc -l ../notes.txt', True),
+    ('pushd {plugin}; pushd -- +1; wc -l ../../../settings.json', True),
 ])
 def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequence, closed):
     from tests.test_tool_card_explain import _system_commands
@@ -196,6 +199,7 @@ def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequ
     config, task = tmp_path / '.claude', tmp_path / 'task'
     plugin = config / 'plugins' / 'skill'
     plugin.mkdir(parents=True)
+    (plugin / '+1').mkdir()
     task.mkdir()
     command = sequence.replace('{plugin}', '"' + plugin.as_posix() + '"').replace('{task}', '"' + task.as_posix() + '"')
     decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
@@ -215,6 +219,28 @@ def test_request_unknown_syntax_still_checks_registry(request_paths_1456):
     decision = request_gate_1456(request_paths_1456, 'Bash', {'command': 'reg query HKCU/Environment'})
     assert decision.action == 'ask'
     assert 'registry' in decision.reason
+
+
+@pytest.mark.parametrize('kind', ['recursive', 'acyclic'])
+def test_unknown_shell_function_expansion_is_bounded(request_paths_1456, kind):
+    task, _, personal, *_ = request_paths_1456
+    if kind == 'recursive':
+        definitions, invoke = 'f() { f; f; };', 'f'
+    else:
+        definitions = 'f0() { pwd; }; ' + ' '.join(
+            f'f{i}() {{ f{i-1}; f{i-1}; }};' for i in range(1, 24))
+        invoke = 'f23'
+    command = f'{definitions} {invoke}; wc -l "{(personal / "diary.txt").as_posix()}"'
+    private = request_paths_1456[-1]
+    assert private_paths.shell_closed_operand(command, private, [str(task), str(request_paths_1456[1])],
+                                               str(task), None, None)
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': command})
+    assert decision.action == 'ask'
+    assert 'personal path' in decision.reason
+    open_command = f'{definitions} {invoke}; wc -l "{(task / "records.txt").as_posix()}"'
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': open_command})
+    assert decision.action == 'ask'
+    assert 'read scope is ambiguous' in decision.reason
 
 WIN_HOME = "C:\\Users\\pi"
 WIN_PRIVATE = ["C:\\Users\\pi\\.ssh", "C:\\Users\\pi\\AppData\\Local\\Google\\Chrome\\User Data"]

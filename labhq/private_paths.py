@@ -518,13 +518,19 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
     tokens = [part for token in tokens for part in
               (re.findall(r'&&|\|\||.', token, re.S) if token and set(token) <= set(';&|\n()') else [token])]
     functions: dict[str, list[str]] = {}
+    expanding: set[str] = set()
+    expanded_tokens = 0
 
     def function_commands(items: list[str], depth: int = 0) -> list[str]:
         """Declarations do not execute; expand only literal invocations for evidence."""
-        if depth >= MAX_CD_BASES:
+        nonlocal expanded_tokens
+        if depth >= MAX_CD_BASES or expanded_tokens >= MAX_CD_BASES * MAX_RESOLVED_CANDIDATES:
             return ['__unproven_function__']
         out, index, at_start = [], 0, True
         while index < len(items):
+            expanded_tokens += 1
+            if expanded_tokens > MAX_CD_BASES * MAX_RESOLVED_CANDIDATES:
+                return [*out, *items[index:]]  # keep remaining lexical evidence without expansion
             name_at = index + (items[index] == 'function')
             if at_start and name_at < len(items) and re.fullmatch(r'[A-Za-z_]\w*', items[name_at]):
                 after = name_at + 1
@@ -542,16 +548,21 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
                         continue
             token = items[index]
             if at_start and token in functions:
-                out.extend(['{', *function_commands(functions[token], depth + 1), '}'])
+                if token in expanding:
+                    out.append('__unproven_function__')
+                else:
+                    expanding.add(token)
+                    out.extend(['__function_begin__', *function_commands(functions[token], depth + 1), '__function_end__'])
+                    expanding.remove(token)
             else:
                 out.append(token)
-            at_start = token in (';', '&&', '||', '|', '&', '\n', '(', '{')
+            at_start = token in (';', '&&', '||', '|', '&', '\n', '(', '{', 'then', 'else', 'do', 'elif')
             index += 1
         return out
 
     tokens = function_commands(tokens)
     for token in [*tokens, ';']:
-        if token and (set(token) <= set(';&|\n()') or token in ('{', '}')):
+        if token and (set(token) <= set(';&|\n()') or token in ('{', '}', '__function_begin__', '__function_end__')):
             parts.append((words, token))
             words = []
         else:
@@ -569,13 +580,13 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
                  else list(dict.fromkeys([*succeeded, *failed])))
         skipped_success = succeeded if previous == '||' else []
         skipped_failure = failed if previous == '&&' else []
-        if separator in ('(', '{') and not words:
+        if separator in ('(', '{', '__function_begin__') and not words:
             if len(groups) >= MAX_CD_BASES:
                 return False
-            groups.append((separator, bases, skipped_success, skipped_failure, pipeline))
+            groups.append([separator, bases, skipped_success, skipped_failure, pipeline, [], []])
             succeeded, failed, previous, pipeline = bases, [], ';', False
             continue
-        if not words and separator not in (')', '}'):
+        if not words and separator not in (')', '}', '__function_end__'):
             previous = separator
             pipeline = separator == '|'
             continue
@@ -614,11 +625,14 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
             targets = []
             push = location[0].casefold() in ('pushd', 'push-location')
             restore = len(location) == 2 and location[1] == '-'
-            no_cd = push and '-n' in location[1:]
+            end_options = '--' in location[1:]
+            before = location[1:location.index('--')] if end_options else location[1:]
+            after = location[location.index('--') + 1:] if end_options else []
+            no_cd = push and '-n' in before
             next_failure = []
             for base, old, stack in bases:
-                args = [arg for arg in location[1:] if arg not in ('-n', '--')]
-                selector = args[0] if push and len(args) == 1 and re.fullmatch(r'[+-]\d+', args[0]) else None
+                args = [arg for arg in before if arg != '-n'] + after
+                selector = args[0] if push and not end_options and len(args) == 1 and re.fullmatch(r'[+-]\d+', args[0]) else None
                 if selector or (push and not args):
                     entries = [base, *stack]
                     index = (int(selector[1:]) if selector.startswith('+') else len(entries) - 1 - int(selector[1:])) \
@@ -636,6 +650,9 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
                     moved = [old]
                 elif push and len(location) == 1:
                     moved = [stack[0]] if stack else []
+                elif push and end_options and len(args) == 1:
+                    value = _expand_dir(args[0], home, environ)
+                    moved = [path_field_text(value, base)] if value is not None and (base or os.path.isabs(value)) else [None]
                 else:
                     moved = shell_cd_bases(shlex.join(words), base, home, environ) or [None]
                 for target in moved:
@@ -665,7 +682,16 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
                 if index == 0 and (not remaining[0] or not os.path.isdir(remaining[0])):
                     next_failure.append((base, old, stack))
         elif location and not pipeline and separator not in ('|', '&'):
-            if location[0] == 'exit':
+            if location[0] == 'return':
+                frame = next((frame for frame in reversed(groups) if frame[0] == '__function_begin__'), None)
+                if frame is not None:
+                    code = location[1] if len(location) == 2 else None
+                    if code is None or not code.isdigit() or int(code) == 0:
+                        frame[5].extend(bases)
+                    if code is None or not code.isdigit() or int(code) != 0:
+                        frame[6].extend(bases)
+                    next_success, next_failure = [], []
+            elif location[0] == 'exit':
                 next_success, next_failure = [], []
             elif location[0] == 'true':
                 next_failure = []
@@ -676,18 +702,21 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
         failed = list(dict.fromkeys([*skipped_failure, *next_failure]))
         succeeded = succeeded if len(succeeded) <= MAX_CD_BASES else [(None, None, ())]
         failed = failed if len(failed) <= MAX_CD_BASES else [(None, None, ())]
-        if separator in (')', '}') and groups:
-            kind, original, skipped_success, skipped_failure, pipeline = groups.pop()
+        if separator in (')', '}', '__function_end__') and groups:
+            kind, original, skipped_success, skipped_failure, pipeline, returned_success, returned_failure = groups.pop()
             if kind in ('(', '$('):
                 succeeded = original if succeeded or kind == '$(' else []
                 failed = original if failed or kind == '$(' else []
+            if kind == '__function_begin__':
+                succeeded = list(dict.fromkeys([*succeeded, *returned_success]))
+                failed = list(dict.fromkeys([*failed, *returned_failure]))
             succeeded = list(dict.fromkeys([*skipped_success, *succeeded]))
             failed = list(dict.fromkeys([*skipped_failure, *failed]))
         if separator == '(' and words and words[-1].endswith(('$', '<', '>')):
             if len(groups) >= MAX_CD_BASES:
                 return False
             original = list(dict.fromkeys([*succeeded, *failed]))
-            groups.append(('$(', original, [], [], pipeline))
+            groups.append(['$(', original, [], [], pipeline, [], []])
             succeeded, failed, previous, pipeline = original, [], ';', False
             continue
         pipeline = separator == '|'
