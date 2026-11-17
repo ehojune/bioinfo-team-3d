@@ -2,7 +2,7 @@
 
 API contract: https://www.ncbi.nlm.nih.gov/books/NBK25499/ (2026-11-17).
 One ESearch snapshots up to 10,000 IDs; EFetch retrieves those exact IDs in batches.
-Every page is owned, content-hashed JSON. A run-specific manifest survives partial
+Pages share an owned JSONL bundle, with byte ranges and page hashes. A run-specific manifest survives partial
 failure/cancellation and is collected by the normal annotation-output boundary.
 """
 from __future__ import annotations
@@ -10,12 +10,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+from pathlib import PurePath
+import stat
 import uuid
 import xml.etree.ElementTree as ET
 
 import httpx
 
-from ..adapters.owned import append_owned, write_owned_bytes
+from ..adapters.owned import OwnedPathError, _held_parent, append_owned, write_owned_bytes
 from .annot import Annotator, EUTILS, LookupFailed, QUERY_LOG, RESULT_DIR, ResponseTooLarge, _now, _sha256
 
 DEFAULT_MAX_RECORDS = 1000
@@ -64,6 +67,9 @@ class PubmedCollection:
         self.annotator, self.root = annotator, annotator.workdir
         self.run_id = uuid.uuid4().hex
         self.path = f"{RESULT_DIR}/pubmed-{self.run_id}.json"
+        self.bundle = f"{RESULT_DIR}/pubmed-{self.run_id}-pages.jsonl"
+        self.bundle_identity = None
+        self.bundle_hash = hashlib.sha256()
         self.seen: set[str] = set()
         self.bytes = 0
         self.state = {"tool": "pubmed_search", "query": query.strip(), "queried_at": _now(),
@@ -72,6 +78,27 @@ class PubmedCollection:
                       "max_records": max_records, "page_size": PAGE_SIZE,
                       "found_count": None, "fetched_count": 0, "unique_count": 0,
                       "complete": False, "stop_reason": "in_progress", "pages": []}
+
+    def append_page(self, data: bytes) -> None:
+        """Append exact bytes through a held parent; committed pages remain a readable prefix."""
+        relative = PurePath(self.bundle)
+        flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
+        if self.bundle_identity is None:
+            flags |= os.O_CREAT | os.O_EXCL
+        with _held_parent(self.root, relative) as parent:
+            with os.fdopen(parent.open_file(relative.name, flags), "ab") as target:
+                info = os.fstat(target.fileno())
+                identity = (info.st_dev, info.st_ino)
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != self.bytes
+                        or self.bundle_identity is not None and identity != self.bundle_identity):
+                    raise OwnedPathError("PubMed page bundle was linked, replaced or resized")
+                target.write(data)
+                target.flush()
+                os.fsync(target.fileno())
+                self.bundle_identity = identity
+        self.bundle_hash.update(data)
+        self.state["bundle"] = {"path": self.bundle, "bytes": self.bytes + len(data),
+                                "sha256": self.bundle_hash.hexdigest(), "format": "jsonl-pages"}
 
     def checkpoint(self, reason: str) -> dict:
         self.state["stop_reason"] = reason
@@ -118,15 +145,17 @@ class PubmedCollection:
                 rows = _records(response.content)
                 text = json.dumps({"query": self.state["query"], "offset": start,
                                    "requested_pmids": batch, "records": rows}, ensure_ascii=False) + "\n"
-                size = len(text.encode("utf-8"))
+                data = text.encode("utf-8")
+                size = len(data)
                 if size > PAGE_BYTES or self.bytes + size > TOTAL_BYTES:
                     return self.finish("byte_limit")
-                digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-                path = f"{RESULT_DIR}/pubmed-{self.run_id}-{start:05d}-{digest[:12]}.json"
-                write_owned_bytes(self.root, path, text.encode("utf-8"))
+                digest = hashlib.sha256(data).hexdigest()
+                self.append_page(data)
                 pmids = [row["pmid"] for row in rows]
+                byte_offset = self.bytes
                 self.bytes += size
-                self.state["pages"].append({"path": path, "sha256": digest, "bytes": size,
+                self.state["pages"].append({"path": self.bundle, "sha256": digest, "bytes": size,
+                                            "byte_offset": byte_offset,
                                             "offset": start, "record_count": len(rows)})
                 self.state["fetched_count"] += len(rows)
                 self.seen.update(pmids)

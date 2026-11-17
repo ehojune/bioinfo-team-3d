@@ -59,6 +59,39 @@ def manifest(root, result):
     return json.loads((root / result["full_result"]).read_text(encoding="utf-8"))
 
 
+async def test_two_maximum_searches_reach_next_step_without_losing_pages(tmp_path):
+    upstream = workspace(tmp_path)
+    results = []
+    for _ in range(2):
+        collection, client, _ = make(upstream.dir, Provider(10000, "short"), 10000)
+        async with client:
+            results.append(await collection.run())
+    assert all(r["complete"] and r["fetched_count"] == 10000 for r in results)
+    captured = collect(upstream)
+    assert not captured.excluded
+    assert len(captured.outputs) == 5
+    upstream.update_run("source", ok=True)
+    downstream = workspace(tmp_path, "consumer", "synthesis")
+    staged, refused = stage_inputs(downstream, {"search": {
+        "task_id": "source", "workdir": str(upstream.dir), "outputs": captured.outputs,
+        "output_sha256": captured.hashes}}, tmp_path, [], [], 16 * 1024 * 1024, 32 * 1024 * 1024)
+    assert staged and not refused
+    for path in captured.outputs:
+        copied = downstream.dir / "inputs/search" / path.removeprefix("outputs/")
+        assert hashlib.sha256(copied.read_bytes()).hexdigest() == captured.hashes[path]
+    for result in results:
+        saved = manifest(upstream.dir, result)
+        count = 0
+        for page in saved["pages"]:
+            copied = downstream.dir / "inputs/search" / page["path"].removeprefix("outputs/")
+            with copied.open("rb") as source:
+                source.seek(page.get("byte_offset", 0))
+                data = source.read(page["bytes"])
+            assert hashlib.sha256(data).hexdigest() == page["sha256"]
+            count += len(json.loads(data)["records"])
+        assert count == saved["unique_count"] == 10000
+
+
 async def test_631_large_korean_pages_reach_next_step_with_exact_hashes(tmp_path):
     upstream = workspace(tmp_path)
     provider = Provider()
@@ -70,13 +103,16 @@ async def test_631_large_korean_pages_reach_next_step_with_exact_hashes(tmp_path
                       "complete": True, "stop_reason": "exhausted"}
     assert len(json.dumps(result, ensure_ascii=False)) < 600
     saved = manifest(upstream.dir, result)
+    bundle = (upstream.dir / saved["bundle"]["path"]).read_bytes()
+    assert len(bundle) == saved["bundle"]["bytes"]
+    assert hashlib.sha256(bundle).hexdigest() == saved["bundle"]["sha256"]
     assert len(saved["pages"]) == 7
     assert sum(p["bytes"] for p in saved["pages"]) > 2 * 1024 * 1024
     assert len(provider.calls) == 8
     assert clock.sleeps and all(s >= 1 / 3 - 1e-9 for s in clock.sleeps)
     captured = collect(upstream)  # staff outputs omitted, real collector and consumer
     assert not captured.excluded
-    assert len(captured.outputs) == 9
+    assert len(captured.outputs) == 3  # manifest, shared query log, one JSONL page bundle
     upstream.update_run("source", ok=True)
     downstream = workspace(tmp_path, "consumer", "synthesis")
     staged, refused = stage_inputs(downstream, {"search": {
@@ -86,8 +122,11 @@ async def test_631_large_korean_pages_reach_next_step_with_exact_hashes(tmp_path
     rows = []
     for page in saved["pages"]:
         copied = downstream.dir / "inputs/search" / page["path"].removeprefix("outputs/")
-        assert hashlib.sha256(copied.read_bytes()).hexdigest() == page["sha256"]
-        rows.extend(json.loads(copied.read_bytes())["records"])
+        with copied.open("rb") as source:
+            source.seek(page["byte_offset"])
+            data = source.read(page["bytes"])
+        assert hashlib.sha256(data).hexdigest() == page["sha256"]
+        rows.extend(json.loads(data)["records"])
     assert len(rows) == len({r["pmid"] for r in rows}) == 631
     assert rows[0]["abstract"][0]["text"] == provider.abstract.strip()
     assert provider.abstract in rows[0]["record_xml"]
@@ -137,6 +176,35 @@ async def test_same_query_keeps_prior_manifests_and_pages(tmp_path):
     assert len(logs) == 2
     for row in logs:
         assert row["result_sha256"] == hashlib.sha256((tmp_path / row["result_file"]).read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("tamper", ["replace", "resize", "hardlink"])
+async def test_changed_bundle_is_refused_before_another_page_is_appended(tmp_path, tamper):
+    provider = Provider(200, "short")
+    outside = tmp_path / "outside.jsonl"
+    outside.write_bytes(b"untouched")
+    def respond(request):
+        if request.url.path.endswith("efetch.fcgi") and b"id=101" in request.content:
+            path = tmp_path / collection.bundle
+            if tamper == "resize":
+                with path.open("ab") as target:
+                    target.write(b"changed")
+            else:
+                previous = path.read_bytes()
+                path.unlink()
+                if tamper == "hardlink":
+                    import os
+                    os.link(outside, path)
+                else:
+                    path.write_bytes(previous)
+        return provider(request)
+    collection, client, _ = make(tmp_path, respond)
+    async with client:
+        with pytest.raises(OwnedPathError):
+            await collection.run()
+    assert outside.read_bytes() == b"untouched"
+    saved = json.loads((tmp_path / collection.path).read_bytes())
+    assert not saved["complete"] and saved["fetched_count"] == 100
 
 
 @pytest.mark.parametrize("mode,unique", [("repeated_page", 100), ("within_page", 100), ("missing", 199)])
@@ -207,7 +275,7 @@ async def test_book_and_metadata_records_do_not_become_full_text(tmp_path):
     async with client:
         result = await collection.run()
     page = manifest(tmp_path, result)["pages"][0]
-    row = json.loads((tmp_path / page["path"]).read_bytes())["records"][0]
+    row = json.loads((tmp_path / page["path"]).read_bytes()[page["byte_offset"]:][:page["bytes"]])["records"][0]
     assert result["complete"] and row["access_level"] == "metadata" and not row["abstract"]
 
 
