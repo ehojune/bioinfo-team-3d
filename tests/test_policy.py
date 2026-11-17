@@ -154,9 +154,13 @@ def _grant_category(work, command, trace=None, **kw):
     ('echo x > a.txt; mv a.txt "$DEST"', "unresolved_path", None),
     ("echo x > a.txt; ls | xargs mv", "unresolved_path", None),
     ("echo x > a.txt; sed -i s/x/y/ *.txt", "unresolved_path", None),
+    ("echo x > a.txt; mv -t../outside a.txt", "unresolved_path", None),
+    ("echo x > a.txt; mv -S.bak a.txt b.txt", "unresolved_path", None),
     # Resolved outside the task folder, or a delete: still an individual card.
     ("echo x > a.txt; mv a.txt ../b.txt", None, "outside_write_target"),
     ("echo x > a.txt; mv ../b.txt a.txt", None, "outside_write_target"),
+    ("echo x > a.txt; mv -t ../outside a.txt", None, "outside_write_target"),
+    ("echo x > a.txt; mv --target-directory=../outside a.txt", None, "outside_write_target"),
     ("echo x > a.txt; sed -i s/x/y/ ../b.txt", None, "outside_write_target"),
     ("echo x > a.txt; perl -i.bak -pe s/x/y/ ../b.txt", None, "outside_write_target"),
     ("echo x > a.txt; rm a.txt", None, "network_or_delete_mention"),
@@ -183,14 +187,20 @@ def test_request_grant_move_and_in_place_edit(tmp_path, command, category, reaso
     ("$'\\x72m' -f out.txt", None, "network_or_delete_mention"),
     ("x=$'\\143url'; $x https://example.test > out.txt", None, "network_or_delete_mention"),
     ("$'\\x4c\\x44_PRELOAD'=x.so echo x > out.txt", None, "shell_startup_environment"),
+    # Decoded, a private path or an outside write destination stays individual.
+    ("cat $'{private}/sec\\x72et.txt' > out.txt", None, "other_private_path"),
+    ("echo x > $'\\x2e\\x2e/out.txt'", None, "outside_write_target"),
     # A readable destination outside the task folder stays individual.
     ("echo x > ../out.txt", None, "outside_write_target"),
 ])
 def test_request_grant_dynamic_quote_and_unresolved_write(tmp_path, command, category, reason):
     work = tmp_path / "work"
     work.mkdir()
+    private = tmp_path / "private"
+    private.mkdir()
     trace = []
-    assert _grant_category(work, command, trace) == category
+    assert _grant_category(work, command.replace("{private}", private.as_posix()), trace,
+                           private_paths=(work.parent.as_posix(), private.as_posix())) == category
     assert trace == ([reason] if reason else [])
 
 

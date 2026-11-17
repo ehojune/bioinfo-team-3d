@@ -58,6 +58,7 @@ def _move_edit_targets(command: str, powershell: bool) -> tuple[list[str], bool]
     `sed -i` inputs already come from the shared write-target parser."""
     targets: list[str] = []
     parsed = 0
+    unknown = False
     mentioned = len(_MOVE_MENTION.findall(re.sub(r"[\\\"'`]", "", command)))
     if _blank_non_syntax(command, powershell) is None:
         # Quoting could not be split, so operands would be guessed from raw text: leave them unresolved.
@@ -71,14 +72,26 @@ def _move_edit_targets(command: str, powershell: bool) -> tuple[list[str], bool]
         if name in _MOVERS:
             parsed += 1
             for word in words[1:]:
-                if word.startswith("--") and "=" in word:
-                    targets.append(word.split("=", 1)[1])
-                elif not word.startswith("-"):
+                if not word.startswith("-") or word == "-":
                     targets.append(word)
+                elif word.startswith("--") and "=" in word:
+                    targets.append(word.split("=", 1)[1])
+                elif not _plain_mover_option(word, powershell):
+                    # An option may carry its own path (`-t../out`, `-Destination:..`): not read here.
+                    unknown = True
         elif name == "perl":
             targets.extend(_perl_in_place_files(words[1:]))
     # Every mention must be a parsed mover command (`mv a b; xargs mv` leaves one unparsed).
-    return targets, mentioned > parsed
+    return targets, unknown or mentioned > parsed
+
+
+def _plain_mover_option(word: str, powershell: bool) -> bool:
+    """An option word that names no path itself; its value, if any, is the next word."""
+    if powershell:
+        return bool(re.fullmatch(r"-[A-Za-z]+", word))  # parameter names; `-Name:value` is not plain
+    return (bool(re.fullmatch(r"-[bfinuvTZt]+", word)) and ("t" not in word or word.endswith("t"))
+            or word in {"--", "--force", "--interactive", "--no-clobber", "--verbose", "--update", "--backup",
+                        "--no-target-directory", "--strip-trailing-slashes", "--target-directory"})
 
 
 def _perl_in_place_files(words: list[str]) -> Iterator[str]:
@@ -169,7 +182,7 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
              extra_dirs: tuple[str, ...] = (), private_paths: tuple[str, ...] = (),
              private_enabled: bool = False, private_open_reads: tuple[str, ...] = (),
              read_only: bool = False, trace: list[str] | None = None,
-             environ: dict[str, str] | None = None) -> str | None:
+             environ: dict[str, str] | None = None, _decoded: bool = False) -> str | None:
     """Return a grant category for a shell ask, or None for an individual card.
 
     Decisions are recomputed using runner-owned settings, not the caller's
@@ -201,6 +214,17 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     if re.search(r"\b(?:LD_\w*|DYLD_\w*|BASH_FUNC_\w*|BASH_ENV|ENV|CDPATH|"
                  r"LIBPATH|SHLIB_PATH|GCONV_PATH|LOCPATH)\s*\+?=", assignment_text, re.I):
         return excluded("shell_startup_environment")
+    if decoded != command and not _decoded:
+        # Judge the decoded text as its own command too, so every path check (closed zones, private paths,
+        # write targets) sees the name the shell will use. Only a reason found there excludes this command;
+        # the decoded text failing a literal-read proof or needing no card at all says nothing about it.
+        inner: list[str] = []
+        if classify(tool, {**tool_input, "command": decoded}, policy, workdir=workdir, extra_dirs=extra_dirs,
+                    private_paths=private_paths, private_enabled=private_enabled,
+                    private_open_reads=private_open_reads, read_only=read_only, trace=inner,
+                    environ=environ, _decoded=True) is None and inner and inner[0] not in {
+                        "policy_allow", "unproven_literal_read", "unproven_internal_read"}:
+            return excluded(inner[0])
     roots = [workdir, *extra_dirs]
     decision = evaluate_tool(tool, tool_input, policy, allowed_roots=roots, workdir=workdir,
                              private_paths=private_paths, private_enabled=private_enabled,
