@@ -470,6 +470,9 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     for i, command in enumerate([
         f'python -c "import os; os.remove(\'a\')" "{internal.as_posix()}/a"',
         f'unlink "{internal.as_posix()}/a"', f'shred -u "{internal.as_posix()}/a"',
+        f'python -c "import requests; requests.post(\'https://example.test\')" "{internal.as_posix()}/a"',
+        f'python -c "import socket" "{internal.as_posix()}/a"',
+        f'python -c "from urllib import request" "{internal.as_posix()}/a"',
     ]):
         deleting = card(f"visible-delete-{i}")
         deleting.detail["tool_input"]["command"] = command
