@@ -14,6 +14,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:28 | [`4598949`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/4598949) | **읽기 범위가 불명확한 명령은 개별 승인을 받고 개인 경로 접근을 단정하지 않습니다.**<br>#1456 r4: 경고를 명시 경로와 단순 순차 읽기로 좁히고 미지원 셸은 범위 미확인으로 표시한다. 남은 P1 세 재현·직접 근거 대조·batch 분류 제외를 포함해 관련 회귀 771 passed, 9 skipped와 승인 회귀 115 passed, 12 skipped를 확인했다. |
+| 21:07 | [`03306b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/03306b6) | **옵션이 끝난 뒤 폴더명과 함수의 실행·복귀 경계를 구별해 경고를 표시합니다.**<br>#1456: pushd --, reserved word 뒤 선언, 함수 return을 반영하고 재귀 확장을 제한했다. 관련 회귀 759개와 상한 직접 판정 2건을 확인했다. |
+| 20:59 | [`009b11e`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/009b11e) | **폴더 stack 회전과 함수 선언·호출을 구별해 승인 경고를 표시합니다.**<br>#1456: indexed pushd 회전과 직접 호출한 함수 본문만 반영한다. 관련 회귀 754개를 확인했다. |
+| 20:48 | [`84ee8af`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/84ee8af) | **별도 프로세스의 폴더 이동과 지정한 stack 항목 제거를 승인 경고에 반영합니다.**<br>#1456: process substitution 경계를 격리하고 indexed popd가 선택한 항목을 제거한다. 관련 회귀 749개를 확인했다. |
+| 20:40 | [`9ca1af4`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/9ca1af4) | **명령 안의 별도 셸과 폴더를 바꾸지 않는 옵션을 승인 경고에 반영합니다.**<br>#1456: command substitution의 폴더 변경을 격리하고 pushd·popd -n의 stack 변경만 반영했다. 관련 회귀 746개를 확인했다. |
+| 20:32 | [`98c6e45`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/98c6e45) | **명령 그룹과 폴더 복원 뒤에도 실제 읽기 위치에 맞춰 승인 경고를 표시합니다.**<br>#1456: subshell·그룹과 popd·cd -의 상태를 구별했다. 관련 회귀 742개와 기존 보호 유지를 확인했다. |
+| 20:23 | [`783049b`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/783049b) | **폴더 이동의 성공과 실패가 갈리는 명령에서도 개인 경로 경고를 유지합니다.**<br>#1456: OR guard와 위치 builtin의 도달 경로를 순서대로 보존한다. 관련 회귀 729개, 분기·wrapper 최종 보완 뒤 표적 53개와 background 거부 유지를 확인했다. |
+| 20:14 | [`6cd9192`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/6cd9192) | **긴 명령과 폴더 이동이 섞여도 개인 경로 경고의 근거를 보존합니다.**<br>#1456: 경로 해석 상한 뒤의 명시 경로를 확인하고 상대경로를 명령 순서대로 해석한다. 관련 회귀 723개와 pipeline 보완 뒤 표적 42개를 확인했다. |
+| 20:08 | [`f5849e5`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/f5849e5) | **일부 폴더만 읽도록 열어도 나머지 개인 파일의 승인 경고를 유지합니다.**<br>#1456: 미확인 명령의 경로별 보호 근거를 보존하고 한·영 안전 안내를 추가했다. 관련 회귀 717개를 확인했다. |
+| 19:59 | [`14a8450`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/14a8450) | **작업 폴더를 읽는 명령을 개인 파일 접근으로 단정하던 승인 설명을 고쳤습니다.**<br>#1456: 미확인 Bash 명령은 개별 승인을 유지하며 상위 작업 root 일치와 명시한 닫힌 경로를 구별한다. 개인 경로·입력 쓰기 보호와 관련 회귀 702개를 확인했다. |
 | 19:37 | [`32d403b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/32d403b) | **알려진 네트워크 표기는 묶음 허용에서 따로 확인합니다.**<br>네트워크 모듈 목록과 탐지 한계를 명시하고 회귀 시험을 추가한다. Refs |
 | 19:28 | [`0a94b0c`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/0a94b0c) | **Python의 Telnet 명령은 따로 확인합니다.**<br>telnetlib 모듈 호출을 요청 묶음 허용에서 제외한다. Refs |
 | 19:22 | [`9eb446b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/9eb446b) | **Python의 HTTP 서버 명령은 따로 확인합니다.**<br>http.server 모듈 실행을 요청 묶음 허용에서 제외한다. Refs |
