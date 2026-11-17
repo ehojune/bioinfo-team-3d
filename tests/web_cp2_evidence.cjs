@@ -114,20 +114,30 @@ test('failed tool translation stays hidden and raw policy reason stays in detail
   assert.match(p.reason.textContent,/경로를 미리 확인하지 못했습니다/);
   assert.doesNotMatch(p.summary.textContent,/번역 못 함|English source/);
   assert.match(p.summary.textContent,/파일 목록 보기/);
-  assert.doesNotMatch(p.facts.textContent,/위험 등급/);
+  assert.match(p.facts.textContent,/위험 등급높음 · 개인 경로/);
   assert.match(p.detail.textContent,/Bash read scope is ambiguous/);
   decide.syncDecisionCards(container,[{...card,pi_display:{status:'translated',text:'분석 코드를 실행하려 합니다.'}}],[],{presentation:'journal'});
   assert.match(p.summary.textContent,/분석 코드를 실행하려 합니다/);
 });
 
-test('tool card retains purpose and step but replaces a stale ambiguous-path warning',async()=>{
+test('tool card retains server purpose, step, reason and risk',async()=>{
   const decide=await modulePromise,container=new Element();
   const card={id:'tool-context',kind:'tool_permission',request_id:'r',pi_reason:'작업 목적: 비교 분석. 단계: s2.\n걸린 규칙: PI 개인 경로 보호.\n위험 등급: 높음 · 개인 정보',
     detail:{tool_name:'Bash',grant_category:'unresolved_path',policy_reason:'Bash read scope is ambiguous (policy.private_paths)'}};
   const [row]=decide.syncDecisionCards(container,[card],[],{presentation:'journal'});
   assert.match(row._decisionParts.reason.textContent,/작업 목적: 비교 분석.*단계: s2/);
-  assert.match(row._decisionParts.reason.textContent,/경로를 미리 확인하지 못했습니다/);
-  assert.doesNotMatch(row._decisionParts.reason.textContent,/PI 개인 경로|위험 등급: 높음/);
+  assert.match(row._decisionParts.reason.textContent,/걸린 규칙: PI 개인 경로 보호/);
+  assert.doesNotMatch(row._decisionParts.reason.textContent,/위험 등급: 높음/);
+  assert.match(row._decisionParts.facts.textContent,/위험 등급높음 · 개인 정보/);
+});
+
+test('3D tool card shows the server reason and risk',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const card={id:'tool-3d',kind:'tool_permission',pi_reason:'작업 목적: 비교 분석.\n작업 폴더 안에서 파일을 만들거나 고칩니다.\n위험 등급: 중간 · 작업 폴더 안 쓰기.',
+    detail:{tool_name:'Bash',grant_category:'workspace',policy_reason:'PI personal path'}};
+  const [row]=decide.syncDecisionCards(container,[card],[]);
+  assert.match(row._decisionParts.detail.textContent,/작업 폴더 안에서 파일을 만들거나 고칩니다/);
+  assert.match(row._decisionParts.detail.textContent,/위험 등급: 중간 · 작업 폴더 안 쓰기/);
 });
 
 test('other approvals keep two buttons and send no choice',async()=>{
