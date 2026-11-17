@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: 94ad146
+    at: '2026-11-17 19:59'
+    summary: GitHub와 메일 발송 명령은 따로 확인합니다.
+    text: gh와 smtplib가 드러난 명령을 요청 묶음 허용에서 제외한다. Refs #1445.
   - sha: 659531c
     at: '2026-11-17 18:47'
     summary: 내부 읽기 보호 시험을 Windows에서도 확인합니다.
