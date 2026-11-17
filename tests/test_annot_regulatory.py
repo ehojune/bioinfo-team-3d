@@ -681,7 +681,7 @@ def _server_env(tmp_path, key_file, with_package):
 
 BASE_TOOLS = {"vep", "gnomad", "clinvar", "chipatlas", "chipatlas_targets", "encode", "gtex", "fulltext",
               "key_fulltext", "citation_chase", "preprints", "openalex_works", "crossref_doi", "unpaywall",
-              "pdb", "chembl"}
+              "pdb", "chembl", "pubmed_search"}
 
 
 @pytest.mark.parametrize("key,package", [(False, True), (True, False)])
@@ -809,6 +809,8 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setattr(wizard.shutil, "which", lambda *a, **kw: None)
     monkeypatch.setattr(doctor, "_probe", lambda *a: (_ for _ in ()).throw(AssertionError("unexpected CLI")))
+    # Match the init fixtures: this key-flow test never probes native workspace ACLs.
+    monkeypatch.setattr(doctor, "_workspace_sandbox_acl_row", lambda settings: None)
     monkeypatch.setattr(wizard, "_hpc_query", lambda argv: None)
     monkeypatch.setattr("builtins.input", lambda *_: "")
     monkeypatch.chdir(tmp_path)
