@@ -20,7 +20,8 @@ from .workspace_commands import literal_commands, workspace_command
 _EXCLUDED_COMMAND = re.compile(
     r"\b(?:curl|wget|ssh|scp|sftp|rsync|ftp|nc|ncat|netcat|"
     r"invoke-webrequest|invoke-restmethod|irm|iwr|"
-    r"rm|rmdir|del|erase|remove-item|rd)\b", re.I)
+    r"rm|rmdir|remove|unlink|rmtree|shred|del|erase|remove-item|rd|"
+    r"os\.remove|os\.unlink|shutil\.rmtree|path\.unlink)\b", re.I)
 
 
 def capture_staff_env(adapter: Any) -> None:
@@ -70,16 +71,16 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         return excluded("policy_" + decision.action)
     checked = git_bash_command(tool, tool_input, roots)
     command = str(checked.get("command") or "")
-    # Grant only a small, literal, read-only grammar. Executable and operand
-    # checks are shared with the existing workspace permission proof; unknown
-    # scripts, shell syntax and writes retain an individual decision.
+    # Literal reads retain the executable and operand proof. Analysis scripts
+    # and shell expressions are included by explicit request-scoped consent;
+    # this classification cannot inspect their runtime behavior.
     parts, _ = literal_commands(command)
     safe = {"cd", "pwd", "cat", "ls", "head", "tail", "grep", "sed",
             "find", "wc", "od", "sha256sum"}
-    if (tool != "Bash" or parts is None
-            or any(words[0] not in safe for words in parts)
-            or any(word in {">", ">>", "<"} for words in parts for word in words)
-            or not workspace_command(command, workdir,
+    literal_read = (tool == "Bash" and parts is not None
+                    and all(words[0] in safe for words in parts)
+                    and not any(word in {">", ">>", "<"} for words in parts for word in words))
+    if (literal_read and not workspace_command(command, workdir,
                     [p for p in private_paths if not _inside(_norm(workdir), _norm(p))],
                     read_roots=[*extra_dirs, *(z.path for z in policy.data_zones if z.level == "internal")],
                     forbidden=restricted_paths(policy), environ=environ)):
@@ -112,6 +113,8 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
                 unknown_write = True
             elif not _inside(resolved, root):
                 return excluded("outside_write_target")
+    if targets and unknown_write:
+        return excluded("unresolved_write_target")
     if any(credential_path(path) for path in _candidate_paths(command)):
         return excluded("credential")
     closed = restricted_paths(policy)

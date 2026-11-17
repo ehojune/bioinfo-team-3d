@@ -589,7 +589,7 @@
       }
     },
     "tests/test_policy.py": {
-      "sha256": "75c1f1f1cc44025c432e7644dd24d56a4d59cf6a2db09d3c585bbe26719ba32f",
+      "sha256": "2a3b282c53706ec4419efcc4aee9b47cd71f84a676ee7f633cae9848a11202d1",
       "reason": "Only fake-clock budget assertions and numeric HPC threshold arithmetic are omitted; every path/security and actual scanner-cost node remains.",
       "nodes": {
         "test_a_command_writing_to_a_null_device_is_not_a_write": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
@@ -632,6 +632,7 @@
         "test_recursive_listings_and_plain_rd_in_powershell_stay_allowed": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_relative_write_resolved_against_workdir": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_relative_zone_is_rejected_at_config_load": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
+        "test_request_approval_summary_counts_all_confirmed_and_survives_restart": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_request_grant_api_requires_explicit_selection": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_request_grant_card_arriving_during_cancel_is_closed": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_request_grant_category_uses_runner_policy": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",

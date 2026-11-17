@@ -63,7 +63,7 @@ def test_request_grant_parent_private_path_preserves_exclusions(tmp_path, monkey
     assert category("cat a > ../secret/out") is None
     assert category("cat .ssh/id_rsa") is None
     assert category("cat $HOME/secret/a") is None
-    assert category("python -c x") is None
+    assert category("python -c x") == "unresolved_path"
 
 
 def test_request_grant_cd_write_scope(tmp_path):
@@ -78,7 +78,7 @@ def test_request_grant_cd_write_scope(tmp_path):
         return classify("Bash", {"command": command}, policy, workdir=work.as_posix(),
                         private_paths=(tmp_path.as_posix(),), private_enabled=True)
 
-    assert category(f'cd "{nested.as_posix()}" && echo x > output.txt') is None
+    assert category(f'cd "{nested.as_posix()}" && echo x > output.txt') == "workspace"
     assert category(f'cd "{nested.as_posix()}" && echo x > ../../outside.txt') is None
     assert category('cd "$UNKNOWN" && echo x > output.txt') is None
 
@@ -275,6 +275,50 @@ async def test_request_grant_api_requires_explicit_selection(tmp_path, monkeypat
     hub.store.close()
 
 
+async def test_request_approval_summary_counts_all_confirmed_and_survives_restart(tmp_path):
+    import httpx
+    from labhq.gateway.server import create_app
+    from labhq.store import StateStore
+
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.gateway.client_token = "test-token"
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r1"] = {"status": "running"}
+    hub.store.put("request", "r1", hub.requests["r1"])
+    manual = {"approval": {"request_id": "r1"}, "approved": True,
+              "automatic": False, "grant_category": "workspace", "grant_source": "source"}
+    hub.store.put("approval_decision", "source", manual)
+    hub.store.put("approval_grants", "r1", {"workspace": "source"})
+    for i in range(205):
+        hub.store.put("approval_decision", f"auto-{i}", {"approval": {"request_id": "r1"},
+                      "approved": True, "automatic": True})
+    hub.store.put("approval_decision", "auto-0", {"approval": {"request_id": "r1"},
+                  "approved": True, "automatic": True})  # replay overwrites the same ID
+    for aid, decision in {
+        "pending": {"approval": {"request_id": "r1"}, "approved": True, "automatic": True, "grant_pending": True},
+        "rejected": {"approval": {"request_id": "r1"}, "approved": False, "automatic": True},
+        "other": {"approval": {"request_id": "r2"}, "approved": True, "automatic": True},
+    }.items():
+        hub.store.put("approval_decision", aid, decision)
+    expected = {"request_id": "r1", "automatic_approved_count": 205,
+                "granted_categories": ["workspace"], "active_grant_categories": ["workspace"]}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.get("/api/requests/r1/approval-summary")).status_code == 401
+        client.headers["Authorization"] = "Bearer test-token"
+        assert (await client.get("/api/requests/missing/approval-summary")).status_code == 404
+        assert (await client.get("/api/requests/r1/approval-summary")).json() == expected
+        hub.store.put("request", "r1", {"status": "cancelled"})
+        expected["active_grant_categories"] = []
+        assert (await client.get("/api/requests/r1/approval-summary")).json() == expected
+        db = hub.store.path
+        hub.store.close()
+        hub.store = StateStore(db)
+        assert (await client.get("/api/requests/r1/approval-summary")).json() == expected
+    hub.store.close()
+
+
 async def test_request_grant_runner_rejects_forged_classification(tmp_path, monkeypatch):
     from labhq.models import ApprovalRequest, Engine
     from labhq.runner.daemon import Runner
@@ -368,6 +412,13 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     from labhq.adapters import get_adapter
     from labhq.approval_grants import capture_staff_env
     from labhq.workspace_commands import _resolve_executable
+    # Establish a known baseline; CI's setup-python may set LD_LIBRARY_PATH.
+    # The test below separately injects and checks every guarded variable.
+    for key in list(os.environ):
+        name = key.casefold()
+        if (name in {"bash_env", "env", "cdpath", "libpath", "shlib_path", "gconv_path", "locpath"}
+                or name.startswith(("bash_func_", "ld_", "dyld_"))):
+            monkeypatch.delenv(key, raising=False)
     capture_staff_env(object())  # An adapter without this capability must still run.
     monkeypatch.setattr("labhq.workspace_commands._resolve_executable", lambda *a: (True, "test"))
     hub, events, sent = request_grant_hub
@@ -405,6 +456,26 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     await runner._on_approval(second)
     assert hub.store.get("approval_decision", second.id)["grant_source"] == first.id
     assert sent[-1]["approved"] is True and events[-1]["data"]["automatic"] is True
+
+    for i, command in enumerate([
+        f'python script.py "{internal.as_posix()}/a"',
+        f'python -c "print(1)" "{internal.as_posix()}/a"',
+        f'python - "{internal.as_posix()}/a" <<\'PY\'\nprint(1)\nPY',
+    ]):
+        script = card(f"analysis-{i}")
+        script.detail["tool_input"]["command"] = command
+        await runner._on_approval(script)
+        assert hub.store.get("approval_decision", script.id)["grant_source"] == first.id
+
+    for i, command in enumerate([
+        f'python -c "import os; os.remove(\'a\')" "{internal.as_posix()}/a"',
+        f'unlink "{internal.as_posix()}/a"', f'shred -u "{internal.as_posix()}/a"',
+    ]):
+        deleting = card(f"visible-delete-{i}")
+        deleting.detail["tool_input"]["command"] = command
+        await runner._on_approval(deleting)
+        assert "grant_category" not in deleting.detail
+        assert deleting.id in hub.approvals
 
     (internal / "sub").mkdir()
     safe_cd = card("safe-cd")

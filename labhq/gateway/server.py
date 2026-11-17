@@ -2314,6 +2314,26 @@ class Hub:
         decision = self.store.get("approval_decision", source) if source else None
         return bool(decision and decision.get("approved") and not decision.get("grant_pending"))
 
+    def approval_summary(self, rid: str) -> dict:
+        decisions = self.store.all("approval_decision")
+        confirmed = {aid: d for aid, d in decisions.items()
+                     if (d.get("approval") or {}).get("request_id") == rid
+                     and d.get("approved") is True and not d.get("grant_pending")}
+        granted = {d["grant_category"] for aid, d in confirmed.items()
+                   if d.get("automatic") is False and d.get("grant_source") == aid
+                   and isinstance(d.get("grant_category"), str)}
+        request = self.store.get("request", rid) or {}
+        active = []
+        if is_active_request(request.get("status")) and not request.get("cancelling"):
+            for category, source in (self.store.get("approval_grants", rid) or {}).items():
+                decision = confirmed.get(source) or {}
+                if (category in granted and decision.get("grant_category") == category
+                        and decision.get("automatic") is False and decision.get("grant_source") == source):
+                    active.append(category)
+        return {"request_id": rid,
+                "automatic_approved_count": sum(d.get("automatic") is True for d in confirmed.values()),
+                "granted_categories": sorted(granted), "active_grant_categories": sorted(active)}
+
     async def _approval_operation(self, aid: str, operation):
         """Serialize a card's lifecycle and settle it even under repeated cancellation."""
         lock = self._approval_lock(aid)
@@ -7444,6 +7464,12 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
         except ValueError as error:
             raise HTTPException(409, str(error))
         return {"request_id": rid, "note": entry}
+
+    @app.get("/api/requests/{rid}/approval-summary", dependencies=[Depends(auth)])
+    async def approval_summary(rid: str) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        return hub.approval_summary(rid)
 
     @app.get("/api/requests/{rid}/task-attempts", dependencies=[Depends(auth)])
     async def task_attempts(rid: str, expected_created_at: float = Query(..., gt=0, allow_inf_nan=False),
