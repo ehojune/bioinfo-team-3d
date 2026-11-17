@@ -590,7 +590,7 @@
       }
     },
     "tests/test_policy.py": {
-      "sha256": "c53bd73a3a3d994ccd98f9c380b0bb35cd40d8c7d8cb49a33e7b358de3ddcc9d",
+      "sha256": "57b261c840d799bf7a8c13dcc76011264a72316db7dba552a7f5ab43d5d92048",
       "reason": "Only fake-clock budget assertions and numeric HPC threshold arithmetic are omitted; every path/security and actual scanner-cost node remains.",
       "nodes": {
         "test_a_command_writing_to_a_null_device_is_not_a_write": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",

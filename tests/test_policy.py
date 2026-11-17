@@ -243,6 +243,10 @@ def test_request_grant_dynamic_quote_and_unresolved_write(tmp_path, command, cat
     ("Bash", "cat inputs/closed.txt > outputs/a.txt", None, "other_private_path"),
     ("PowerShell", "Set-Content link/a.txt x", None, "outside_write_target"),
     ("Bash", "echo x > link/a.txt", None, "outside_write_target"),
+    # An option carrying a path is read as one, or the command is not proven task-local.
+    ("Bash", "sort --output=../other/out.txt outputs/a.txt", None, "other_private_path"),
+    ("Bash", "sort -o../other/out.txt outputs/a.txt", "unresolved_path", None),
+    ("Bash", "sort --output=outputs/b.txt outputs/a.txt", "workspace", None),
     # A script's runtime paths are not visible: still unresolved.
     ("Bash", "python outputs/run.py", "unresolved_path", None),
 ])

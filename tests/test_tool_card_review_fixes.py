@@ -173,3 +173,11 @@ def test_task_folder_write_card_is_not_a_personal_path_risk(tool, command, polic
     # Without the runner's category the same reason keeps its existing warning.
     plain = with_approval_copy({'kind': 'tool_permission', 'detail': detail})
     assert '작업 폴더 안에서 파일을 만들거나 고칩니다.' not in plain['pi_reason']
+
+
+def test_task_folder_read_card_does_not_claim_a_write():
+    detail = {'tool_name': 'Bash', 'policy_reason': 'Bash read scope is ambiguous (policy.private_paths)',
+              'tool_input': {'command': 'grep -n x outputs/a.txt'}, 'grant_category': 'workspace'}
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': detail})
+    assert '작업 폴더 안의 파일을 다룹니다.' in card['pi_reason'] and '만들거나 고칩니다' not in card['pi_reason']
+    assert '위험 등급: 높음' not in card['pi_reason']

@@ -174,8 +174,14 @@ def _task_local(command: str, parts: list[list[str]] | None, bases: list[str], w
     names = _POWERSHELL_FILE_COMMANDS if powershell else _FILE_COMMANDS
     if not root or parts is None or not all(words and words[0].casefold() in names for words in parts):
         return False
-    operands = [word for words in parts for word in words[1:]
-                if word not in _REDIRECTS and not (word.startswith("-") and len(word) > 1)]
+    operands = []
+    for word in (word for words in parts for word in words[1:] if word not in _REDIRECTS):
+        if not (word.startswith("-") and len(word) > 1):
+            operands.append(word)
+        elif re.fullmatch(r"--?[A-Za-z][A-Za-z-]*=.*", word):
+            operands.append(word.split("=", 1)[1])  # `--output=FILE`: the value is a path like any operand
+        elif not re.fullmatch(r"--?[A-Za-z][A-Za-z-]*[0-9]*", word):
+            return False  # an attached value (`-o/tmp/out`, `-i.bak`) is not read here
     for word in operands:
         for base in bases:
             path = word if _absolute(word) else posixpath.join(_norm(base), word)
