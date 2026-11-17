@@ -444,13 +444,15 @@ export function approvalSummaryText(request, summary) {
   return `이 요청에서 자동 승인 ${summary.automatic_approved_count}건 · 허용한 부류: ${summary.granted_categories.map(grantCategoryLabel).join(', ') || '없음'} · 현재 유효: ${summary.active_grant_categories.map(grantCategoryLabel).join(', ') || '없음'}`;
 }
 export function createApprovalSummaryLoader(fetchSummary, selected, changed) {
-  let serial = 0, current = null, value = null;
+  let serial = 0, current = null, value = null, pending = null;
   return {
     get: () => value,
     async refresh() {
-      const id = selected(), sequence = ++serial;
-      if (id !== current) { current = id; value = null; changed(); }
+      const id = selected();
+      if (id !== current) { current = id; value = null; pending = null; ++serial; changed(); }
       if (!id) return;
+      if (pending) { pending.queued = true; return; }
+      const sequence = serial, flight = pending = {queued:false};
       try {
         const result = await fetchSummary(id);
         if (sequence !== serial || selected() !== id) return;
@@ -461,8 +463,15 @@ export function createApprovalSummaryLoader(fetchSummary, selected, changed) {
       } catch {
         if (sequence !== serial || selected() !== id) return;
         value = null;
+      } finally {
+        if (pending === flight) {
+          pending = null;
+          if (sequence === serial && selected() === id) {
+            changed();
+            if (flight.queued) this.refresh();
+          }
+        }
       }
-      changed();
     },
   };
 }

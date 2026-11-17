@@ -53,6 +53,23 @@ test('approval totals discard stale results and do not invent zero on failure', 
   assert.equal(loader.get(),null);
 });
 
+test('slow approval summary polls are serialized and a queued refresh catches up', async () => {
+  const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
+  const {createApprovalSummaryLoader}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const pending=[];
+  const loader=createApprovalSummaryLoader(id=>new Promise(resolve=>pending.push({id,resolve})),()=> 'one',()=>{});
+  const first=loader.refresh();
+  await loader.refresh(); await loader.refresh();
+  assert.equal(pending.length,1);
+  pending[0].resolve({request_id:'one',automatic_approved_count:1,granted_categories:[],active_grant_categories:[]});
+  await first;
+  assert.equal(loader.get().automatic_approved_count,1);
+  assert.equal(pending.length,2);
+  pending[1].resolve({request_id:'one',automatic_approved_count:2,granted_categories:[],active_grant_categories:[]});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(loader.get().automatic_approved_count,2);
+});
+
 test('approval summary tolerates no request or a stale response', async () => {
   const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
   const {approvalSummaryText}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
