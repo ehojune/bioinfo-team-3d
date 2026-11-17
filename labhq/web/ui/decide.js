@@ -451,10 +451,21 @@ function explicitToolAction(value) {
     const segments = []; let words = [], word = '', quote = '', escaped = false, started = false, comment = false;
     const endWord = () => { if (started) words.push(word); word = ''; started = false; };
     const endSegment = () => { endWord(); if (words.length) segments.push(words); words = []; };
-    for (const char of text) {
+    for (let pos = 0; pos < text.length; pos++) {
+      const char = text[pos];
       if (comment) { if (char === '\n') { comment = false; endSegment(); } continue; }
       if (escaped) { word += char; started = true; escaped = false; continue; }
       if (char === '\\' && quote !== "'") { escaped = true; started = true; continue; }
+      if (char === '`' && quote !== "'") {
+        let end = pos + 1;
+        while (end < text.length && (text[end] !== '`' || text[end - 1] === '\\')) end++;
+        if (end < text.length) { scan(text.slice(pos + 1, end), depth + 1); pos = end; word += '__substitution__'; started = true; continue; }
+      }
+      if (char === '$' && text[pos + 1] === '(' && quote !== "'") {
+        let end = pos + 2, level = 1;
+        for (; end < text.length && level; end++) { if (text[end] === '(') level++; else if (text[end] === ')') level--; }
+        if (!level) { scan(text.slice(pos + 2, end - 1), depth + 1); pos = end - 1; word += '__substitution__'; started = true; continue; }
+      }
       if (quote) { if (char === quote) quote = ''; else word += char; started = true; continue; }
       if (char === "'" || char === '"') { quote = char; started = true; continue; }
       if (char === '#' && !started) { comment = true; continue; }

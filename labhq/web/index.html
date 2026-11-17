@@ -1321,7 +1321,7 @@ $('#sheet').addEventListener('click', async e => {
   memo.addEventListener('pointerup', end);
   memo.addEventListener('pointercancel', () => { if (ghost) { ghost.remove(); ghost = null; } if (over) { over.classList.remove('drop'); over = null; } });
 })();
-setInterval(() => { schedule(); if (MODE === 'live') { approvalSummary.refresh(); refreshReviewSummaries([...S.requests.values()].filter(q => (LabHQState.needsPiReview(q) || LabHQState.needsStorage(q)) && (!reviewSummaries.has(q.id) || !['done','failed','cancelled'].includes(q.status))).map(q => q.id)); } }, 15000);  // retry missing totals and refresh active requests
+setInterval(() => { schedule(); if (MODE === 'live') { approvalSummary.refresh(); refreshReviewSummaries([...S.requests.values()].filter(q => (LabHQState.needsPiReview(q) || LabHQState.needsStorage(q)) && (!reviewSummaries.has(q.id) || !['done','failed','cancelled','rejected','review_pending'].includes(q.status))).map(q => q.id)); } }, 15000);  // retry missing totals and refresh active requests
 /* ---------------- live: gateway WebSocket + REST ---------------- */
 function startLive() {
   let token = QS.get('token') || store.get('labhq_token') || '';
