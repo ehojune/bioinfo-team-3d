@@ -50,3 +50,4 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - P1: private root 아래 읽기 예외가 하나라도 있으면 root 전체를 경고 근거에서 빼던 결함을 수정했다. 미확인 문법에서도 각 경로의 표기·실제 위치를 대조해 열린 하위 폴더만 예외로 둔다.
 - 절대경로·home·상대경로 × settings·history·다른 task·plugin·project 15건을 추가했다. 관련 4개 시험 파일은 717 passed, 10 skipped.
 - safety 안내 길이: 한국어 20,168→20,293자, 영어 36,437→36,711자. 각 언어에 한 항목만 추가했다.
+- 후속 P1 2건: 상한 뒤에도 경로 표기의 직접 근거를 남기며 filesystem 해석만 제한한다. 명령을 순서대로 읽고 pipeline 안 `cd`를 바깥 폴더 변경으로 쓰지 않는다. 상한·순서·pipeline 7건 추가, 표적 42건 통과.

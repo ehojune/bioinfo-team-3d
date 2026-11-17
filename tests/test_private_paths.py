@@ -134,6 +134,48 @@ def test_unknown_read_preserves_private_parent_evidence(tmp_path, monkeypatch, l
         assert 'ambiguous' not in decision.reason
 
 
+@pytest.mark.parametrize('location', ['settings.json', 'history.jsonl', 'plugins/skill/guide.md'])
+def test_unknown_read_keeps_lexical_evidence_past_resolution_cap(tmp_path, monkeypatch, location):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config, task = tmp_path / '.claude', tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    plugin.mkdir(parents=True)
+    task.mkdir()
+    decoys = ' '.join(f'missing{i}.txt' for i in range(257))
+    decision = evaluate_tool('Bash', {'command': f'wc -l {decoys} ~/.claude/{location}'},
+                             PolicySettings(), allowed_roots=[str(task)], workdir=str(task),
+                             private_enabled=True, private_paths=[str(config)],
+                             private_open_reads=[str(task), str(plugin)], home=str(tmp_path), environ={})
+    assert decision.action == 'ask'
+    assert ('personal path' in decision.reason) == (location != 'plugins/skill/guide.md')
+    assert ('read scope is ambiguous' in decision.reason) == (location == 'plugins/skill/guide.md')
+
+
+@pytest.mark.parametrize('sequence,closed', [
+    ('wc -l ../notes.txt; cd {plugin}; wc -l guide.md', False),
+    ('cd {plugin}; wc -l ../notes.txt', True),
+    ('cd {plugin} | wc -l ../notes.txt', False),
+    ('pwd | cd {plugin}; wc -l ../notes.txt', False),
+])
+def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequence, closed):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config, task = tmp_path / '.claude', tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    plugin.mkdir(parents=True)
+    task.mkdir()
+    command = sequence.format(plugin='"' + plugin.as_posix() + '"')
+    decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
+                             allowed_roots=[str(task)], workdir=str(task), private_enabled=True,
+                             private_paths=[str(config)], private_open_reads=[str(task), str(plugin)])
+    assert decision.action == 'ask'
+    assert ('personal path' in decision.reason) == closed
+    assert ('read scope is ambiguous' in decision.reason) != closed
+
+
 def test_request_unknown_syntax_still_checks_registry(request_paths_1456):
     decision = request_gate_1456(request_paths_1456, 'Bash', {'command': 'reg query HKCU/Environment'})
     assert decision.action == 'ask'

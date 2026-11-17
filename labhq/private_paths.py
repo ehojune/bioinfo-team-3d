@@ -501,28 +501,59 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
                          workdir: str, home: str | None,
                          environ: Mapping[str, str] | None) -> bool:
     """Find closed operands in unknown syntax; this never approves the command."""
+    import shlex
     from .policy import MAX_RESOLVED_CANDIDATES, _scan_path_text
 
     home = home or host_home()
     environ = os.environ if environ is None else environ
-    bases = shell_cd_bases(command, workdir, home, environ)
-    if bases is None:
-        return False  # unproven scope, not evidence of a personal file
-    candidates = list(dict.fromkeys(_scan_path_text(command).candidates))
-    if len(candidates) > MAX_RESOLVED_CANDIDATES:
-        return False
-    for value in candidates:
-        expanded = _expand_dir(value, home, environ)
-        if expanded is None:
-            continue
-        for base in dict.fromkeys([workdir, *bases]):
-            raw = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
-            try:
-                targets = (path_field_text(expanded, base), resolved_read_path(raw))
-            except (OSError, ValueError, RuntimeError):
-                continue
-            if any(not _managed_operand(target, base, private_paths, open_reads) for target in targets):
-                return True
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|\n')
+    lexer.whitespace = ' \t\r'
+    lexer.whitespace_split = True
+    lexer.commenters = ''
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        tokens = [command]  # lexical absolute evidence survives malformed syntax
+    parts, words = [], []
+    for token in [*tokens, ';']:
+        if token and set(token) <= set(';&|\n'):
+            parts.append((words, token))
+            words = []
+        else:
+            words.append(token)
+    base = workdir
+    resolved = 0
+    pipeline = False
+    for words, separator in parts:
+        for word in words:
+            for value in dict.fromkeys([word, *_scan_path_text(word).candidates]):
+                expanded = _expand_dir(value, home, environ)
+                if expanded is None or (not os.path.isabs(expanded) and base is None):
+                    continue
+                raw = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
+                spelled = path_field_text(expanded, base)
+                # Always retain direct evidence, even after the filesystem-resolution cap.
+                for root in private_paths:
+                    eligible = [r for r in open_reads if inside_any(r, [root]) and not inside_any(root, [r])]
+                    if inside_any(spelled, [root]) and (credential_path(spelled)
+                                                       or not inside_any(spelled, eligible)):
+                        return True
+                if resolved >= MAX_RESOLVED_CANDIDATES:
+                    continue
+                resolved += 1
+                try:
+                    real = resolved_read_path(raw)
+                except (OSError, ValueError, RuntimeError):
+                    continue
+                if not _managed_operand(real, base or workdir, private_paths, open_reads):
+                    return True
+        # A pipeline's cd runs in a subshell. Only subsequent commands use a literal cd target.
+        if words and words[0] == 'cd' and not pipeline and separator != '|':
+            target = _expand_dir(words[1], home, environ) if len(words) == 2 else None
+            base = (path_field_text(target, base) if target is not None
+                    and (base is not None or os.path.isabs(target)) and separator in (';', '&&', '\n')
+                    else None)
+        pipeline = separator == '|'
     return False
 
 
