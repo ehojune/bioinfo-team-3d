@@ -1,5 +1,9 @@
 pr: 1451
 rows:
+  - sha: "cf45e91"
+    at: "2026-11-17 14:49"
+    summary: "부분 문헌 조회의 실패도 품질 기록에 남깁니다."
+    text: "부분 manifest를 유지하면서 공유 lookup에 실패를 기록한다. 명시한 건수·용량 상한과 HTTP·transport·admission·응답 오류를 구분한 회귀 209 passed, 3 skipped (#1446)."
   - sha: "149d305"
     at: "2026-11-17 14:41"
     summary: "PubMed 결과 파일을 요청 묶음에도 담도록 크기를 나눕니다."
