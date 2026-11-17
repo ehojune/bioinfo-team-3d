@@ -3196,6 +3196,9 @@ class Runner:
                     result = TaskResult(task_id=task.id, agent_id=agent.id, ok=False, error=refused)
                 else:
                     adapter = get_adapter(agent.engine, self.s)
+                    if agent.engine == Engine.claude_code:
+                        from ..approval_grants import capture_staff_env
+                        capture_staff_env(adapter)
                     try:
                         from .structured_output import run_with_json_retries
                         result = await run_with_json_retries(adapter, ctx)
@@ -3664,10 +3667,12 @@ class Runner:
                 denied = shared_environment_install_denial(
                     tool, tool_input or {}, protected=ctx.shared_environment_protected,
                     environment_step=ctx.environment_step, workdir=str(ws.dir))
-                category = None if denied else classify(tool, tool_input, self.s.policy,
+                staff_env = getattr(ctx, '_approval_grant_env', None)
+                category = None if denied or not isinstance(staff_env, dict) else classify(tool, tool_input, self.s.policy,
                                     workdir=str(ws.dir), extra_dirs=tuple(ctx.extra_dirs),
                                     private_paths=tuple(ctx.private_paths), private_enabled=ctx.private_enabled,
-                                    private_open_reads=tuple(ctx.private_open_reads), read_only=ctx.read_only)
+                                    private_open_reads=tuple(ctx.private_open_reads), read_only=ctx.read_only,
+                                    environ=staff_env)
             except Exception:
                 log.exception('request grant classification failed; keeping individual approval')
                 category = None

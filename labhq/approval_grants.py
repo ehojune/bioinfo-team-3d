@@ -23,10 +23,21 @@ _EXCLUDED_COMMAND = re.compile(
     r"rm|rmdir|del|erase|remove-item|rd)\b", re.I)
 
 
+def capture_staff_env(adapter: Any) -> None:
+    """Remember the environment actually built by the adapter for each spawn."""
+    build = adapter.staff_env
+    def captured(ctx: Any) -> dict[str, str]:
+        env = build(ctx)
+        ctx._approval_grant_env = dict(env)
+        return env
+    adapter.staff_env = captured
+
+
 def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str,
              extra_dirs: tuple[str, ...] = (), private_paths: tuple[str, ...] = (),
              private_enabled: bool = False, private_open_reads: tuple[str, ...] = (),
-             read_only: bool = False, trace: list[str] | None = None) -> str | None:
+             read_only: bool = False, trace: list[str] | None = None,
+             environ: dict[str, str] | None = None) -> str | None:
     """Return a grant category for a shell ask, or None for an individual card.
 
     Decisions are recomputed using runner-owned settings, not the caller's
@@ -40,13 +51,16 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
 
     if tool not in SHELL_TOOLS or not workdir or not isinstance(tool_input, dict):
         return excluded("unsupported")
+    if environ and any((key.casefold() in {"bash_env", "env"} and value)
+                       or key.casefold().startswith("bash_func_") for key, value in environ.items()):
+        return excluded("shell_startup_environment")
     command = tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
         return excluded("missing_command")
     roots = [workdir, *extra_dirs]
     decision = evaluate_tool(tool, tool_input, policy, allowed_roots=roots, workdir=workdir,
                              private_paths=private_paths, private_enabled=private_enabled,
-                             private_open_reads=private_open_reads, read_only=read_only)
+                             private_open_reads=private_open_reads, read_only=read_only, environ=environ)
     if decision.action != "ask":
         return excluded("policy_" + decision.action)
     checked = git_bash_command(tool, tool_input, roots)
@@ -63,7 +77,7 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
             or not workspace_command(command, workdir,
                     [p for p in private_paths if not _inside(_norm(workdir), _norm(p))],
                     read_roots=[*extra_dirs, *(z.path for z in policy.data_zones if z.level == "internal")],
-                    forbidden=restricted_paths(policy))):
+                    forbidden=restricted_paths(policy), environ=environ)):
         return excluded("unproven_literal_read")
     if _EXCLUDED_COMMAND.search(command):
         return excluded("network_or_delete_mention")
@@ -104,7 +118,7 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     # Internal-zone reads return early in the regular policy. Remove only those
     # zones for a second pass so scheduler and write checks still run.
     rest = policy.model_copy(update={"data_zones": [z for z in policy.data_zones if z.level != "internal"]})
-    if _evaluate_tool(tool, checked, rest, roots, workdir).action != "allow":
+    if _evaluate_tool(tool, checked, rest, roots, workdir, environ=environ).action != "allow":
         return excluded("other_policy_ask_or_deny")
 
     # A private parent of this workdir does not itself identify another person's

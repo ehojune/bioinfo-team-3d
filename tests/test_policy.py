@@ -288,7 +288,7 @@ async def test_request_grant_runner_rejects_forged_classification(tmp_path, monk
     runner.task_req, runner.active_roots = {"t1": "r1"}, {"t1": (False, [tmp_path])}
     runner.tool_contexts = {"t1": SimpleNamespace(agent=agent, extra_dirs=[], private_paths=[],
         private_enabled=False, private_open_reads=[], read_only=False, shared_environment_protected=False,
-        environment_step=False)}
+        environment_step=False, env={})}
     runner.approval_tasks = {}
     emitted = []
     async def emit(events):
@@ -359,6 +359,9 @@ async def test_request_grant_unfinished_commit_fails_closed_on_replay(request_gr
 async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path, monkeypatch):
     from labhq.models import ApprovalRequest, Engine
     from labhq.runner.daemon import Runner
+    from labhq.adapters import get_adapter
+    from labhq.approval_grants import capture_staff_env
+    from labhq.workspace_commands import _resolve_executable
     monkeypatch.setattr("labhq.workspace_commands._resolve_executable", lambda *a: (True, "test"))
     hub, events, sent = request_grant_hub
     internal = tmp_path / "internal"
@@ -373,7 +376,10 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     runner.task_req, runner.active_roots = {"t1": "r1"}, {"t1": (False, [tmp_path])}
     runner.tool_contexts = {"t1": SimpleNamespace(agent=agent, extra_dirs=[], private_paths=[],
         private_enabled=False, private_open_reads=[], read_only=False, shared_environment_protected=False,
-        environment_step=False)}
+        environment_step=False, env={})}
+    adapter = get_adapter(Engine.claude_code, runner.s)
+    capture_staff_env(adapter)
+    adapter.staff_env(runner.tool_contexts["t1"])
     runner.approval_tasks = {}
     async def emit(frames):
         for frame in frames:
@@ -392,6 +398,36 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     await runner._on_approval(second)
     assert hub.store.get("approval_decision", second.id)["grant_source"] == first.id
     assert sent[-1]["approved"] is True and events[-1]["data"]["automatic"] is True
+
+    # A task-supplied PATH must reach both policy and executable verification;
+    # a trusted runner PATH cannot validate a different staff executable.
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    fake_cat = fake_bin / ("cat.exe" if os.name == "nt" else "cat")
+    fake_cat.write_text("not executed", encoding="utf8")
+    fake_cat.chmod(0o755)
+    runner.tool_contexts["t1"].env["PATH"] = str(fake_bin)
+    adapter.staff_env(runner.tool_contexts["t1"])
+    monkeypatch.setattr("labhq.workspace_commands._resolve_executable", _resolve_executable)
+    unsafe_path = card("unsafe-path")
+    await runner._on_approval(unsafe_path)
+    assert not unsafe_path.detail.get("grant_category")
+    assert hub.store.get("approval_decision", unsafe_path.id) is None
+    assert unsafe_path.id in hub.approvals
+    runner.tool_contexts["t1"].env.clear()
+    runner.s.engines.claude_code.env["PATH"] = str(fake_bin)
+    adapter.staff_env(runner.tool_contexts["t1"])
+    unsafe_engine = card("unsafe-engine-path")
+    await runner._on_approval(unsafe_engine)
+    assert not unsafe_engine.detail.get("grant_category")
+    assert hub.store.get("approval_decision", unsafe_engine.id) is None
+    assert unsafe_engine.id in hub.approvals
+    del runner.tool_contexts["t1"]._approval_grant_env
+    missing_env = card("missing-spawn-env")
+    await runner._on_approval(missing_env)
+    assert not missing_env.detail.get("grant_category")
+    assert hub.store.get("approval_decision", missing_env.id) is None
+    assert missing_env.id in hub.approvals
 
     for i, command in enumerate([
         "unlink a", "shred -u a", "python -c 'import os; os.remove(\"a\")'",
