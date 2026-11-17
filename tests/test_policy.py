@@ -492,6 +492,21 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     assert not special_cd.detail.get("grant_category")
     assert hub.store.get("approval_decision", special_cd.id) is None
     assert special_cd.id in hub.approvals
+    outside = tmp_path.parent / "outside"
+    outside.mkdir(exist_ok=True)
+    ps_change = card("unsafe-push-location")
+    ps_change.detail["tool_name"] = "PowerShell"
+    ps_change.detail["tool_input"]["command"] = (
+        f'Push-Location "{outside.as_posix()}"; Get-Content "{internal.as_posix()}/a" > result.txt')
+    from labhq.approval_grants import classify
+    trace = []
+    assert classify("PowerShell", ps_change.detail["tool_input"], runner.s.policy,
+                    workdir=tmp_path.as_posix(), trace=trace, environ={}) is None
+    assert trace == ["outside_write_target"]
+    await runner._on_approval(ps_change)
+    assert not ps_change.detail.get("grant_category")
+    assert hub.store.get("approval_decision", ps_change.id) is None
+    assert ps_change.id in hub.approvals
     runner.tool_contexts["t1"].env["CDPATH"] = str(tmp_path / "other")
     adapter.staff_env(runner.tool_contexts["t1"])
     unsafe_cd = card("unsafe-cdpath")
