@@ -143,6 +143,23 @@ def test_modified_and_unscanned_files_have_explicit_reasons(tmp_path):
     assert "not present" in result.excluded[missing]
 
 
+def test_same_size_change_with_restored_mtime_is_excluded_without_poisoning_other_outputs(tmp_path):
+    ws = workspace(tmp_path)
+    changed, good = "outputs/annotation/a.json", "outputs/annotation/b.json"
+    target = put(ws, changed, b"original")
+    put(ws, good)
+    rows, _ = scan(ws)
+    before = target.stat()
+    target.write_bytes(b"modified")
+    os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert target.stat().st_size == before.st_size
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+    result = collect(ws, records=rows)
+    assert result.outputs == [good]
+    assert changed not in result.hashes
+    assert "content changed" in result.excluded[changed]
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native Windows junction")
 def test_windows_junction_is_reported_and_never_followed(tmp_path):
     ws = workspace(tmp_path)

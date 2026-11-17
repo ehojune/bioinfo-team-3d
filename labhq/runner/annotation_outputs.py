@@ -1,6 +1,7 @@
 """Collect annotation snapshots even when staff omit them from their output list."""
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,7 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
                                scan_notes: list[str] = ()) -> AnnotationOutputs:
     """Merge the runner's bounded, no-follow output scan into collected artifacts.
 
-    Only scan-proven hashes are adopted; source handles recheck links, size and mtime.
+    Only scan-proven hashes are adopted; source handles recheck links and content.
     Existing non-annotation outputs keep their order and budget priority. The query log
     comes next, then response paths in lexical order. Every excluded candidate has a
     reason; a truncated scan also records that unobserved paths may be missing.
@@ -71,6 +72,16 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
                         raise ValueError("hard-linked file")
                     if info.st_size != row.get("size") or info.st_mtime_ns != row.get("mtime_ns"):
                         raise ValueError("file changed since the output scan")
+                    actual, read = hashlib.sha256(), 0
+                    while chunk := source.read(min(1024 * 1024, max_file + 1 - read)):
+                        read += len(chunk)
+                        actual.update(chunk)
+                        if read > max_file:
+                            raise ValueError("file grew beyond the per-file input limit")
+                    after = os.fstat(source.fileno())
+                    if (read != info.st_size or actual.hexdigest() != digest or after.st_nlink != 1
+                            or (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns)):
+                        raise ValueError("file content changed since the output scan")
         except (OSError, ValueError) as exc:
             excluded[path] = str(exc) if isinstance(exc, ValueError) else "link or unreadable artifact"
             continue
