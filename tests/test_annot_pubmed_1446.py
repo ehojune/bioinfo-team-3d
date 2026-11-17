@@ -476,6 +476,17 @@ async def test_mcp_lookup_status_distinguishes_partial_failure_from_planned_cap(
         assert len(rows) == 1 and rows[0]["http_status"] == 400 and rows[0]["outcome"] == "failed"
 
 
+async def test_successful_crossref_absence_keeps_404_receipt_ok(tmp_path, monkeypatch, mcp_module, limited):
+    limited.provider = lambda request: httpx.Response(404)
+    monkeypatch.setattr(annot.Http, "_pace", lambda *a: asyncio.sleep(0))
+    result = json.loads(await mcp_module.crossref_doi(["10.1000/missing"]))
+    assert not result["results"][0]["found"]
+    rows = limited.ledger.sends("req-1")
+    assert len(rows) == 1 and rows[0]["http_status"] == 404 and rows[0]["outcome"] == "ok"
+    states = [json.loads(s) for s in (tmp_path / external_wait.STATUS_FILE).read_text(encoding="utf-8").splitlines()]
+    assert states[-1]["status"] == "ok"
+
+
 async def test_owned_parent_link_is_refused_without_touching_target(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()

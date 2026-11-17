@@ -247,7 +247,7 @@ async def _admitted(tool: str, *, completion: dict | None = None):
         # A backend may return a partial result after catching a transport error.
         # No HTTP response is still a failed probe, even when the tool returns normally.
         def settled_outcome(row):
-            if row[1] is not None and row[1] >= 400:
+            if tool == "pubmed_search" and row[1] is not None and row[1] >= 400:
                 return "failed"
             if row[1] is None and outcome == "ok":
                 return "timeout" if completion and completion.get("outcome") == "timeout" else "failed"
