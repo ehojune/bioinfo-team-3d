@@ -518,6 +518,36 @@ async def test_unconfirmed_job_never_promotes_reported_count_to_measured(tmp_pat
     assert evidence["active_processes_measured"] is False and "job_active_processes" not in evidence
 
 
+@pytest.mark.parametrize("exited,expected", [(True, "job_close_contract_enforced"),
+                                            (False, "UNKNOWN"), (None, "UNKNOWN")])
+@pytest.mark.asyncio
+async def test_venv_launcher_requires_pinned_child_and_observed_child_exit(tmp_path, monkeypatch, exited, expected):
+    token = "c" * 64
+    lines = [memory_limit.job_activation_line(4243), f"{memory_limit.JOB_EVIDENCE} token={token}",
+             f"{memory_limit.JOB_EVIDENCE} token={token} child_pid=4244 child_created=133000000000000001",
+             f"{memory_limit.JOB_EVIDENCE} token={token} active_processes=1"]
+    class Handle:
+        created = 133000000000000001
+        closed = False
+        def exited(self):
+            return exited
+        def close(self):
+            self.closed = True
+    handle = Handle()
+    async def spawn(*argv, **kwargs):
+        return _Wrapper(lines, stdout=[], code=0xC000013A)
+    adapter, ctx, _reports, _ = _fake_run(monkeypatch, tmp_path, spawn)
+    def pin(parent, created, child):
+        assert (parent, created, child) == (4242, 133000000000000000, 4243)
+        return handle
+    monkeypatch.setattr("labhq.adapters.base.proc_tree.pin_direct_child", pin)
+    evidence = (await adapter.run(ctx)).cleanup_evidence
+    assert evidence["status"] == expected and handle.closed
+    assert evidence["active_processes_measured"] is (exited is True)
+    if exited is not True:
+        assert "job_active_processes" not in evidence
+
+
 @pytest.mark.parametrize("error, kind", [(FileNotFoundError("missing"), "not_found"),
                                         (PermissionError("denied"), "other_os_error")])
 @pytest.mark.asyncio

@@ -88,6 +88,40 @@ def test_child_pids_is_empty_when_the_table_cannot_be_read(monkeypatch):
     assert proc_tree.child_pids(ROOT) == []
 
 
+@pytest.mark.parametrize("scenario", ["ok", "wrong_parent", "changed_parent", "reused_parent", "older_child", "unreadable"])
+def test_pin_direct_child_checks_generations_and_both_snapshots(monkeypatch, scenario):
+    tables = [[(KID, ROOT)], [(KID, BYSTANDER if scenario == "changed_parent" else ROOT)]]
+    if scenario == "wrong_parent":
+        tables[0] = [(KID, BYSTANDER)]
+    if scenario == "unreadable":
+        tables[1] = None
+    monkeypatch.setattr(proc_tree, "_table", lambda: tables.pop(0))
+    handles = []
+
+    class Handle:
+        def __init__(self, pid, created):
+            self.pid, self.created, self.closed = pid, created, False
+        def close(self):
+            self.closed = True
+
+    def open_process(pid, **kwargs):
+        created = (999 if scenario == "reused_parent" else 1000) if pid == ROOT else (
+            999 if scenario == "older_child" else 1100)
+        handle = Handle(pid, created)
+        handles.append(handle)
+        if pid == KID:
+            assert kwargs == {"terminate": False, "synchronize": True}
+        return handle
+
+    monkeypatch.setattr(proc_tree, "_open", open_process)
+    child = proc_tree.pin_direct_child(ROOT, 1000, KID)
+    assert (child is not None) is (scenario == "ok")
+    if child:
+        assert not child.closed and child.created == 1100
+        child.close()
+    assert all(h.closed for h in handles)
+
+
 @pytest.mark.parametrize("value, ticks", [("windows:123", 123), ("windows:", None), ("windows:x", None),
                                           ("proc:123", None), (None, None)])
 def test_parse_created_reads_only_the_windows_identity(value, ticks):

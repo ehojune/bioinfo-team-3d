@@ -1338,6 +1338,17 @@ class AgentAdapter(ABC):
                             expecting_capability = True
                         confirmed = (type(wrapper_pid) is int and
                                      getattr(memory_guard, "job_confirmed", lambda *_args: False)(text, wrapper_pid))
+                        if not confirmed and advertised and type(wrapper_pid) is int:
+                            # A Windows venv launcher waits for its interpreter child, which owns the Job.
+                            # Pin that exact direct child before trusting its announcement or its eventual exit.
+                            child = proc_tree.pin_direct_child(wrapper_pid, cleanup["wrapper_created"], reported_pid)
+                            if child is not None:
+                                if getattr(memory_guard, "job_confirmed", lambda *_args: False)(text, reported_pid):
+                                    cleanup["_job_wrapper_handle"] = child
+                                    cleanup["job_reported_created"] = child.created
+                                    confirmed = True
+                                else:
+                                    child.close()
                         cleanup["job"] = "active" if confirmed else "unconfirmed"
                         if confirmed:
                             expecting_capability = True
@@ -1711,6 +1722,17 @@ class AgentAdapter(ABC):
     def _cleanup_evidence(record: dict[str, Any], proc: Any) -> dict[str, Any]:
         """The verdict on the wrapper the runner held, from its own observations only (#863)."""
         returncode = getattr(proc, "returncode", None)
+        child = record.pop("_job_wrapper_handle", None)
+        if child is not None:
+            try:
+                if child.exited() is not True:
+                    record["job"] = "unconfirmed"
+                    record.pop("job_active_processes", None)
+            except (OSError, ValueError, AttributeError):
+                record["job"] = "unconfirmed"
+                record.pop("job_active_processes", None)
+            finally:
+                child.close()
         observed = {key: record[key] for key in ("job", "wrapper_pid", "wrapper_created", "spawn",
                                                     "cli_pid", "cli_created", "job_active_processes",
                                                     "job_reported_pid", "job_reported_created",
