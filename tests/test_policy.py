@@ -136,6 +136,138 @@ def test_request_grant_cd_write_scope(tmp_path):
     assert category('cd "$UNKNOWN" && echo x > output.txt') is None
 
 
+def _grant_category(work, command, trace=None, **kw):
+    from labhq.approval_grants import classify
+
+    kw.setdefault("private_paths", (work.parent.as_posix(),))
+    return classify("Bash", {"command": command}, PolicySettings(), workdir=work.as_posix(),
+                    private_enabled=True, trace=trace, **kw)
+
+
+@pytest.mark.parametrize("command, category, reason", [
+    # A move or in-place edit inside the task folder is not a delete: the same category as any write there.
+    ("echo x > a.txt; mv a.txt b.txt", "task_write", None),
+    ("echo x > a.txt; mv -t nested a.txt", "task_write", None),
+    ("echo x > a.txt; sed -i s/x/y/ a.txt", "task_write", None),
+    ("echo x > a.txt; perl -pi -e s/x/y/ a.txt", "task_write", None),
+    # Its operands cannot be read: unresolved path.
+    ('echo x > a.txt; mv a.txt "$DEST"', "unresolved_path", None),
+    ("echo x > a.txt; ls | xargs mv", "unresolved_path", None),
+    ("echo x > a.txt; sed -i s/x/y/ *.txt", "unresolved_path", None),
+    ("echo x > a.txt; mv -t../outside a.txt", "unresolved_path", None),
+    ("echo x > a.txt; mv -S.bak a.txt b.txt", "unresolved_path", None),
+    ('echo x > a.txt; mv a.txt "/tmp"/out', "unresolved_path", None),
+    # Resolved outside the task folder, or a delete: still an individual card.
+    ("echo x > a.txt; mv a.txt ../b.txt", None, "outside_write_target"),
+    ("echo x > a.txt; mv ../b.txt a.txt", None, "outside_write_target"),
+    ("echo x > a.txt; mv -t ../outside a.txt", None, "outside_write_target"),
+    ("echo x > a.txt; mv --target-directory=../outside a.txt", None, "outside_write_target"),
+    ("echo x > a.txt; sed -i s/x/y/ ../b.txt", None, "outside_write_target"),
+    ("echo x > a.txt; perl -i.bak -pe s/x/y/ ../b.txt", None, "outside_write_target"),
+    ("echo x > a.txt; rm a.txt", None, "network_or_delete_mention"),
+    ("echo x > a.txt; curl -o a.txt https://example.test", None, "network_or_delete_mention"),
+])
+def test_request_grant_move_and_in_place_edit(tmp_path, command, category, reason):
+    work = tmp_path / "work"
+    (work / "nested").mkdir(parents=True)
+    if category == "task_write":
+        # Under a private runs root the plain write is itself "unresolved_path" (resolved_match).
+        category = _grant_category(work, "echo x > a.txt")
+        assert category in {"workspace", "unresolved_path"}
+    trace = []
+    assert _grant_category(work, command, trace) == category
+    assert trace == ([reason] if reason else [])
+
+
+@pytest.mark.parametrize("command, targets, unknown", [
+    ("mv a.txt b.txt", ["a.txt", "b.txt"], False),
+    ("mv -t out a.txt", ["out", "a.txt"], False),
+    ("perl -pi -e s/x/y/ a.txt", ["a.txt"], False),
+    ("perl -i.bak script.pl a.txt", ["a.txt"], False),
+    ("perl -e s/x/y/ a.txt", [], False),
+    # Shapes whose operands are not read stay unresolved instead of dropping a file.
+    ("mv -t../out a.txt", ["a.txt"], True),
+    ('mv a.txt "/tmp"/out', None, True),
+    ("perl -pi -e's/x/y/' /tmp/out", [], True),
+    ("perl -I lib -pi -e s/x/y/ /tmp/out", [], True),
+    ("ls | xargs mv", [], True),
+])
+def test_request_grant_mover_operands(command, targets, unknown):
+    from labhq.approval_grants import _move_edit_targets
+
+    found, unresolved = _move_edit_targets(command, False)
+    assert unresolved is unknown
+    if targets is not None:
+        assert found == targets
+
+
+@pytest.mark.parametrize("command, category, reason", [
+    # A dynamic quote or an unreadable write destination: unresolved path.
+    ("IFS=$'\\t' read a b < data.tsv; echo $a > out.txt", "unresolved_path", None),
+    ('echo x > "$OUT"', "unresolved_path", None),
+    ("for f in *.txt; do echo x > $f.bak; done", "unresolved_path", None),
+    # Decoded, a dynamic quote that spells a delete, network call or startup variable stays individual.
+    ("$'\\x72m' -f out.txt", None, "network_or_delete_mention"),
+    ("x=$'\\143url'; $x https://example.test > out.txt", None, "network_or_delete_mention"),
+    ("$'\\x4c\\x44_PRELOAD'=x.so echo x > out.txt", None, "shell_startup_environment"),
+    # Decoded, a private path or an outside write destination stays individual.
+    ("cat $'{private}/sec\\x72et.txt' > out.txt", None, "other_private_path"),
+    ("echo x > $'\\x2e\\x2e/out.txt'", None, "outside_write_target"),
+    # A readable destination outside the task folder stays individual.
+    ("echo x > ../out.txt", None, "outside_write_target"),
+])
+def test_request_grant_dynamic_quote_and_unresolved_write(tmp_path, command, category, reason):
+    work = tmp_path / "work"
+    work.mkdir()
+    private = tmp_path / "private"
+    private.mkdir()
+    trace = []
+    assert _grant_category(work, command.replace("{private}", private.as_posix()), trace,
+                           private_paths=(work.parent.as_posix(), private.as_posix())) == category
+    assert trace == ([reason] if reason else [])
+
+
+def test_request_grant_own_session_tool_results(tmp_path, monkeypatch):
+    """Reading the staff's own session's saved long output groups like a task file; other config files do not."""
+    from labhq.private_paths import claude_project_slug
+    monkeypatch.setattr("labhq.workspace_commands._resolve_executable", lambda *a: (True, "test"))
+
+    work = tmp_path / "runs" / "task"
+    work.mkdir(parents=True)
+    staff = tmp_path / "staff"
+    project = staff / "projects" / claude_project_slug(os.path.abspath(work))
+    old, own = project / "old-session", project / "own-session"
+    for session in (old, own):
+        (session / "tool-results").mkdir(parents=True)
+        (session / "tool-results" / "out.txt").write_text("x\n", encoding="utf-8")
+    (project / "old-session.jsonl").write_text("{}\n", encoding="utf-8")
+    os.utime(project / "old-session.jsonl", (1, 1))
+    (project / "own-session.jsonl").write_text("{}\n", encoding="utf-8")
+    (staff / "settings.json").write_text("{}\n", encoding="utf-8")
+    kw = dict(private_paths=(staff.as_posix(), (tmp_path / "runs").as_posix()),
+              private_open_reads=(project.as_posix(), work.as_posix()), environ={})
+
+    def category(path):
+        trace = []
+        return _grant_category(work, f'grep -n x "{path.as_posix()}"', trace, **kw), trace
+
+    (work / "notes.txt").write_text("x\n", encoding="utf-8")
+    assert category(work / "notes.txt") == (None, ["policy_allow"])  # a task file needs no card at all
+    granted, trace = category(own / "tool-results" / "out.txt")
+    # Under the private runs root the task folder itself resolves as a match, so this is "unresolved_path",
+    # the category an ordinary write in the task folder gets there too.
+    assert (granted, trace) == (_grant_category(work, "echo x > a.txt", **kw), [])
+    assert category(old / "tool-results" / "out.txt")[0] is None
+    # A longer path sharing the accepted file's text as a prefix is judged as written.
+    results = (own / "tool-results").as_posix()
+    trace = []
+    assert _grant_category(work, f'python read.py "{results}/out.txt" "{results}/out.txt/../../../../settings.json"',
+                           trace, **kw) is None
+    assert trace and trace[0] != "unproven_literal_read"
+    assert category(project / "own-session.jsonl")[0] is None
+    assert category(staff / "settings.json")[0] is None
+
+
 @pytest.fixture
 def request_grant_hub(tmp_path, monkeypatch):
     from labhq.gateway.server import Hub

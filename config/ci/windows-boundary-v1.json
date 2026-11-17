@@ -589,7 +589,7 @@
       }
     },
     "tests/test_policy.py": {
-      "sha256": "7790f1ddb131f517e38394a2847616bc3b5e85e79195a539cf26f1e2ad752148",
+      "sha256": "264197b2583ba649684a025cbe224a6139882bfa3278224be758c342f84eec10",
       "reason": "Only fake-clock budget assertions and numeric HPC threshold arithmetic are omitted; every path/security and actual scanner-cost node remains.",
       "nodes": {
         "test_a_command_writing_to_a_null_device_is_not_a_write": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
@@ -617,6 +617,10 @@
         "test_git_rm_into_another_tree_and_unreadable_rm_operands_ask": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_managed_read_uncertainty_has_typed_evidence": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_capped_private_scan_stays_out_of_request_grants": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
+        "test_request_grant_move_and_in_place_edit": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
+        "test_request_grant_dynamic_quote_and_unresolved_write": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
+        "test_request_grant_own_session_tool_results": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
+        "test_request_grant_mover_operands": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_mentions_zone_stays_linear_on_long_separator_runs": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_native_delegation_tools_are_denied_even_if_configured_for_auto_allow": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_non_recursive_rm_is_allowed": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",

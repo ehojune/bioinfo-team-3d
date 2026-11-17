@@ -1039,6 +1039,26 @@ def _named_write_targets(raw_words: list[str], powershell: bool = False) -> Iter
     yield words[-1]
 
 
+_UNBLANKED = object()
+
+
+def shell_segments(command: str, powershell: bool = False, text: Any = _UNBLANKED) -> list[list[str]]:
+    """Raw words of each simple command, with redirections removed; strings, comments and here-documents are
+    text. When that split is unsure the raw text is split, which over-reports words but never hides one."""
+    if text is _UNBLANKED:
+        text = _blank_non_syntax(command, powershell)
+
+    def unredirected(value: str) -> str:  # same length, so positions in the blanked text still hold
+        return _REDIRECTION_SPAN.sub(lambda m: " " * len(m.group()), value)
+
+    if text is None:
+        return [[m.group() for m in _SHELL_WORD.finditer(segment)]
+                for segment in re.split(r"[|;&\n]", unredirected(command))]
+    words_text = unredirected(text)
+    return [[command[m.start():m.end()] for m in _BARE_WORD.finditer(words_text, seg.start(), seg.end())]
+            for seg in re.finditer(r"[^|;&\n]+", words_text)]
+
+
 def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str]:
     """Find obvious literal write destinations; expansions and aliases are not parsed.
 
@@ -1054,18 +1074,7 @@ def _shell_write_targets(command: str, powershell: bool = False) -> Iterator[str
         target = match.group(1).strip("\"'") if match else ""
         if target and target.casefold() not in NULL_DEVICES:
             yield target
-    def unredirected(value: str) -> str:  # same length, so positions in the blanked text still hold
-        return _REDIRECTION_SPAN.sub(lambda m: " " * len(m.group()), value)
-
-    if text is None:
-        segments = [[m.group() for m in _SHELL_WORD.finditer(segment)]
-                    for segment in re.split(r"[|;&\n]", unredirected(command))]
-    else:
-        words_text = unredirected(text)
-        segments = [[command[m.start():m.end()]
-                      for m in _BARE_WORD.finditer(words_text, seg.start(), seg.end())]
-                    for seg in re.finditer(r"[^|;&\n]+", words_text)]
-    for words in segments:
+    for words in shell_segments(command, powershell, text):
         # A command's own output argument may be a null device too (`curl -o /dev/null`, `tee NUL`; trial 2026-10-08).
         yield from (target for target in _named_write_targets(words, powershell)
                     if target.strip("\"'").casefold() not in NULL_DEVICES)
