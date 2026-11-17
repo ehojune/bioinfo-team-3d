@@ -175,13 +175,19 @@ def _task_local(command: str, parts: list[list[str]] | None, bases: list[str], w
     if not root or parts is None or not all(words and words[0].casefold() in names for words in parts):
         return False
     operands = []
-    for word in (word for words in parts for word in words[1:] if word not in _REDIRECTS):
-        if not (word.startswith("-") and len(word) > 1):
-            operands.append(word)
-        elif re.fullmatch(r"--?[A-Za-z][A-Za-z-]*=.*", word):
-            operands.append(word.split("=", 1)[1])  # `--output=FILE`: the value is a path like any operand
-        elif not re.fullmatch(r"--?[A-Za-z][A-Za-z-]*[0-9]*", word):
-            return False  # an attached value (`-o/tmp/out`, `-i.bak`) is not read here
+    for words in parts:
+        for word in words[1:]:
+            if word in _REDIRECTS:
+                continue
+            if not (word.startswith("-") and len(word) > 1):
+                operands.append(word)
+            elif not powershell and word.startswith("--"):
+                # A long option may name a file or a list of files (`--output=F`, `--files0-from=F`): never proven.
+                return False
+            elif not re.fullmatch(r"-[A-Za-z][A-Za-z-]*[0-9]*", word):
+                return False  # an attached value (`-o/tmp/out`, `-i.bak`) is not read here
+            elif words[0] == "sed" and "f" in word[1:]:
+                return False  # a sed script file can write anywhere (`w FILE`)
     for word in operands:
         for base in bases:
             path = word if _absolute(word) else posixpath.join(_norm(base), word)

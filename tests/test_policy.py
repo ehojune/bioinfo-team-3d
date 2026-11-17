@@ -246,7 +246,10 @@ def test_request_grant_dynamic_quote_and_unresolved_write(tmp_path, command, cat
     # An option carrying a path is read as one, or the command is not proven task-local.
     ("Bash", "sort --output=../other/out.txt outputs/a.txt", None, "other_private_path"),
     ("Bash", "sort -o../other/out.txt outputs/a.txt", "unresolved_path", None),
-    ("Bash", "sort --output=outputs/b.txt outputs/a.txt", "workspace", None),
+    ("Bash", "sort --output=outputs/b.txt outputs/a.txt", "unresolved_path", None),
+    ("Bash", "sort --files0-from=outputs/list -o outputs/out outputs/a.txt", "unresolved_path", None),
+    ("Bash", "sed -f outputs/edit.sed outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("Bash", "sort -o outputs/b.txt outputs/a.txt", "workspace", None),
     # A script's runtime paths are not visible: still unresolved.
     ("Bash", "python outputs/run.py", "unresolved_path", None),
 ])
