@@ -14,6 +14,45 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:28 | [`4598949`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/4598949) | **읽기 범위가 불명확한 명령은 개별 승인을 받고 개인 경로 접근을 단정하지 않습니다.**<br>#1456 r4: 경고를 명시 경로와 단순 순차 읽기로 좁히고 미지원 셸은 범위 미확인으로 표시한다. 남은 P1 세 재현·직접 근거 대조·batch 분류 제외를 포함해 관련 회귀 771 passed, 9 skipped와 승인 회귀 115 passed, 12 skipped를 확인했다. |
+| 21:07 | [`03306b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/03306b6) | **옵션이 끝난 뒤 폴더명과 함수의 실행·복귀 경계를 구별해 경고를 표시합니다.**<br>#1456: pushd --, reserved word 뒤 선언, 함수 return을 반영하고 재귀 확장을 제한했다. 관련 회귀 759개와 상한 직접 판정 2건을 확인했다. |
+| 20:59 | [`009b11e`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/009b11e) | **폴더 stack 회전과 함수 선언·호출을 구별해 승인 경고를 표시합니다.**<br>#1456: indexed pushd 회전과 직접 호출한 함수 본문만 반영한다. 관련 회귀 754개를 확인했다. |
+| 20:48 | [`84ee8af`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/84ee8af) | **별도 프로세스의 폴더 이동과 지정한 stack 항목 제거를 승인 경고에 반영합니다.**<br>#1456: process substitution 경계를 격리하고 indexed popd가 선택한 항목을 제거한다. 관련 회귀 749개를 확인했다. |
+| 20:40 | [`9ca1af4`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/9ca1af4) | **명령 안의 별도 셸과 폴더를 바꾸지 않는 옵션을 승인 경고에 반영합니다.**<br>#1456: command substitution의 폴더 변경을 격리하고 pushd·popd -n의 stack 변경만 반영했다. 관련 회귀 746개를 확인했다. |
+| 20:32 | [`98c6e45`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/98c6e45) | **명령 그룹과 폴더 복원 뒤에도 실제 읽기 위치에 맞춰 승인 경고를 표시합니다.**<br>#1456: subshell·그룹과 popd·cd -의 상태를 구별했다. 관련 회귀 742개와 기존 보호 유지를 확인했다. |
+| 20:23 | [`783049b`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/783049b) | **폴더 이동의 성공과 실패가 갈리는 명령에서도 개인 경로 경고를 유지합니다.**<br>#1456: OR guard와 위치 builtin의 도달 경로를 순서대로 보존한다. 관련 회귀 729개, 분기·wrapper 최종 보완 뒤 표적 53개와 background 거부 유지를 확인했다. |
+| 20:14 | [`6cd9192`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/6cd9192) | **긴 명령과 폴더 이동이 섞여도 개인 경로 경고의 근거를 보존합니다.**<br>#1456: 경로 해석 상한 뒤의 명시 경로를 확인하고 상대경로를 명령 순서대로 해석한다. 관련 회귀 723개와 pipeline 보완 뒤 표적 42개를 확인했다. |
+| 20:08 | [`f5849e5`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/f5849e5) | **일부 폴더만 읽도록 열어도 나머지 개인 파일의 승인 경고를 유지합니다.**<br>#1456: 미확인 명령의 경로별 보호 근거를 보존하고 한·영 안전 안내를 추가했다. 관련 회귀 717개를 확인했다. |
+| 19:59 | [`14a8450`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/14a8450) | **작업 폴더를 읽는 명령을 개인 파일 접근으로 단정하던 승인 설명을 고쳤습니다.**<br>#1456: 미확인 Bash 명령은 개별 승인을 유지하며 상위 작업 root 일치와 명시한 닫힌 경로를 구별한다. 개인 경로·입력 쓰기 보호와 관련 회귀 702개를 확인했다. |
+| 19:37 | [`32d403b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/32d403b) | **알려진 네트워크 표기는 묶음 허용에서 따로 확인합니다.**<br>네트워크 모듈 목록과 탐지 한계를 명시하고 회귀 시험을 추가한다. Refs |
+| 19:28 | [`0a94b0c`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/0a94b0c) | **Python의 Telnet 명령은 따로 확인합니다.**<br>telnetlib 모듈 호출을 요청 묶음 허용에서 제외한다. Refs |
+| 19:22 | [`9eb446b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/9eb446b) | **Python의 HTTP 서버 명령은 따로 확인합니다.**<br>http.server 모듈 실행을 요청 묶음 허용에서 제외한다. Refs |
+| 19:16 | [`2d59515`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/2d59515) | **OpenSSL 명령은 묶음 허용에서 따로 확인합니다.**<br>명시된 OpenSSL 연결 명령을 요청 묶음 허용에서 제외한다. Refs |
+| 19:08 | [`eda7eb8`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/eda7eb8) | **Git 명령은 묶음 허용에서 따로 확인합니다.**<br>원격 전송과 작업 내용 폐기를 막기 위해 Git 명령을 개별 승인으로 남긴다. Refs |
+| 19:00 | [`befb21a`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/befb21a) | **GitHub와 메일 발송 명령은 따로 확인합니다.**<br>gh와 smtplib가 드러난 명령을 요청 묶음 허용에서 제외한다. Refs |
+| 18:47 | [`659531c`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/659531c) | **내부 읽기 보호 시험을 Windows에서도 확인합니다.**<br>변경된 정책 시험의 Windows inventory hash를 갱신한다. Refs |
+| 18:40 | [`458c280`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/458c280) | **내부 자료를 읽는 명령만 읽기 묶음으로 확인합니다.**<br>명시된 internal 경로에서 지원되지 않는 쓰기와 복합 명령은 개별 승인으로 남긴다. Refs |
+| 18:25 | [`4dbecd9`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/4dbecd9) | **locale 인용이 든 명령도 따로 확인합니다.**<br>셸의 locale 인용 표기를 요청 묶음 허용에서 제외한다. Refs |
+| 18:20 | [`a5b3048`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/a5b3048) | **원본을 옮기는 명령은 따로 확인합니다.**<br>이동·이름 변경 명령을 요청 묶음 허용에서 제외한다. Refs |
+| 18:13 | [`45666ae`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/45666ae) | **ANSI-C 인용이 든 명령은 따로 확인합니다.**<br>셸에서 보호 명령을 조합할 수 있는 표기를 묶음 허용에서 제외한다. Refs |
+| 18:07 | [`9f92955`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/9f92955) | **이스케이프된 삭제·네트워크 명령도 확인합니다.**<br>셸 표기를 정규화해 드러난 삭제·네트워크 명령을 묶음 허용에서 제외한다. Refs |
+| 18:00 | [`5a54cbd`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/5a54cbd) | **따옴표·이스케이프로 나뉜 로더 대입도 확인합니다.**<br>셸 표기를 정규화해 로더 환경 대입을 요청 묶음 허용에서 제외한다. Refs |
+| 17:53 | [`66c66f7`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/66c66f7) | **명령에 드러난 정리·삭제는 따로 확인합니다.**<br>git clean과 find -delete를 요청 묶음 허용에서 제외한다. Refs |
+| 17:46 | [`daba0ec`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/daba0ec) | **로더 환경의 추가 대입도 따로 확인합니다.**<br>셸의 += 대입도 요청 묶음 허용에서 제외한다. Refs |
+| 17:38 | [`ff6c71f`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/ff6c71f) | **직원이 사용할 환경으로 폴더 이동을 확인합니다.**<br>폴더 변수의 위치를 직원 실행 환경에서 해석해 범위 밖 출력을 막는다. Refs |
+| 17:34 | [`efb422f`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/efb422f) | **명령에서 로더 환경을 지정하면 따로 확인합니다.**<br>명령 내부의 로더·셸 시작 환경 대입은 요청 묶음 허용에서 제외한다. Refs |
+| 17:31 | [`3708775`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/3708775) | **PowerShell의 폴더 이동 뒤 출력 위치를 확인합니다.**<br>Push-Location 뒤 범위 밖 쓰기와 확인할 수 없는 이전 폴더 이동을 묶음 허용에서 제외한다. Refs |
+| 17:27 | [`6249224`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/6249224) | **명령에 드러난 네트워크 호출은 따로 확인합니다.**<br>Python 네트워크 API가 보이는 명령을 요청 묶음 허용에서 제외한다. Refs |
+| 17:23 | [`3ca0edc`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/3ca0edc) | **이동할 폴더를 알 수 없는 명령은 따로 확인합니다.**<br>이전 작업 폴더를 참조하는 cd 등은 요청 묶음 허용에서 제외한다. Refs |
+| 17:16 | [`2d258d5`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/2d258d5) | **분석 코드도 요청 안에서 묶어 허용하고 승인 건수를 보여 줍니다.**<br>실행 중 동작은 명령만으로 확인하지 못하며 요청별 확정 승인과 허용 부류를 집계한다. Refs |
+| 17:00 | [`35b4299`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/35b4299) | **변환 모듈 경로가 지정된 환경은 따로 확인합니다.**<br>GCONV_PATH와 LOCPATH가 설정된 경우 묶음 허용을 사용하지 않는다. Refs |
+| 16:53 | [`720b23d`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/720b23d) | **실행 파일에 코드를 주입할 수 있는 환경은 따로 확인합니다.**<br>동적 로더 설정이 있으면 묶음 허용을 사용하지 않는다. Refs |
+| 16:48 | [`4d5c29f`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/4d5c29f) | **환경 정보가 없는 실행기도 중단 없이 동작합니다.**<br>환경 snapshot을 만들 수 없는 실행기는 묶음 허용 없이 기존대로 실행한다. Refs |
+| 16:36 | [`e689f3b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/e689f3b) | **종료된 요청의 승인 재전송 기록을 일치시킵니다.**<br>거절을 재전송할 때 전달 기록과 감사 기록을 함께 수정한다. Refs |
+| 16:30 | [`33fff39`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/33fff39) | **폴더 위치가 달라질 수 있는 셸 환경은 따로 확인합니다.**<br>CDPATH가 설정된 경우 묶음 허용을 사용하지 않는다. Refs |
+| 16:27 | [`f12f9ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1454/commits/f12f9ba) | **평가 결과와 단일 모드·팀 모드를 고르는 기준을 평가 문서에 정리하고 영문판을 추가했습니다.**<br>문서: #1427 평가 결과(짝 비교 1~3·5·9, 어려운 과제 세 갈래)와 단일·팀 사용 기준, 영문판 |
+| 16:24 | [`68f018b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/68f018b) | **직원이 실행할 명령의 경로를 다시 확인합니다.**<br>묶음 판정에 직원 실행 환경을 사용하고 확인할 수 없으면 개별 승인으로 남긴다. Refs |
+| 16:15 | [`32b6218`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/32b6218) | **묶음 허용을 확인된 읽기 명령으로 제한합니다.**<br>동적 실행과 삭제는 개별 승인으로 남기고 기록 재생 수치를 갱신한다. Refs |
 | 15:40 | [`5f9b0ca`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/5f9b0ca) | **PubMed 수집 상한을 보수적으로 9,999건에 맞춥니다.**<br>최대 인자·직원 안내·한영 매뉴얼을 맞춘다. 정확한 9,999건 완료, 초과 건수의 부분 상태와 최대 두 검색의 19,998건 전달을 포함한 회귀 215 passed, 3 skipped; 실제 API 검색은 미검증 (#1446). |
 | 15:32 | [`d2104ac`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/d2104ac) | **PubMed 결과 파일의 교체를 inode 재사용 때도 확인합니다.**<br>Linux CI의 교체 거부 실패 뒤 파일 신원에 ctime을 포함하고 append 후 값을 보존한다. assertion 유지, 배포 venv 관련 회귀 213 passed, 3 skipped (#1446). |
 | 15:22 | [`b5d01d5`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/b5d01d5) | **반복 문헌 검색도 단계 전체 파일 한도 안에서 보존합니다.**<br>기존 산출·manifest·로그를 포함한 200파일 예산을 공유한다. file_limit은 부분 manifest를 남기고 새 슬롯이 없으면 HTTP 전에 거절한다. 보존 파일 전부의 전달·SHA를 포함한 회귀 213 passed, 3 skipped (#1446). |
@@ -25,6 +64,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 14:41 | [`149d305`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/149d305) | **PubMed 결과 파일을 요청 묶음에도 담도록 크기를 나눕니다.**<br>JSONL을 8MiB 이하로 나눠 기본 요청 bundle의 50MiB 파일 상한 아래에 둔다. 분할·중간 실패의 페이지 범위·SHA 전달을 포함한 회귀 205 passed, 3 skipped (#1446). |
 | 14:35 | [`bb46a09`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/bb46a09) | **부분 문헌 결과에서도 조회 실패 기록을 보존합니다.**<br>응답 없는 send를 failed로 마감해 장애 host의 후속 조회를 차단한다. ESearch·중간 EFetch 실패에도 부분 manifest를 유지하며 실제 admission ledger를 포함한 회귀 203 passed, 3 skipped (#1446). |
 | 14:28 | [`584079f`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/584079f) | **여러 PubMed 검색의 결과도 적은 파일로 전달합니다.**<br>페이지를 검색별 JSONL에 묶고 byte 범위·페이지/전체 SHA를 기록한다. 10,000건 검색 두 번을 203→5파일로 줄여 다음 단계에 20,000건을 보존했다. 변조 거부를 포함한 회귀 201 passed, 3 skipped (#1446). |
+| 14:14 | [`78401dd`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/78401dd) | **같은 요청에서 비슷한 명령을 한 번에 허용할 수 있습니다.**<br>명시적으로 승인한 셸 부류만 요청 종료까지 자동 승인하고 근거 카드와 취소를 기록한다. Refs |
 | 14:09 | [`236c8dd`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/236c8dd) | **PubMed도 공통 문헌 조회 경로를 따릅니다.**<br>기존 구조 검사를 유지하고 공통 runner의 admission·20분 상한 아래에서 부분 manifest를 보존한다. structure·외부 대기·PubMed·문헌 회귀 243 passed, 1 skipped (#1446). |
 | 13:55 | [`b84deda`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/b84deda) | **새 PubMed 도구에 맞춰 목록 회귀를 갱신합니다.**<br>두 MCP 도구 목록에 pubmed_search를 추가하고 키 설정 시험의 Windows ACL probe를 격리했다. assertion을 유지한 관련 회귀는 179 passed, 4 skipped다 (#1446). |
 | 13:47 | [`0cb1657`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/0cb1657) | **많은 PubMed 검색 결과를 페이지 파일로 보존합니다.**<br>pubmed_search가 서지·초록과 검색식·건수·페이지 SHA를 저장하고 경로·상태만 반환한다. 가짜 631건·2MB 초과·한글의 다음 단계 전달과 중복·실패·상한을 검증했다. 실제 검색은 미검증이다 (#1446). |

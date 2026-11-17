@@ -27,6 +27,275 @@ pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or r
 REAL_LABHQ_ENTRIES = private_paths._labhq_entries  # conftest replaces it for every other test
 REAL_SHORT_NAME = private_paths._short_name
 
+
+@pytest.fixture
+def request_paths_1456(tmp_path, monkeypatch):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    runs = tmp_path / 'runs'
+    task = runs / 'day' / 'task_bio'
+    inputs = task / 'inputs' / 'precedent'
+    personal = tmp_path / 'personal'
+    sibling = runs / 'day' / 'task_other'
+    explicit = task / 'private'
+    for path in (inputs, personal, sibling, explicit):
+        path.mkdir(parents=True)
+    (inputs / 'records.txt').write_text('fixture\n', encoding='utf-8')
+    return task, inputs, personal, sibling, explicit, [str(runs), str(task / 'inputs'), str(personal), str(explicit)]
+
+
+def request_gate_1456(paths, tool, data):
+    task, inputs, _, _, _, private = paths
+    return evaluate_tool(tool, data, PolicySettings(), allowed_roots=[str(task)], workdir=str(task),
+                         private_enabled=True, private_paths=private,
+                         private_open_reads=[str(task), str(inputs)])
+
+
+def test_request_compound_read_has_unproven_scope_not_personal_path(request_paths_1456):
+    task, _, _, _, _, private = request_paths_1456
+    command = (f'cd "{task.as_posix()}"; ls -la inputs/precedent; wc -l inputs/precedent/*; '
+               'cat inputs/precedent/.labhq-inputs.json | head -50')
+    assert private_paths.managed_shell_read(command, private, [str(task)], str(task)) is None
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': command})
+    assert decision.action == 'ask'
+    assert 'read scope is ambiguous' in decision.reason
+    assert 'PI personal path' not in decision.reason
+
+
+@pytest.mark.parametrize('tool', ['Read', 'Bash'])
+@pytest.mark.parametrize('location', ['task', 'inputs'])
+def test_request_literal_reads_remain_open(request_paths_1456, tool, location):
+    task, inputs, *_ = request_paths_1456
+    path = (task if location == 'task' else inputs) / 'records.txt'
+    data = {'file_path': str(path)} if tool == 'Read' else {'command': f'cat "{path.as_posix()}"'}
+    decision = request_gate_1456(request_paths_1456, tool, data)
+    assert decision.action == 'allow', decision.reason
+
+
+@pytest.mark.parametrize('tool', ['Read', 'Bash'])
+@pytest.mark.parametrize('location', ['personal', 'credential', 'sibling', 'explicit', 'link'])
+def test_request_closed_paths_remain_protected(request_paths_1456, tool, location):
+    task, _, personal, sibling, explicit, _ = request_paths_1456
+    alias = task / 'alias'
+    _link_dir(alias, personal)
+    path = {'personal': personal / 'diary.txt', 'credential': task / '.env',
+            'sibling': sibling / 'records.txt', 'explicit': explicit / 'diary.txt',
+            'link': alias / 'diary.txt'}[location]
+    data = {'file_path': str(path)} if tool == 'Read' else {'command': f'cat "{path.as_posix()}"'}
+    decision = request_gate_1456(request_paths_1456, tool, data)
+    assert decision.action == ('deny' if tool == 'Read' else 'ask')
+    assert 'private_paths' in decision.reason
+
+
+@pytest.mark.parametrize('tool', ['Write', 'Bash'])
+def test_request_inputs_never_gain_write_permission(request_paths_1456, tool):
+    path = request_paths_1456[1] / 'records.txt'
+    data = ({'file_path': str(path), 'content': 'overwrite'} if tool == 'Write'
+            else {'command': f'printf overwrite > "{path.as_posix()}"'})
+    assert request_gate_1456(request_paths_1456, tool, data).action != 'allow'
+
+
+@pytest.mark.parametrize('location', ['personal', 'explicit'])
+def test_request_unknown_syntax_keeps_explicit_personal_evidence(request_paths_1456, location):
+    path = request_paths_1456[2 if location == 'personal' else 4] / 'diary.txt'
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': f'wc -l "{path.as_posix()}"'})
+    assert decision.action == 'ask'
+    assert 'PI personal path' in decision.reason
+
+
+@pytest.mark.parametrize('location', ['settings', 'history', 'sibling', 'plugin', 'project'])
+@pytest.mark.parametrize('spelling', ['absolute', 'home', 'relative'])
+def test_unknown_read_preserves_private_parent_evidence(tmp_path, monkeypatch, location, spelling):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config = tmp_path / '.claude'
+    task = tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    project = config / 'projects' / 'current'
+    for folder in (task, plugin, project):
+        folder.mkdir(parents=True)
+    target = {'settings': config / 'settings.json', 'history': config / 'history.jsonl',
+              'sibling': config / 'projects' / 'other' / 'result.txt',
+              'plugin': plugin / 'guide.md', 'project': project / 'result.txt'}[location]
+    operand = {'absolute': target.as_posix(), 'home': '~/' + target.relative_to(tmp_path).as_posix(),
+               'relative': '../' + target.relative_to(tmp_path).as_posix()}[spelling]
+    decision = evaluate_tool('Bash', {'command': f'wc -l "{operand}"'}, PolicySettings(),
+                             allowed_roots=[str(task)], workdir=str(task),
+                             private_enabled=True, private_paths=[str(config)],
+                             private_open_reads=[str(task), str(plugin), str(project)],
+                             home=str(tmp_path), environ={})
+    assert decision.action == 'ask'
+    if location in ('plugin', 'project'):
+        assert 'read scope is ambiguous' in decision.reason
+    else:
+        assert 'personal path' in decision.reason
+        assert 'ambiguous' not in decision.reason
+
+
+@pytest.mark.parametrize('location', ['settings.json', 'history.jsonl', 'plugins/skill/guide.md'])
+def test_unknown_read_keeps_lexical_evidence_past_resolution_cap(tmp_path, monkeypatch, location):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config, task = tmp_path / '.claude', tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    plugin.mkdir(parents=True)
+    task.mkdir()
+    decoys = ' '.join(f'missing{i}.txt' for i in range(257))
+    decision = evaluate_tool('Bash', {'command': f'wc -l {decoys} ~/.claude/{location}'},
+                             PolicySettings(), allowed_roots=[str(task)], workdir=str(task),
+                             private_enabled=True, private_paths=[str(config)],
+                             private_open_reads=[str(task), str(plugin)], home=str(tmp_path), environ={})
+    assert decision.action == 'ask'
+    assert ('personal path' in decision.reason) == (location != 'plugins/skill/guide.md')
+    assert ('read scope is ambiguous' in decision.reason) == (location == 'plugins/skill/guide.md')
+
+
+@pytest.mark.parametrize('sequence,closed', [
+    ('wc -l ../notes.txt; cd {plugin}; wc -l guide.md', False),
+    ('cd {plugin}; wc -l ../notes.txt', True),
+    ('cd {plugin} | wc -l ../notes.txt', False),
+    ('pwd | cd {plugin}; wc -l ../notes.txt', False),
+    ('cd {plugin} || exit; wc -l ../notes.txt', True),
+    ('pushd {plugin}; wc -l ../notes.txt', True),
+    ('builtin cd {plugin}; wc -l ../notes.txt', True),
+    ('builtin pushd {plugin} || exit; wc -l ../notes.txt', True),
+    ('cd -- {plugin} || exit; wc -l ../notes.txt', True),
+    ('cd {plugin} || wc -l ../notes.txt', False),
+    ('false && cd {plugin}; wc -l ../notes.txt', False),
+    ('true || cd {plugin}; wc -l ../notes.txt', False),
+    ('cd {plugin} && exit; wc -l ../notes.txt', False),
+    ('cd {plugin} & wc -l ../notes.txt', False),
+    ('command cd {plugin}; wc -l ../notes.txt', True),
+    ('(cd {plugin}; wc -l ../notes.txt)', True),
+    ('{ cd {plugin}; wc -l ../notes.txt; }', True),
+    ('(cd {plugin}); wc -l ../notes.txt', False),
+    ('{ cd {plugin}; }; wc -l ../notes.txt', True),
+    ('pushd {plugin}; popd; wc -l ../notes.txt', False),
+    ('cd {plugin}; cd -; wc -l ../notes.txt', False),
+    ('cd {plugin}; cd -; cd -; wc -l ../notes.txt', True),
+    ('echo $(cd {plugin}); wc -l ../notes.txt', False),
+    ('echo $(cd {plugin}; wc -l ../notes.txt)', True),
+    ('pushd {plugin}; popd -n; wc -l ../notes.txt', True),
+    ('pushd -n {plugin}; wc -l ../notes.txt', False),
+    ('cat <(cd {plugin}); wc -l ../notes.txt', False),
+    ('cat <(cd {plugin}; wc -l ../notes.txt)', True),
+    ('pushd {plugin}; pushd {task}; popd -n +2; popd; wc -l ../notes.txt', True),
+    ('pushd {plugin} && pushd {task} && pushd +1 && wc -l ../notes.txt', True),
+    ('pushd {plugin} && pushd {task} && pushd -1 && wc -l ../notes.txt', True),
+    ('f() { cd {plugin}; }; wc -l ../notes.txt', False),
+    ('f() { cd {plugin}; }; f; wc -l ../notes.txt', True),
+    ('function f { cd {plugin}; }; wc -l ../notes.txt', False),
+    ('if true; then f() { cd {plugin}; }; fi; wc -l ../notes.txt', False),
+    ('f() { cd {plugin}; return; cd {task}; }; f; wc -l ../notes.txt', True),
+    ('pushd {plugin}; pushd -- +1; wc -l ../../../settings.json', True),
+])
+def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequence, closed):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config, task = tmp_path / '.claude', tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    plugin.mkdir(parents=True)
+    (plugin / '+1').mkdir()
+    task.mkdir()
+    command = sequence.replace('{plugin}', '"' + plugin.as_posix() + '"').replace('{task}', '"' + task.as_posix() + '"')
+    decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
+                             allowed_roots=[str(task)], workdir=str(task), private_enabled=True,
+                             private_paths=[str(config)], private_open_reads=[str(task), str(plugin)])
+    if ' & ' in command:
+        assert decision.action == 'deny'  # the independent background-process guard is stronger
+        assert not private_paths.shell_closed_operand(command, [str(config)], [str(task), str(plugin)],
+                                                       str(task), None, None)
+        return
+    assert decision.action == 'ask'
+    # r4 narrows warning evidence, not approval: retain every prior shell reproduction and ask/deny assertion.
+    # Only simple sequential cd is supported; branches/functions/stack/subshells stay explicitly unverified.
+    warning_closed = closed and sequence == 'cd {plugin}; wc -l ../notes.txt'
+    assert ('personal path' in decision.reason) == warning_closed
+    assert ('read scope is ambiguous' in decision.reason) != warning_closed
+
+
+def test_request_unknown_syntax_still_checks_registry(request_paths_1456):
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': 'reg query HKCU/Environment'})
+    assert decision.action == 'ask'
+    assert 'registry' in decision.reason
+
+
+@pytest.mark.parametrize('sequence', [
+    'if true; then cd {plugin}; fi; wc -l ../settings.json',
+    'while f() {{ cd {plugin}; }}; false; do :; done; wc -l ../notes.txt',
+    '(' * 33 + 'cd {plugin}; wc -l ../settings.json' + ')' * 33,
+])
+@pytest.mark.parametrize('direct_evidence', [False, True])
+def test_r4_unsupported_shell_preserves_unknown_scope_and_direct_evidence(
+        tmp_path, monkeypatch, sequence, direct_evidence):
+    from labhq.pi_text import with_approval_copy
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config, task = tmp_path / '.claude', tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    plugin.mkdir(parents=True)
+    task.mkdir()
+    command = sequence.format(plugin='"' + plugin.as_posix() + '"')
+    if direct_evidence:
+        command += '; wc -l "' + (config / 'settings.json').as_posix() + '"'
+    decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
+                             allowed_roots=[str(task)], workdir=str(task), private_enabled=True,
+                             private_paths=[str(config)], private_open_reads=[str(task), str(plugin)])
+    assert decision.action == 'ask'
+    assert ('explicit closed or credential path evidence' in decision.reason) == direct_evidence
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': {
+        'tool_name': 'Bash', 'policy_reason': decision.reason, 'tool_input': {'command': command}}})
+    assert '읽기 범위 미확인 — 개인 파일 접근 여부를 판단하지 못했습니다. 명령을 확인해 주세요.' in card['pi_reason']
+    assert '위험 등급: 낮음' not in card['pi_reason']
+    assert '접근을 감지했습니다' not in card['pi_reason']
+    assert ('명시한 닫힌 경로나 자격 증명 경로의 근거' in card['pi_reason']) == direct_evidence
+    if direct_evidence:
+        assert '위험 등급: 높음' in card['pi_reason']
+
+
+@pytest.mark.parametrize('kind', ['recursive', 'acyclic'])
+def test_unknown_shell_function_expansion_is_bounded(request_paths_1456, kind):
+    task, _, personal, *_ = request_paths_1456
+    if kind == 'recursive':
+        definitions, invoke = 'f() { f; f; };', 'f'
+    else:
+        definitions = 'f0() { pwd; }; ' + ' '.join(
+            f'f{i}() {{ f{i-1}; f{i-1}; }};' for i in range(1, 24))
+        invoke = 'f23'
+    command = f'{definitions} {invoke}; wc -l "{(personal / "diary.txt").as_posix()}"'
+    private = request_paths_1456[-1]
+    assert private_paths.shell_closed_operand(command, private, [str(task), str(request_paths_1456[1])],
+                                               str(task), None, None)
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': command})
+    assert decision.action == 'ask'
+    assert 'personal path' in decision.reason
+    open_command = f'{definitions} {invoke}; wc -l "{(task / "records.txt").as_posix()}"'
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': open_command})
+    assert decision.action == 'ask'
+    assert 'read scope is ambiguous' in decision.reason
+
+
+@pytest.mark.parametrize('command', ['f() { :; }; f', 'if true; then pwd; fi',
+                                    'python -c "print(1)"', 'wc -l *.txt',
+                                    '(' * 33 + 'pwd' + ')' * 33])
+def test_unverified_private_scope_never_qualifies_for_batch_grant(request_paths_1456, command):
+    from labhq.approval_grants import classify
+
+    task, inputs, *_, private = request_paths_1456
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': command})
+    assert decision.action == 'ask'
+    assert 'read scope is ambiguous' in decision.reason
+    trace = []
+    assert classify('Bash', {'command': command}, PolicySettings(), workdir=str(task),
+                    private_paths=tuple(private), private_enabled=True,
+                    private_open_reads=(str(task), str(inputs)), trace=trace) is None
+    assert trace  # This is the actual runner classifier, not just the card's risk label.
+
 WIN_HOME = "C:\\Users\\pi"
 WIN_PRIVATE = ["C:\\Users\\pi\\.ssh", "C:\\Users\\pi\\AppData\\Local\\Google\\Chrome\\User Data"]
 WIN_ENV = {"LOCALAPPDATA": "C:\\Users\\pi\\AppData\\Local", "APPDATA": "C:\\Users\\pi\\AppData\\Roaming"}

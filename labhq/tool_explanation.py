@@ -151,6 +151,14 @@ def reason(detail: dict, policy_reason: str, risk: str) -> str:
     elif 'restricted' in policy_reason.lower() or 'data_zones' in policy_reason or '통제' in policy_reason:
         rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
         risk = '높음 · 통제 데이터 노출 확인 필요; ' + risk.split(' · ', 1)[-1]
+    elif 'explicit closed or credential path evidence' in policy_reason:
+        rule = ('읽기 범위 미확인 — 개인 파일 접근 여부를 판단하지 못했습니다. 명령을 확인해 주세요. '
+                '명시한 닫힌 경로나 자격 증명 경로의 근거가 있습니다. 실제 접근을 확인한 것은 아닙니다.')
+        risk = '높음 · 개인 정보 노출 확인 필요; ' + risk.split(' · ', 1)[-1]
+    elif 'read scope is ambiguous (policy.private_paths)' in policy_reason:
+        rule = '읽기 범위 미확인 — 개인 파일 접근 여부를 판단하지 못했습니다. 명령을 확인해 주세요.'
+        if not risk.startswith(('높음', '중간')):
+            risk = '확인 필요 · 개인 경로 접근 여부와 실행 범위 미확인'
     elif 'private_paths' in policy_reason:
         rule = '걸린 규칙: PI 개인 경로 보호. 개인 파일이나 자격 증명이 있는 경로 접근을 감지했습니다.'
         risk = '높음 · 개인 정보 노출 확인 필요; ' + risk.split(' · ', 1)[-1]
