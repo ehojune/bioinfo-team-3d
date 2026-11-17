@@ -25,7 +25,9 @@ _EXCLUDED_COMMAND = re.compile(
 
 def capture_staff_env(adapter: Any) -> None:
     """Remember the environment actually built by the adapter for each spawn."""
-    build = adapter.staff_env
+    build = getattr(adapter, "staff_env", None)
+    if not callable(build):
+        return  # Other adapters continue normally; no snapshot means no grant.
     def captured(ctx: Any) -> dict[str, str]:
         env = build(ctx)
         ctx._approval_grant_env = dict(env)

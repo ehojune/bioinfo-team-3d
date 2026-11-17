@@ -368,6 +368,7 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     from labhq.adapters import get_adapter
     from labhq.approval_grants import capture_staff_env
     from labhq.workspace_commands import _resolve_executable
+    capture_staff_env(object())  # An adapter without this capability must still run.
     monkeypatch.setattr("labhq.workspace_commands._resolve_executable", lambda *a: (True, "test"))
     hub, events, sent = request_grant_hub
     internal = tmp_path / "internal"
