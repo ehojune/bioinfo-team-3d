@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: 0a94b0c
+    at: '2026-11-17 19:28'
+    summary: Python의 Telnet 명령은 따로 확인합니다.
+    text: telnetlib 모듈 호출을 요청 묶음 허용에서 제외한다. Refs #1445.
   - sha: 9eb446b
     at: '2026-11-17 19:22'
     summary: Python의 HTTP 서버 명령은 따로 확인합니다.
