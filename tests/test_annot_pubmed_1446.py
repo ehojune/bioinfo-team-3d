@@ -390,10 +390,12 @@ async def test_mcp_admission_refuses_fourth_send_and_keeps_partial_pages(tmp_pat
     assert states[-1]["status"] == "failed"
 
 
+@pytest.mark.parametrize("phase", ["search", "second_page"])
 async def test_shared_timeout_preserves_timeout_in_admission_receipt(
-        tmp_path, monkeypatch, mcp_module, lookup_runtime):
+        tmp_path, monkeypatch, mcp_module, lookup_runtime, phase):
     from labhq.runner.lookup_admission import LookupAdmission
     ledger = LookupAdmission(tmp_path / "timeout-ledger.sqlite3", 100)
+    provider = Provider(200, "short")
     original_client = httpx.AsyncClient
     async def respond(request):
         if request.url.host == "broker.invalid":
@@ -403,8 +405,10 @@ async def test_shared_timeout_preserves_timeout_in_admission_receipt(
             if request.url.path == "/lookup/finish":
                 return httpx.Response(200, json={"recorded": ledger.finish("req", "task", body["sends"], body["outcome"])})
             return httpx.Response(200, json={"ok": True})
-        lookup_runtime.phases[-1].started.set()
-        await asyncio.Event().wait()
+        if phase == "search" or (request.url.path.endswith("efetch.fcgi") and b"id=101" in request.content):
+            lookup_runtime.phases[-1].started.set()
+            await asyncio.Event().wait()
+        return provider(request)
     monkeypatch.setattr(mcp_module.httpx, "AsyncClient", lambda **kw: original_client(
         transport=httpx.MockTransport(respond), **kw))
     monkeypatch.setattr(mcp_module, "LOOKUP_LIMITED", True)
@@ -415,8 +419,11 @@ async def test_shared_timeout_preserves_timeout_in_admission_receipt(
     monkeypatch.setattr(mcp_module, "run_lookup", deadline)
     result = json.loads(await mcp_module.pubmed_search("fixture"))
     assert not result["complete"] and result["stop_reason"] == "timeout"
+    assert result["fetched_count"] == (0 if phase == "search" else 100)
     rows = ledger.sends("req")
-    assert len(rows) == 1 and rows[0]["http_status"] is None and rows[0]["outcome"] == "timeout"
+    assert len(rows) == (1 if phase == "search" else 3)
+    assert rows[-1]["http_status"] is None and rows[-1]["outcome"] == "timeout"
+    assert all(row["http_status"] == 200 and row["outcome"] == "ok" for row in rows[:-1])
     states = [json.loads(s) for s in (tmp_path / external_wait.STATUS_FILE).read_text(encoding="utf-8").splitlines()]
     assert states[-1]["status"] == "timeout"
 

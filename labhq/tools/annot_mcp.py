@@ -239,15 +239,18 @@ async def _admitted(tool: str, *, completion: dict | None = None):
     outcome = "failed"
     try:
         yield {"event_hooks": {"request": [admit], "response": [answered]}}
-        outcome = completion.get("outcome", "ok") if completion is not None else "ok"
+        outcome = "ok"
     except BaseException as exc:
         outcome = "timeout" if isinstance(exc.__cause__, LookupTimeout) else "failed"
         raise
     finally:
         # A backend may return a partial result after catching a transport error.
         # No HTTP response is still a failed probe, even when the tool returns normally.
-        for settled, rows in groupby(sorted(sends.items()),
-                                     key=lambda row: "failed" if row[1] is None and outcome == "ok" else outcome):
+        def settled_outcome(row):
+            if row[1] is None and outcome == "ok":
+                return "timeout" if completion and completion.get("outcome") == "timeout" else "failed"
+            return outcome
+        for settled, rows in groupby(sorted(sends.items()), key=settled_outcome):
             await _finish([[seq, status] for seq, status in rows], settled)
 
 
