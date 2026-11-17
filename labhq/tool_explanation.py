@@ -148,6 +148,10 @@ def reason(detail: dict, policy_reason: str, risk: str) -> str:
     elif detail.get('internal_output_classification') == 'summary':
         rule = '머리줄·집계로 보이지만 내부 자료의 실제 출력 범위를 승인 전에 확인하세요.'
         risk = '중간 · 내부 자료 출력 범위 확인 필요'
+    elif detail.get('grant_category') == 'workspace':
+        # The runner resolved every path into this task's folder; deletes and network never get this category.
+        rule = '작업 폴더 안에서 파일을 만들거나 고칩니다.'
+        risk = '중간 · 작업 폴더 안 쓰기'
     elif 'restricted' in policy_reason.lower() or 'data_zones' in policy_reason or '통제' in policy_reason:
         rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
         risk = '높음 · 통제 데이터 노출 확인 필요; ' + risk.split(' · ', 1)[-1]

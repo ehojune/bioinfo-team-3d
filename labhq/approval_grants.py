@@ -15,7 +15,8 @@ from .policy import (SHELL_TOOLS, Unresolved, _absolute, _candidate_paths, _eval
                      _blank_non_syntax, _inside, _norm, _private_decision, _real, _word_value, _zone_hit, evaluate_tool,
                      _shell_write_targets, git_bash_command, restricted_paths, shell_segments, touches,
                      touches_resolved)
-from .private_paths import _CD, claude_project_slug, credential_path, registry_access, shell_cd_bases
+from .private_paths import (_CD, claude_project_slug, credential_path, open_read_allowed, registry_access,
+                            shell_cd_bases)
 from .workspace_commands import literal_commands, workspace_command
 
 
@@ -156,6 +157,59 @@ def _own_tool_results(workdir: str, open_reads: tuple[str, ...]) -> list[str]:
         if newest and re.fullmatch(r"[0-9A-Za-z-]+", newest.name[:-len(".jsonl")]):
             found.append(_norm(posixpath.join(norm, newest.name[:-len(".jsonl")], "tool-results")))
     return found
+
+
+# Plain file commands with no interpreter: every operand they touch is visible on the command line.
+_FILE_COMMANDS = {"cd", "pwd", "ls", "cat", "head", "tail", "grep", "wc", "sort", "uniq", "cut", "echo", "printf",
+                  "mkdir", "touch", "cp", "mv", "sed", "tee", "true"}
+_POWERSHELL_FILE_COMMANDS = {"new-item", "ni", "set-content", "add-content", "out-file", "copy-item", "move-item",
+                             "get-content", "get-childitem", "test-path", "mkdir", "md"}
+_REDIRECTS = {">", ">>", "<", "2>", "2>>", "&>", "1>"}
+
+
+def _task_local(command: str, parts: list[list[str]] | None, bases: list[str], workdir: str,
+                powershell: bool = False) -> bool:
+    """Whether a plain file command only names paths that really resolve inside the task folder."""
+    root = _real(workdir)
+    names = _POWERSHELL_FILE_COMMANDS if powershell else _FILE_COMMANDS
+    if not root or parts is None or not all(words and words[0].casefold() in names for words in parts):
+        return False
+    operands = [word for words in parts for word in words[1:]
+                if word not in _REDIRECTS and not (word.startswith("-") and len(word) > 1)]
+    for word in operands:
+        for base in bases:
+            path = word if _absolute(word) else posixpath.join(_norm(base), word)
+            resolved = _real(path)
+            if not resolved or not _inside(resolved, root):
+                return False
+    return True
+
+
+def _inner_private_hit(command: str, targets: list[str], bases: list[str], work: str,
+                       private: list[str], open_reads: tuple[str, ...]) -> bool:
+    """A private item registered inside the task folder: written to, or read outside its open reads."""
+    inner = [p for p in private if _inside(_norm(p), work) and _norm(p) != work]
+    if not inner:
+        return False
+    zones = [(zone, [r for r in open_reads if _inside(_norm(r), _norm(p))])
+             for p in inner for zone in {_norm(p), _real(p)} if zone]
+
+    def spellings(word: str) -> list[tuple[str, str]]:
+        found = []
+        for base in bases:
+            path = word if _absolute(word) else posixpath.join(_norm(base), word)
+            found.extend((path, spelled) for spelled in (_norm(path), _real(path)) if spelled)
+        return found
+
+    for target in targets:
+        if any(_inside(spelled, zone) for _, spelled in spellings(target) for zone, _ in zones):
+            return True
+    for token in set(_candidate_paths(command)):
+        for path, spelled in spellings(token):
+            for zone, reads in zones:
+                if _inside(spelled, zone) and not open_read_allowed(path.replace("/", os.sep), reads):
+                    return True
+    return False
 
 
 def _mask_own_results(command: str, own: list[str]) -> str:
@@ -349,6 +403,10 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         # resolved may still reach a private directory through a link, so a request grant must not cover it.
         return excluded("private_scan_capped" if isinstance(resolved_private, Unresolved)
                         else "resolved_private_path")
+    # The exemptions above cover the whole task folder. A private item registered inside it (inputs/)
+    # stays individual: any write there, and any read outside the open reads below it.
+    if _inner_private_hit(masked, targets, [workdir, *(bases or [])], work, private, private_open_reads):
+        return excluded("other_private_path")
     other = _private_decision(tool, private_checked, protected, workdir, None, environ,
                               list(private_open_reads), closed)
     if other and other.private_kind != "unresolved":
@@ -365,9 +423,15 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         # the complete command to pass the supported literal read proof above.
         return "internal_read" if literal_read else excluded("unproven_internal_read")
     internal = next((hit for hit in internal_hits if isinstance(hit, Unresolved)), None)
+    # The private-path evidence may be unresolved or a resolved match only because the task folder lies below
+    # a private parent (the runs root). A plain file command whose every path really resolves inside the task
+    # folder is task-local; the policy decision itself is unchanged and still asks.
+    # Judged on the masked text: the own session's tool-results file counts as task-local (r20).
+    local = _task_local(masked, literal_commands(masked, powershell=tool == "PowerShell")[0],
+                        [workdir, *(bases or [])], workdir, powershell=tool == "PowerShell")
     if (unknown_write or isinstance(internal, Unresolved) or isinstance(resolved_closed, Unresolved)
-            or decision.private_kind in {"resolved_match", "unresolved"}
-            or (other and other.private_kind == "unresolved")
+            or (decision.private_kind in {"resolved_match", "unresolved"} and not local)
+            or (other and other.private_kind == "unresolved" and not local)
             or re.search(r"\$|`|\*|\?|\b(?:for|while)\b", command, re.I)):
         return "unresolved_path"
     return "workspace"
