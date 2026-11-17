@@ -439,10 +439,35 @@ export function grantCategory(approval) {
     ? approval.detail.grant_category : null;
 }
 export function grantCategoryLabel(category) { return GRANT_CATEGORIES[category] || '알 수 없는 부류'; }
+function explicitToolAction(value) {
+  const d = value.detail || {};
+  let input = d.tool_input ?? d.input ?? {};
+  if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = {}; } }
+  const command = typeof input?.command === 'string' ? input.command : '';
+  // Match executable positions, not words inside a quoted argument such as echo 'rm'.
+  const segments = []; let segment = '', quote = '', escaped = false;
+  for (const char of command) {
+    if (escaped) { segment += char; escaped = false; continue; }
+    if (char === '\\' && quote !== "'") { escaped = true; continue; }
+    if (quote) { if (char === quote) quote = ''; else segment += char; continue; }
+    if (char === "'" || char === '"' || char === '`') { quote = char; continue; }
+    if (';|&\n'.includes(char)) { segments.push(segment); segment = ''; } else segment += char;
+  }
+  segments.push(segment);
+  const begins = pattern => segments.some(part => pattern.test(part));
+  if (begins(/^\s*(?:sudo\s+)?(?:rm|rmdir|unlink|remove-item|del|erase)\b/i)) return 'delete';
+  if (begins(/^\s*(?:sudo\s+)?(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)\b/i)) return 'network';
+  if (begins(/^\s*(?:qsub|sbatch)\b/i)) return 'scheduler';
+  return null;
+}
 export function toolCardReason(value) {
   const d = value.detail || {}, policy = String(d.policy_reason || '').toLowerCase();
   const category = d.grant_category;
   if (d.internal_row_output === true) return '내부 자료 원본 행이 노출될 수 있어 확인이 필요합니다.';
+  const action = explicitToolAction(value);
+  if (action === 'delete') return '파일이나 폴더 삭제가 포함되어 확인이 필요합니다.';
+  if (action === 'network') return '네트워크 통신이 포함되어 확인이 필요합니다.';
+  if (action === 'scheduler') return '스케줄러 작업을 실행하기 전에 확인이 필요합니다.';
   if (category === 'internal_read' || /internal data zone/.test(policy)) return '내부 자료를 읽으려 합니다. 출력 범위를 확인해 주세요.';
   if (category === 'workspace') return '작업 폴더에서 도구를 실행하려 합니다.';
   if (category === 'unresolved_path') return '경로를 미리 확인하지 못했습니다.';
@@ -709,7 +734,7 @@ export function decisionFacts(value, who = '') {
       const reason = toolCardReason(value);
       const evidence = /닫힌 경로|다른 개인 경로|삭제|네트워크|작업 폴더 밖|스케줄러|원본 행/.test(reason);
       let grade = String(value.pi_reason || '').match(/(?:^|\n)위험 등급:\s*(높음|중간|낮음|미확인)(?=\s|·|\.|$)/)?.[1];
-      if (['workspace', 'unresolved_path'].includes(d.grant_category) || (grade === '높음' && !evidence)) grade = null;
+      if (grade === '높음' && !evidence) grade = null;
       return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing], ...(grade ? [['위험 등급', grade]] : [])];
     }
     case 'recruit': return [['제안 직원', who || missing], ['출처', d.repo || value.repo ? '저장소 · 자세히' : '자세히에서 확인']];
