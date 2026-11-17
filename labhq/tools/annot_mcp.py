@@ -285,15 +285,24 @@ async def _run_structure(method: str, *args: object) -> str:
 
 async def _run_literature(method: str, *args: object) -> str:
     async with _admitted(method) as hooks, httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
-                                                             follow_redirects=True,
+                                                             follow_redirects=method != "pubmed_search",
                                                              headers={"User-Agent": annot.USER_AGENT},
                                                              **hooks) as client:
         annotator = annot_literature.LiteratureAnnotator(
             client, WORKDIR, CACHE_DIR, pace=PACE, unpaywall_email=S.annot.unpaywall_email)
+        collection = None
         try:
-            result = await run_lookup(lambda: getattr(annotator, method)(*args),
-                                      tool=method, workdir=WORKDIR, notify=_lookup_progress)
-        except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
+            if method == "pubmed_search":
+                collection = annot_pubmed.PubmedCollection(annotator, *args)
+                collection.checkpoint("in_progress")
+            operation = collection.run if collection else lambda: getattr(annotator, method)(*args)
+            try:
+                result = await run_lookup(operation, tool=method, workdir=WORKDIR, notify=_lookup_progress)
+            except LookupTimeout:
+                if collection is None:
+                    raise
+                result = collection.finish("timeout")
+        except (annot.LookupFailed, LookupTimeout, ValueError, OSError, OwnedPathError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
 
@@ -481,19 +490,7 @@ async def pubmed_search(query: str, max_records: int = annot_pubmed.DEFAULT_MAX_
     100 records, at most 8 MiB each and 64 MiB total. Returns only manifest path, counts and completion status.
     Read the manifest's pages and SHA256s; complete=false means missing records, never a complete review corpus.
     The normal step-wide 20-minute lookup deadline and outbound request admission apply."""
-    async with _admitted("pubmed_search") as hooks, httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0, connect=20.0), headers={"User-Agent": annot.USER_AGENT}, **hooks) as client:
-        try:
-            collection = annot_pubmed.PubmedCollection(
-                annot.Annotator(client, WORKDIR, CACHE_DIR, pace=PACE), query, max_records)
-            collection.checkpoint("in_progress")
-            try:
-                result = await run_lookup(collection.run, tool="pubmed_search", workdir=WORKDIR, notify=_lookup_progress)
-            except LookupTimeout:
-                result = collection.finish("timeout")
-        except (annot.LookupFailed, ValueError, OSError, OwnedPathError) as exc:
-            raise tool_failure(str(exc)) from exc
-    return json.dumps(result, ensure_ascii=False)
+    return await _run_literature("pubmed_search", query, max_records)
 
 
 @offered()
