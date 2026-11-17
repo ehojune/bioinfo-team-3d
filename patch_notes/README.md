@@ -17,12 +17,24 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 01:40 | [`fd02c37`](https://github.com/ehojune/bioinfo-team-3d/pull/1460/commits/fd02c37) | **자기 세션 출력 파일 이름을 앞에 붙인 다른 경로는 묶음 허용에 들어가지 않습니다.**<br>리뷰 P1 수정. 자기 세션 tool-results 파일을 개인 경로 검사에서 가릴 때 피연산자 전체가 그 파일일 때만 가린다. 같은 글자로 시작하는 더 긴 경로는 그대로 판정한다 |
 | 01:10 | [`9bff881`](https://github.com/ehojune/bioinfo-team-3d/pull/1460/commits/9bff881) | **다 풀지 못한 파일 옮기기·고치기 대상은 묶음 허용에서 작업 폴더로 보지 않습니다.**<br>리뷰 P1 수정. 따옴표 조각이 붙은 mover 피연산자와 쓰기 대상, 값 없는 switch·-i[확장자]·따로 쓴 -e CODE 밖의 perl -i 옵션 모양은 피연산자를 읽지 않고 경로 미확정으로 둔다 |
 | 00:30 | [`708193e`](https://github.com/ehojune/bioinfo-team-3d/pull/1460/commits/708193e) | **옵션이나 특수 따옴표로 감춘 경로도 이번 요청 묶음 허용에서 빠집니다.**<br>리뷰 P1 수정. mv 옵션에 붙은 값(-t../out, -S.bak, -Destination:..)은 경로 미확정으로 두고, $'...'를 풀어 쓴 명령을 한 번 더 판정해 닫힌 구역·개인 경로·쓰기 대상 사유가 나오면 개별로 남긴다 |
+| 00:20 | [`c186d7e`](https://github.com/ehojune/bioinfo-team-3d/commit/c186d7e) | **레지스트리 접근을 승인하기 전 확인할 내용을 보여 줍니다.**<br>레지스트리 접근 사유와 확인된 위험 등급을 표시한다. |
+| 00:16 | [`44dbede`](https://github.com/ehojune/bioinfo-team-3d/commit/44dbede) | **도구 위험 표시와 승인 집계 조회를 고쳤습니다.**<br>명령 치환 안의 위험을 표시하고 종료된 요청의 집계 재조회를 줄인다. |
+| 00:10 | [`aeafc0c`](https://github.com/ehojune/bioinfo-team-3d/commit/aeafc0c) | **조건문 안에서 실행할 위험도 도구 카드에 표시합니다.**<br>셸 제어문과 그룹 안에 드러난 위험 명령을 표시한다. |
+| 00:04 | [`425ca5b`](https://github.com/ehojune/bioinfo-team-3d/commit/425ca5b) | **주석 때문에 도구 카드에 잘못된 경고가 뜨지 않도록 고쳤습니다.**<br>셸 주석 안의 글은 실행할 위험 명령으로 표시하지 않는다. |
+| 00:00 | [`d679019`](https://github.com/ehojune/bioinfo-team-3d/commit/d679019) | **감싸서 실행하는 명령도 확인할 위험을 표시합니다.**<br>sudo·env·셸 실행기 안에 드러난 위험 명령을 카드에 표시한다. |
 
 ## 2026-11-17
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:54 | [`3d69fca`](https://github.com/ehojune/bioinfo-team-3d/commit/3d69fca) | **복합 명령의 확인 사유를 빠짐없이 보여 줍니다.**<br>한 명령에 드러난 삭제·네트워크·스케줄러를 모두 표시한다. |
+| 23:49 | [`d9a87d5`](https://github.com/ehojune/bioinfo-team-3d/commit/d9a87d5) | **도구 승인 전에 작업 맥락을 다시 볼 수 있습니다.**<br>도구 카드에 작업 목적과 단계도 고정 사유와 함께 표시한다. |
+| 23:43 | [`dde364a`](https://github.com/ehojune/bioinfo-team-3d/commit/dde364a) | **도구 카드에서 제안된 작업을 다시 확인할 수 있습니다.**<br>도구의 정해진 작업 설명을 유지하고 번역 실패 표시만 숨긴다. |
+| 23:41 | [`1bd846c`](https://github.com/ehojune/bioinfo-team-3d/commit/1bd846c) | **여러 위험이 겹친 도구 카드의 사유를 함께 보여 줍니다.**<br>닫힌 경로와 삭제 등 여러 위험이 함께 있으면 각 경고를 유지한다. |
+| 23:38 | [`f0f80dd`](https://github.com/ehojune/bioinfo-team-3d/commit/f0f80dd) | **도구 카드에서 확인된 위험을 놓치지 않도록 고쳤습니다.**<br>명령에 드러난 삭제·네트워크·스케줄러의 경고를 경로 미확정보다 먼저 표시한다. |
 | 23:36 | [`d8db1eb`](https://github.com/ehojune/bioinfo-team-3d/pull/1460/commits/d8db1eb) | **작업 폴더 안 파일 옮기기·고치기와 자기 세션 출력 읽기가 이번 요청 묶음 허용에 들어갑니다.**<br>승인 묶음 판정에서 작업 폴더 안 mv·sed -i·perl -i를 삭제 대신 쓰기로 본다(원본·대상 모두 작업 폴더 안이면 작업 폴더 쓰기, 풀 수 없으면 경로 미확정, 밖이면 개별). $'...' 따옴표와 대상 미확정 쓰기는 경로 미확정 부류로 옮기고, $'...'는 풀어 쓴 글자로도 삭제·네트워크·시작 변수를 검사한다. 자기 세션 tool-results 읽기는 작업 파일과 같은 부류다. 요청 재생 사람 카드 A 15→12, B 28→21 |
+| 23:36 | [`ce37cd6`](https://github.com/ehojune/bioinfo-team-3d/commit/ce37cd6) | **종료된 요청의 승인 집계 조회를 줄였습니다.**<br>종료된 요청의 확인된 집계는 주기적으로 다시 읽지 않는다. |
+| 23:32 | [`6c7261e`](https://github.com/ehojune/bioinfo-team-3d/commit/6c7261e) | **승인 카드에서 실제 집계와 확인할 사유를 볼 수 있습니다.**<br>검토 카드의 요청별 승인 집계와 도구 카드의 사유·위험 표시를 고친다. |
 | 22:45 | [`e41ed66`](https://github.com/ehojune/bioinfo-team-3d/pull/1458/commits/e41ed66) | **경로 검사가 상한에서 멈춘 명령은 요청 단위로 자동 승인하지 않고 개별로 묻습니다.**<br>수정: #1445 후보 상한에서 멈춘 개인 경로 검사는 요청 단위 허용에서 빼고 개별 카드로 남긴다 |
 | 22:28 | [`d84925d`](https://github.com/ehojune/bioinfo-team-3d/pull/1458/commits/d84925d) | **경로를 확인하지 못한 명령을 요청마다 한 번 허용할 수 있게 바뀐 규칙에 맞춰 시험을 고쳤습니다.**<br>시험: #1445 읽기 범위 불명 명령은 경로 미확정 부류로만 묶인다는 총괄 결정에 맞춰 단정을 바꾼다 |
 | 22:08 | [`02d8594`](https://github.com/ehojune/bioinfo-team-3d/pull/1458/commits/02d8594) | **직원 환경 변수가 가리키는 개인 경로도 개별 확인합니다.**<br>묶음 판정에 직원 환경을 전달하고 승인 뒤 개인 경로 회귀를 추가했다. |
