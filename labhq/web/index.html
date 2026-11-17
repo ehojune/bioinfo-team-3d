@@ -541,6 +541,7 @@ function schedule() { if (!pending) { pending = true; raf(() => { pending = fals
 function render() {
   renderHeader(); renderOffice(); renderBoard(); renderRack(); renderDoor();
   syncStepFlow($('#step-flow'), S.requests.get(S.current), {nick});
+  updateReviewSummaries();
   renderApprovals(); renderRequest(); renderFeed(); renderJobs(); renderTargets(); renderComposerMode(); renderStaff(); renderRefs(); renderSheetLogs();
 }
 function ago(ts) {
@@ -659,13 +660,39 @@ function renderRack() {
 }
 function renderDoor() { $('#door').classList.toggle('open', now() < S.doorUntil); if (now() < S.doorUntil) setTimeout(schedule, 400); }
 
+const reviewSummaries = new Map();
+S.reviewApprovalSummaries = reviewSummaries;
+let reviewSummaryIds = '', reviewSummaryFlight = null, reviewSummaryQueued = false;
+async function refreshReviewSummaries(ids) {
+  if (MODE !== 'live' || !api?.approvalSummary) return;
+  if (reviewSummaryFlight) { reviewSummaryQueued = true; return; }
+  const flight = reviewSummaryFlight = Promise.all(ids.map(async id => {
+    try {
+      const summary = await api.approvalSummary(id);
+      if (summary?.request_id !== id || !Number.isSafeInteger(summary.automatic_approved_count) || summary.automatic_approved_count < 0) throw new Error('invalid summary');
+      reviewSummaries.set(id, summary);
+    } catch { reviewSummaries.delete(id); }
+  }));
+  await flight;
+  if (reviewSummaryFlight === flight) reviewSummaryFlight = null;
+  schedule();
+  if (reviewSummaryQueued) { reviewSummaryQueued = false; refreshReviewSummaries(JSON.parse(reviewSummaryIds || '[]')); }
+}
+function updateReviewSummaries() {
+  const reviews = [...S.requests.values()].filter(q => LabHQState.needsPiReview(q) || LabHQState.needsStorage(q));
+  const ids = reviews.map(q => q.id).sort(), idsKey = JSON.stringify(ids);
+  if (idsKey !== reviewSummaryIds) {
+    reviewSummaryIds = idsKey;
+    refreshReviewSummaries(ids);
+  }
+}
 function renderApprovals() {
   const items = [...S.approvals.values()], sugs = S.suggestions, holds = [...S.engineHolds.values()];
   const reviews = [...S.requests.values()].filter(q => LabHQState.needsPiReview(q) || LabHQState.needsStorage(q));
   const total = items.length + sugs.length + holds.length + reviews.length;
   const decisions = items.length + sugs.length + reviews.length;
   updateDecisionBadge($('#decision-count'), decisions);
-  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone});
+  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', approvalSummaries:S.reviewApprovalSummaries, onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone});
   $('#ap-count').textContent = decisions ? `${decisions}건` : '';
   const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
   board.classList.toggle('alert', total > 0);
@@ -1294,7 +1321,7 @@ $('#sheet').addEventListener('click', async e => {
   memo.addEventListener('pointerup', end);
   memo.addEventListener('pointercancel', () => { if (ghost) { ghost.remove(); ghost = null; } if (over) { over.classList.remove('drop'); over = null; } });
 })();
-setInterval(() => { schedule(); if (MODE === 'live') approvalSummary.refresh(); }, 15000);  // refresh labels and request approval totals
+setInterval(() => { schedule(); if (MODE === 'live') { approvalSummary.refresh(); refreshReviewSummaries([...S.requests.values()].filter(q => LabHQState.needsPiReview(q) || LabHQState.needsStorage(q)).map(q => q.id)); } }, 15000);  // refresh labels and request approval totals
 /* ---------------- live: gateway WebSocket + REST ---------------- */
 function startLive() {
   let token = QS.get('token') || store.get('labhq_token') || '';
