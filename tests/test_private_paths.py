@@ -158,6 +158,17 @@ def test_unknown_read_keeps_lexical_evidence_past_resolution_cap(tmp_path, monke
     ('cd {plugin}; wc -l ../notes.txt', True),
     ('cd {plugin} | wc -l ../notes.txt', False),
     ('pwd | cd {plugin}; wc -l ../notes.txt', False),
+    ('cd {plugin} || exit; wc -l ../notes.txt', True),
+    ('pushd {plugin}; wc -l ../notes.txt', True),
+    ('builtin cd {plugin}; wc -l ../notes.txt', True),
+    ('builtin pushd {plugin} || exit; wc -l ../notes.txt', True),
+    ('cd -- {plugin} || exit; wc -l ../notes.txt', True),
+    ('cd {plugin} || wc -l ../notes.txt', False),
+    ('false && cd {plugin}; wc -l ../notes.txt', False),
+    ('true || cd {plugin}; wc -l ../notes.txt', False),
+    ('cd {plugin} && exit; wc -l ../notes.txt', False),
+    ('cd {plugin} & wc -l ../notes.txt', False),
+    ('command cd {plugin}; wc -l ../notes.txt', True),
 ])
 def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequence, closed):
     from tests.test_tool_card_explain import _system_commands
@@ -171,6 +182,11 @@ def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequ
     decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
                              allowed_roots=[str(task)], workdir=str(task), private_enabled=True,
                              private_paths=[str(config)], private_open_reads=[str(task), str(plugin)])
+    if ' & ' in command:
+        assert decision.action == 'deny'  # the independent background-process guard is stronger
+        assert not private_paths.shell_closed_operand(command, [str(config)], [str(task), str(plugin)],
+                                                       str(task), None, None)
+        return
     assert decision.action == 'ask'
     assert ('personal path' in decision.reason) == closed
     assert ('read scope is ambiguous' in decision.reason) != closed

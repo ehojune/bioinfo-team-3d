@@ -51,3 +51,6 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - 절대경로·home·상대경로 × settings·history·다른 task·plugin·project 15건을 추가했다. 관련 4개 시험 파일은 717 passed, 10 skipped.
 - safety 안내 길이: 한국어 20,168→20,293자, 영어 36,437→36,711자. 각 언어에 한 항목만 추가했다.
 - 후속 P1 2건: 상한 뒤에도 경로 표기의 직접 근거를 남기며 filesystem 해석만 제한한다. 명령을 순서대로 읽고 pipeline 안 `cd`를 바깥 폴더 변경으로 쓰지 않는다. 상한·순서·pipeline 7건 추가, 표적 42건 통과.
+- 다음 리뷰의 OR guard·위치 builtin P1 2건도 수리했다. 앞선 폴더 이동에서 도달 가능한 위치만 다음 명령으로 넘기고 `shell_cd_bases`의 위치 표기를 재사용한다. guard·pushd·builtin·`--` 5건 추가, 표적 47건 통과.
+- guard 실행 분기 4건과 background·command wrapper 2건도 추가했다. 종료한 분기와 건너뛴 분기를 구별하고 background 위치 이동을 다음 명령에 적용하지 않는다.
+- 관련 4개 파일 729 passed, 10 skipped. 분기·wrapper 최종 보완 뒤 표적 53 passed이며 background의 기존 `deny`도 유지했다.

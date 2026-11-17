@@ -521,39 +521,66 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
             words = []
         else:
             words.append(token)
-    base = workdir
+    succeeded: list[str | None] = [workdir]
+    failed: list[str | None] = []
+    previous = ';'
     resolved = 0
     pipeline = False
     for words, separator in parts:
+        bases = (succeeded if previous == '&&' else failed if previous == '||'
+                 else list(dict.fromkeys([*succeeded, *failed])))
+        skipped_success = succeeded if previous == '||' else []
+        skipped_failure = failed if previous == '&&' else []
         for word in words:
             for value in dict.fromkeys([word, *_scan_path_text(word).candidates]):
                 expanded = _expand_dir(value, home, environ)
-                if expanded is None or (not os.path.isabs(expanded) and base is None):
+                if expanded is None:
                     continue
-                raw = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
-                spelled = path_field_text(expanded, base)
-                # Always retain direct evidence, even after the filesystem-resolution cap.
-                for root in private_paths:
-                    eligible = [r for r in open_reads if inside_any(r, [root]) and not inside_any(root, [r])]
-                    if inside_any(spelled, [root]) and (credential_path(spelled)
-                                                       or not inside_any(spelled, eligible)):
+                for base in bases:
+                    if not os.path.isabs(expanded) and base is None:
+                        continue
+                    raw = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
+                    spelled = path_field_text(expanded, base)
+                    # Always retain direct evidence, even after the filesystem-resolution cap.
+                    for root in private_paths:
+                        eligible = [r for r in open_reads if inside_any(r, [root]) and not inside_any(root, [r])]
+                        if inside_any(spelled, [root]) and (credential_path(spelled)
+                                                           or not inside_any(spelled, eligible)):
+                            return True
+                    if resolved >= MAX_RESOLVED_CANDIDATES:
+                        continue
+                    resolved += 1
+                    try:
+                        real = resolved_read_path(raw)
+                    except (OSError, ValueError, RuntimeError):
+                        continue
+                    if not _managed_operand(real, base or workdir, private_paths, open_reads):
                         return True
-                if resolved >= MAX_RESOLVED_CANDIDATES:
-                    continue
-                resolved += 1
-                try:
-                    real = resolved_read_path(raw)
-                except (OSError, ValueError, RuntimeError):
-                    continue
-                if not _managed_operand(real, base or workdir, private_paths, open_reads):
-                    return True
-        # A pipeline's cd runs in a subshell. Only subsequent commands use a literal cd target.
-        if words and words[0] == 'cd' and not pipeline and separator != '|':
-            target = _expand_dir(words[1], home, environ) if len(words) == 2 else None
-            base = (path_field_text(target, base) if target is not None
-                    and (base is not None or os.path.isabs(target)) and separator in (';', '&&', '\n')
-                    else None)
+        # Only later operands see a location change; a pipeline's builtin runs in a subshell.
+        location = words[1:] if words and words[0] in ('builtin', 'command') else words
+        if location and location[0] == '--':
+            location = location[1:]
+        next_success, next_failure = bases, bases
+        if (location and location[0].casefold() in ('cd', 'chdir', 'pushd', 'set-location', 'sl', 'push-location')
+                and not pipeline and separator not in ('|', '&')):
+            targets = []
+            for base in bases:
+                targets.extend(shell_cd_bases(shlex.join(words), base, home, environ) or [None])
+            next_success = targets
+        elif location and not pipeline and separator not in ('|', '&'):
+            if location[0] == 'exit':
+                next_success, next_failure = [], []
+            elif location[0] == 'true':
+                next_failure = []
+            elif location[0] == 'false':
+                next_success = []
+        # Keep skipped branches for the following list, not for operands in the guard itself.
+        succeeded = list(dict.fromkeys([*skipped_success, *next_success]))
+        failed = list(dict.fromkeys([*skipped_failure, *next_failure]))
+        succeeded = succeeded if len(succeeded) <= MAX_CD_BASES else [None]
+        failed = failed if len(failed) <= MAX_CD_BASES else [None]
         pipeline = separator == '|'
+        previous = separator
     return False
 
 
