@@ -195,7 +195,7 @@ async def _finish(sends: list[list], outcome: str) -> None:
 
 
 @asynccontextmanager
-async def _admitted(tool: str):
+async def _admitted(tool: str, *, completion: dict | None = None):
     """Client options that admit every outbound request of one tool call before httpx sends it.
 
     httpx awaits ``request`` hooks right before each send, also for every redirect hop it follows; annot's
@@ -239,7 +239,7 @@ async def _admitted(tool: str):
     outcome = "failed"
     try:
         yield {"event_hooks": {"request": [admit], "response": [answered]}}
-        outcome = "ok"
+        outcome = completion.get("outcome", "ok") if completion is not None else "ok"
     except BaseException as exc:
         outcome = "timeout" if isinstance(exc.__cause__, LookupTimeout) else "failed"
         raise
@@ -288,7 +288,8 @@ async def _run_structure(method: str, *args: object) -> str:
 
 
 async def _run_literature(method: str, *args: object) -> str:
-    async with _admitted(method) as hooks, httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
+    completion = {}
+    async with _admitted(method, completion=completion) as hooks, httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
                                                              follow_redirects=method != "pubmed_search",
                                                              headers={"User-Agent": annot.USER_AGENT},
                                                              **hooks) as client:
@@ -315,6 +316,7 @@ async def _run_literature(method: str, *args: object) -> str:
                 if collection is None:
                     raise
                 result = collection.finish("timeout")
+                completion["outcome"] = "timeout"
         except (annot.LookupFailed, LookupTimeout, ValueError, OSError, OwnedPathError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
