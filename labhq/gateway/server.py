@@ -274,6 +274,7 @@ DECISION_CHOICES = ("approve", "revise", "deny")
 class DecisionIn(BaseModel):
     approved: bool
     note: str = ""
+    grant_for_request: bool = False
     storage: dict | None = None
     model_refusal: dict | None = None
     # CP2 evidence review reads only this; the note never decides (#90). Other approvals ignore it.
@@ -2284,6 +2285,35 @@ class Hub:
             self._approval_locks = WeakValueDictionary()
         return self._approval_locks.setdefault(aid, asyncio.Lock())
 
+    def _grant_lock(self, rid: str):
+        if not hasattr(self, "_grant_locks"):
+            self._grant_locks = WeakValueDictionary()
+        return self._grant_locks.setdefault(rid, asyncio.Lock())
+
+    def _grant_category(self, entry: dict) -> str | None:
+        card = entry.get("approval") or {}
+        detail = card.get("detail") or {}
+        rid, tid, origin = card.get("request_id"), card.get("task_id"), entry.get("origin")
+        category = detail.get("grant_category")
+        request = self.requests.get(rid) or {}
+        task = self.store.get("task", tid) if tid else None
+        process = self.runner_processes.get(origin)
+        if (card.get("kind") != "tool_permission" or category not in {"workspace", "unresolved_path", "internal_read"}
+                or not origin or not process or detail.get("grant_process") != process
+                or entry.get("origin_process") != process
+                or self.runner_capabilities.get(origin, {}).get("approval_grants") != 1
+                or not is_active_request(request.get("status")) or request.get("cancelling")
+                or not task or task.get("request_id") != rid or task.get("runner_id") != origin
+                or (task.get("payload") or {}).get("agent_id") != card.get("agent_id")
+                or task.get("completed") or task.get("abandoned") or self.store.get("task_cancel", tid)):
+            return None
+        return category
+
+    def _grant_ready(self, rid: str, category: str) -> bool:
+        source = (self.store.get("approval_grants", rid) or {}).get(category)
+        decision = self.store.get("approval_decision", source) if source else None
+        return bool(decision and decision.get("approved") and not decision.get("grant_pending"))
+
     async def _approval_operation(self, aid: str, operation):
         """Serialize a card's lifecycle and settle it even under repeated cancellation."""
         lock = self._approval_lock(aid)
@@ -2624,6 +2654,22 @@ class Hub:
         """Caller holds this card's lock; re-read after waiting for a competing ACK/timeout."""
         entry = self.store.get("decision", aid)
         if entry and entry["origin"] == runner_id:
+            recorded = self.store.get("approval_decision", aid) or {}
+            rid = (recorded.get("approval") or {}).get("request_id")
+            request = self.requests.get(rid) or {}
+            if recorded.get("grant_pending"):
+                entry = {**entry, "approved": False, "note": "grant was not finalized"}
+                entry.pop("grant_pending", None)
+                recorded = {**recorded, "approved": False, "note": entry["note"]}
+                recorded.pop("grant_pending", None)
+                await self.store.areject_grant_approval(aid, recorded, entry, rid, recorded["grant_category"],
+                                                         revoke=not recorded.get("automatic"))
+                self.approvals.pop(aid, None)
+                self._cancel_approval_timers(aid)
+            elif recorded.get("grant_category") and (not is_active_request(request.get("status"))
+                                                       or request.get("cancelling")):
+                entry = {**entry, "approved": False, "note": "request ended"}
+                await self.store.aput("decision", aid, entry)
             ws = self.runners.get(runner_id)
             try:
                 await asyncio.wait_for(self.send_runner(runner_id, {
@@ -2636,6 +2682,7 @@ class Hub:
                     self.unregister_runner(runner_id, ws)
                 # The delivery stays durable until ACK, including after backpressure.
                 raise RunnerUnavailable(f"runner {runner_id} approval delivery timed out") from exc
+            return bool(entry["approved"])
 
     async def cancel_task(self, tid: str) -> bool:
         """Ask the task's runner to stop it and keep the ask until the task ends (PR #396 review).
@@ -4686,8 +4733,26 @@ class Hub:
                 prior = self.store.get("approval_decision", a["id"])
                 if prior.get("origin") == runner_id:
                     await self.flush_decisions(runner_id)
+                    prior = self.store.get("approval_decision", a["id"])
                 msg = {**msg, "type": "approval.resolved", "data": {"id": a["id"],
-                    **{k: prior[k] for k in ("approved", "note", "state") if k in prior}}}
+                    **{k: prior[k] for k in ("approved", "note", "state", "automatic", "grant_category", "grant_source") if k in prior}}}
+            elif _ended_by_cancel(self.requests.get(a.get("request_id")) or {}):
+                await self.close_approval(a["id"], "요청 취소로 닫힘")
+                msg = {**msg, "type": "approval.expired", "data": {"id": a["id"], "note": "요청 취소로 닫힘"}}
+            elif (a.get("task_id") == msg.get("task_id") and a.get("request_id") == msg.get("request_id")
+                  and a.get("agent_id") == msg.get("agent_id")):
+                entry = self.approvals.get(a["id"])
+                category = self._grant_category(entry) if entry else None
+                rid = a.get("request_id")
+                if category and self._grant_ready(rid, category):
+                    try:
+                        await self.resolve_approval(a["id"], True, "request-scoped grant", grant_auto=True)
+                    except (KeyError, ValueError):
+                        pass  # a cancellation, timeout, or grant expiry won the race
+                    else:
+                        prior = self.store.get("approval_decision", a["id"])
+                        msg = {**msg, "type": "approval.resolved", "data": {"id": a["id"],
+                            **{k: prior[k] for k in ("approved", "note", "automatic", "grant_category", "grant_source") if k in prior}}}
         elif typ == "approval.timed_out":
             aid = str((msg.get("data") or {}).get("id") or "")
             decision = await self._timeout_approval(aid, runner_id=runner_id)
@@ -5716,8 +5781,11 @@ class Hub:
 
     async def resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                choice: str | None = None, storage: dict | None = None,
-                               model_refusal: dict | None = None) -> None:
+                               model_refusal: dict | None = None, *, grant_for_request: bool = False,
+                               grant_auto: bool = False) -> None:
         pending = self.approvals.get(approval_id)
+        if (grant_for_request or grant_auto) and (not pending or not approved or not self._grant_category(pending)):
+            raise ValueError("this card cannot grant request-scoped approval")
         if pending and pending["approval"].get("kind") == "result_publish":
             # The answer to a publish card and a redraft of that edition never interleave (#607): a redraft that came
             # first has closed this card (KeyError below), one that comes after sees the upload started and is refused.
@@ -5725,11 +5793,13 @@ class Hub:
                 async with self._approval_lock(approval_id):
                     return await self._resolve_approval(approval_id, approved, note, choice, storage)
         async with self._approval_lock(approval_id):
-            return await self._resolve_approval(approval_id, approved, note, choice, storage, model_refusal)
+            return await self._resolve_approval(approval_id, approved, note, choice, storage, model_refusal,
+                                                grant_for_request=grant_for_request, grant_auto=grant_auto)
 
     async def _resolve_approval(self, approval_id: str, approved: bool, note: str = "",
                                 choice: str | None = None, storage: dict | None = None,
-                                model_refusal: dict | None = None) -> None:
+                                model_refusal: dict | None = None, *, grant_for_request: bool = False,
+                                grant_auto: bool = False) -> None:
         pending = self.approvals.get(approval_id)
         retry_id = None
         if pending and pending["approval"].get("kind") == "model_refused" and approved:
@@ -5748,6 +5818,9 @@ class Hub:
         entry = self.approvals.get(approval_id)
         if entry is None:
             raise KeyError(approval_id)
+        category = self._grant_category(entry) if grant_for_request or grant_auto else None
+        if (grant_for_request or grant_auto) and (not approved or not category):
+            raise ValueError("this card cannot grant request-scoped approval")
         chosen = {"choice": choice} if choice in DECISION_CHOICES else {}
         if retry_id:
             chosen.update(model_refusal=model_refusal,
@@ -5763,11 +5836,47 @@ class Hub:
         delivery = (copy.deepcopy({"origin": entry["origin"], "approved": approved, "note": note, **chosen})
                     if entry["origin"] else None)
         async def commit_and_deliver():
-            await self.store.acommit_approval(approval_id, decision, delivery)
+            nonlocal approved, note
+            if category:
+                rid = entry["approval"]["request_id"]
+                async with self._grant_lock(rid):
+                    if self._grant_category(entry) != category:
+                        raise ValueError("request or runner is no longer eligible")
+                    source = await self.store.acommit_grant_approval(
+                        approval_id, decision, delivery, rid, category, create=grant_for_request)
+                    chosen.update(grant_category=category, grant_source=source, automatic=grant_auto)
+                    eligible = self._grant_category(entry) == category
+                    if eligible:
+                        try:
+                            await self.store.afinalize_grant_approval(approval_id, rid)
+                        except ValueError:
+                            eligible = False
+                    if not eligible or self._grant_category(entry) != category:
+                        # Cancel may have marked the request while the durable writer was busy.
+                        # Do not release the just-recorded yes to its runner.
+                        approved, note = False, "request ended"
+                        await self.store.areject_grant_approval(approval_id,
+                            {**decision, **chosen, "approved": False, "note": note},
+                            {**delivery, "approved": False, "note": note},
+                            rid, category, revoke=grant_for_request)
+                    self.approvals.pop(approval_id, None)
+                    if entry["origin"] in self.runners:
+                        try:
+                            sent_approved = await self._send_decision(entry["origin"], approval_id)
+                            if approved and sent_approved is False:
+                                approved, note = False, "request ended"
+                                await self.store.areject_grant_approval(approval_id,
+                                    {**decision, **chosen, "approved": False, "note": note},
+                                    {**delivery, "approved": False, "note": note},
+                                    rid, category, revoke=grant_for_request)
+                        except RunnerUnavailable:
+                            pass
+            else:
+                await self.store.acommit_approval(approval_id, decision, delivery)
             self.approvals.pop(approval_id, None)
             self._cancel_facilities_timeout(approval_id)
             self._cancel_resume_timer(approval_id)
-            if entry["origin"]:
+            if entry["origin"] and not category:
                 if entry["origin"] in self.runners:
                     try:
                         await self._send_decision(entry["origin"], approval_id)
@@ -5793,9 +5902,10 @@ class Hub:
                 if facilities_hold:
                     self.track_request(rid, self.resume_when_ready(rid))
             a = entry["approval"]
-            await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
-                                "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
-                                "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
+            if not grant_auto:
+                await self.publish({"type": "approval.resolved", "ts": time.time(), "task_id": a.get("task_id"),
+                                    "agent_id": a.get("agent_id"), "request_id": a.get("request_id"),
+                                    "data": {"id": approval_id, "approved": approved, "note": note, **chosen}})
             if retry_id and retry_id == a.get("request_id"):
                 self.track_request(retry_id, self.resume_when_ready(retry_id))
             if a.get("kind") == "resume" and not approved and not is_terminal_request(self.requests[a["request_id"]].get("status")):
@@ -7101,6 +7211,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
                     try:
                         await hub.resolve_approval(str(msg.get("id")), bool(msg.get("approved")), msg.get("note", ""),
                                                    msg.get("choice"), msg.get("storage"),
+                                                   **({"grant_for_request": True} if msg.get("grant_for_request") is True else {}),
                                                    **({"model_refusal": msg["model_refusal"]}
                                                       if msg.get("model_refusal") is not None else {}))
                     except ValueError as exc:
@@ -7440,6 +7551,7 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
     async def decide(aid: str, body: DecisionIn) -> dict:
         try:
             await hub.resolve_approval(aid, body.approved, body.note, body.choice, body.storage,
+                                       **({"grant_for_request": True} if body.grant_for_request else {}),
                                        **({"model_refusal": body.model_refusal}
                                           if body.model_refusal is not None else {}))
         except KeyError:

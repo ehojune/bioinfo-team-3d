@@ -22,6 +22,370 @@ def _policy(**kw):
     return PolicySettings(data_zones=[DataZone(path="/data/cohort", level="restricted")], **kw)
 
 
+@pytest.mark.parametrize("tail", ["sbatch job.sh", "curl https://example.test", "rm /tmp/a",
+                                  "cat a > /outside/result"])
+def test_request_grant_excludes_mixed_internal_commands(tail):
+    from labhq.approval_grants import classify
+
+    policy = PolicySettings(data_zones=[DataZone(path="/data/internal", level="internal")])
+    command = {"command": f"cat /data/internal/a; {tail}"}
+    assert evaluate_tool("Bash", command, policy, ["/work"], "/work").action == "ask"
+    assert classify("Bash", command, policy, workdir="/work") is None
+
+
+def test_request_grant_category_uses_runner_policy():
+    from labhq.approval_grants import classify
+
+    policy = PolicySettings(data_zones=[DataZone(path="/data/internal", level="internal")])
+    assert classify("Bash", {"command": "cat /data/internal/a"}, policy,
+                    workdir="/work") == "internal_read"
+    assert classify("Bash", {"command": "echo harmless"}, policy, workdir="/work") is None
+    assert classify("Read", {"file_path": "/data/internal/a"}, policy, workdir="/work") is None
+
+
+def test_request_grant_parent_private_path_preserves_exclusions():
+    from labhq.approval_grants import classify
+
+    policy = PolicySettings()
+    def category(cmd):
+        return classify("Bash", {"command": cmd}, policy, workdir="/home/test/work",
+                        private_paths=("/home/test",), private_enabled=True)
+
+    assert category("cat /home/test/work/a") == "workspace"
+    assert category("cat /home/test/secret/a") is None
+    assert category("cat /home/test/work/a > ../secret/out") is None
+    assert category("cat /home/test/work/.ssh/id_rsa") is None
+    assert category("cat $HOME/secret/a") is None
+    assert category("python -c x") == "unresolved_path"
+
+
+def test_request_grant_cd_write_scope(tmp_path):
+    from labhq.approval_grants import classify
+
+    work = tmp_path / "work"
+    nested = work / "nested"
+    nested.mkdir(parents=True)
+    policy = PolicySettings()
+
+    def category(command):
+        return classify("Bash", {"command": command}, policy, workdir=work.as_posix(),
+                        private_paths=(tmp_path.as_posix(),), private_enabled=True)
+
+    assert category(f'cd "{nested.as_posix()}" && echo x > output.txt') == "workspace"
+    assert category(f'cd "{nested.as_posix()}" && echo x > ../../outside.txt') is None
+    assert category('cd "$UNKNOWN" && echo x > output.txt') == "unresolved_path"
+
+
+@pytest.fixture
+def request_grant_hub(tmp_path, monkeypatch):
+    from labhq.gateway.server import Hub
+    from labhq.store import StateStore
+
+    hub = Hub.__new__(Hub)
+    hub.store = StateStore(tmp_path / "grants.sqlite3")
+    hub.requests = {"r1": {"status": "running"}, "r2": {"status": "running"}}
+    for rid, request in hub.requests.items():
+        hub.store.put("request", rid, request)
+    hub.runners = {"runner": object()}
+    hub.runner_processes = {"runner": "process-1"}
+    hub.runner_incarnations = {"runner": "inc-1"}
+    hub.runner_capabilities = {"runner": {"approval_grants": 1}}
+    hub.approvals, hub.recruits_running = {}, {}
+    hub.store.put("task", "t1", {"request_id": "r1", "runner_id": "runner", "payload": {"agent_id": "agent"}})
+    events, sent = [], []
+    async def publish(event, **kwargs):
+        events.append(event)
+    async def send(runner, message):
+        sent.append(message)
+    monkeypatch.setattr(hub, "publish", publish)
+    monkeypatch.setattr(hub, "send_runner", send)
+    monkeypatch.setattr(hub, "_cancel_facilities_timeout", lambda aid: None)
+    monkeypatch.setattr(hub, "_cancel_resume_timer", lambda aid: None)
+    yield hub, events, sent
+    hub.store.close()
+
+
+def _grant_card(aid, rid="r1", category="workspace"):
+    return {"id": aid, "kind": "tool_permission", "summary": "example", "request_id": rid,
+            "task_id": "t1", "agent_id": "agent",
+            "detail": {"grant_category": category, "grant_process": "process-1"}}
+
+
+async def _receive_grant_card(hub, card):
+    await hub._on_runner_message("runner", {"type": "approval.requested", "data": card,
+        "request_id": card["request_id"], "task_id": card["task_id"], "agent_id": card["agent_id"]})
+
+
+async def test_request_grant_is_explicit_audited_and_scoped(request_grant_hub):
+    hub, events, sent = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("first"))
+    assert "first" in hub.approvals and not sent
+    await hub.resolve_approval("first", True, grant_for_request=True)
+    assert hub.store.get("approval_grants", "r1") == {"workspace": "first"}
+    await _receive_grant_card(hub, _grant_card("second"))
+    decision = hub.store.get("approval_decision", "second")
+    assert decision["automatic"] is True and decision["grant_source"] == "first"
+    assert events[-1]["type"] == "approval.resolved" and events[-1]["data"]["grant_source"] == "first"
+    assert sent[-1]["approved"] is True
+    await _receive_grant_card(hub, _grant_card("other-category", category="internal_read"))
+    assert "other-category" in hub.approvals
+    hub.store.put("task", "t1", {"request_id": "r2", "runner_id": "runner", "payload": {"agent_id": "agent"}})
+    await _receive_grant_card(hub, _grant_card("other-request", rid="r2"))
+    assert "other-request" in hub.approvals
+
+
+@pytest.mark.parametrize("change", ["wrong_task", "wrong_process", "unsupported", "not_approved", "cancelled"])
+async def test_request_grant_rejects_untrusted_or_inactive_card(request_grant_hub, change):
+    hub, _, _ = request_grant_hub
+    card = _grant_card("invalid")
+    if change == "wrong_task":
+        card["request_id"] = "r2"
+    elif change == "wrong_process":
+        card["detail"]["grant_process"] = "forged"
+    elif change == "unsupported":
+        card["detail"]["grant_category"] = "scheduler"
+    elif change == "cancelled":
+        hub.requests["r1"]["status"] = "cancelled"
+    entry = {"approval": card, "origin": "runner", "origin_process": "process-1"}
+    hub.approvals["invalid"] = entry
+    hub.save_approval("invalid")
+    with pytest.raises(ValueError):
+        await hub.resolve_approval("invalid", change != "not_approved", grant_for_request=True)
+    assert hub.store.get("approval_grants", card["request_id"]) is None
+
+
+@pytest.mark.parametrize("status", ["done", "failed", "cancelled", "review_pending", "interrupted"])
+def test_request_grant_removed_on_end_and_not_restored(request_grant_hub, status):
+    hub, _, _ = request_grant_hub
+    hub.store.put("approval_grants", "r1", {"workspace": "first"})
+    hub.store.put("request", "r1", {"status": status})
+    assert hub.store.get("approval_grants", "r1") is None
+    hub.store.put("request", "r1", {"status": "running"})
+    assert hub.store.get("approval_grants", "r1") is None
+
+
+async def test_request_grant_commit_and_cancellation_are_serialized(request_grant_hub, monkeypatch):
+    import asyncio
+    import threading
+    from contextlib import contextmanager
+    hub, _, sent = request_grant_hub
+    entered, release = threading.Event(), threading.Event()
+    async def save(rid):
+        await hub.store.aput("request", rid, hub.requests[rid])
+    async def no_cancel(tid):
+        return False
+    async def silent(*args):
+        return []
+    async def finish(rid):
+        return None
+    monkeypatch.setattr(hub, "asave_request", save)
+    monkeypatch.setattr(hub, "cancel_task", no_cancel)
+    monkeypatch.setattr(hub, "_await_cancelled_results", silent)
+    monkeypatch.setattr(hub, "_afinish_cancel", finish)
+    monkeypatch.setattr(hub, "_restore_unstarted_continuation", lambda *args: None)
+    hub.request_tasks, hub.jobs_waiters = {}, {}
+    hub.orchestrator = SimpleNamespace(cancel_steps=lambda rid: [])
+    await _receive_grant_card(hub, _grant_card("racing"))
+    transaction = hub.store._transaction
+    first = True
+    @contextmanager
+    def hold():
+        nonlocal first
+        with transaction() as conn:
+            yield conn
+            if first:
+                first = False
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("test barrier")
+    monkeypatch.setattr(hub.store, "_transaction", hold)
+    approving = asyncio.create_task(hub.resolve_approval("racing", True, grant_for_request=True))
+    while not entered.is_set():
+        await asyncio.sleep(0.001)
+    cancelling = asyncio.create_task(hub.cancel_request("r1"))
+    await asyncio.sleep(0)
+    assert hub.requests["r1"]["status"] == "cancelled"
+    release.set()
+    await approving
+    await cancelling
+    assert hub.requests["r1"]["status"] == "cancelled"
+    assert hub.store.get("approval_grants", "r1") is None
+    assert hub.store.get("approval_decision", "racing")["approved"] is False
+    assert sent[-1]["approved"] is False
+
+
+async def test_request_grant_is_atomic_when_storage_fails(request_grant_hub, monkeypatch):
+    from contextlib import contextmanager
+    hub, _, _ = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("storage-failure"))
+    transaction = hub.store._transaction
+    @contextmanager
+    def fail():
+        with transaction() as conn:
+            yield conn
+            raise OSError("injected failure")
+    monkeypatch.setattr(hub.store, "_transaction", fail)
+    with pytest.raises(OSError, match="injected failure"):
+        await hub.resolve_approval("storage-failure", True, grant_for_request=True)
+    assert hub.store.get("approval_grants", "r1") is None
+    assert hub.store.get("approval_decision", "storage-failure") is None
+    assert "storage-failure" in hub.approvals
+
+
+async def test_request_grant_api_requires_explicit_selection(tmp_path, monkeypatch):
+    import httpx
+    from labhq.gateway.server import create_app
+    settings = Settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.gateway.client_token = "test-token"
+    app = create_app(settings)
+    hub = app.state.hub
+    hub.requests["r1"] = {"status": "running"}
+    hub.store.put("request", "r1", hub.requests["r1"])
+    hub.store.put("task", "t1", {"request_id": "r1", "runner_id": "runner", "payload": {"agent_id": "agent"}})
+    hub.runners["runner"] = object()
+    hub.runner_processes["runner"] = "process-1"
+    hub.runner_incarnations["runner"] = "inc-1"
+    hub.runner_capabilities["runner"] = {"approval_grants": 1}
+    async def publish(event, **kwargs):
+        pass
+    async def send(*args):
+        pass
+    monkeypatch.setattr(hub, "publish", publish)
+    monkeypatch.setattr(hub, "send_runner", send)
+    await _receive_grant_card(hub, _grant_card("api-one"))
+    await _receive_grant_card(hub, _grant_card("api-two"))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        assert (await client.post("/api/approvals/api-one", json={"approved": True})).status_code == 401
+        client.headers["Authorization"] = "Bearer test-token"
+        assert (await client.post("/api/approvals/api-one", json={"approved": True})).status_code == 200
+        assert hub.store.get("approval_grants", "r1") is None
+        assert (await client.post("/api/approvals/api-two", json={"approved": False,
+                                  "grant_for_request": True})).status_code == 422
+        assert (await client.post("/api/approvals/api-two", json={"approved": True,
+                                  "grant_for_request": True})).status_code == 200
+        assert hub.store.get("approval_grants", "r1") == {"workspace": "api-two"}
+    hub.store.close()
+
+
+async def test_request_grant_runner_rejects_forged_classification(tmp_path, monkeypatch):
+    from labhq.models import ApprovalRequest, Engine
+    from labhq.runner.daemon import Runner
+    runner = Runner.__new__(Runner)
+    runner.s = Settings()
+    runner.s.policy.data_zones = [DataZone(path="/data/internal", level="internal")]
+    runner.process = "process-1"
+    agent = SimpleNamespace(engine=Engine.claude_code, name="test", permission_mode="default")
+    task = SimpleNamespace(meta={}, agent_id="agent")
+    runner.workspaces = {"t1": SimpleNamespace(dir=tmp_path, task=task, agent=agent)}
+    runner.task_req, runner.active_roots = {"t1": "r1"}, {"t1": (False, [tmp_path])}
+    runner.tool_contexts = {"t1": SimpleNamespace(agent=agent, extra_dirs=[], private_paths=[],
+        private_enabled=False, private_open_reads=[], read_only=False, shared_environment_protected=False,
+        environment_step=False)}
+    runner.approval_tasks = {}
+    emitted = []
+    async def emit(events):
+        emitted.extend(events)
+    runner.emit_all = emit
+    req = ApprovalRequest(kind="tool_permission", summary="claimed safe", task_id="t1", request_id="r1",
+        agent_id="agent", detail={"tool_name": "Bash", "tool_input": {"command": "cat /data/internal/a; sbatch job.sh"},
+                                  "policy_reason": "safe", "grant_category": "workspace", "grant_process": "process-1"})
+    await runner._on_approval(req)
+    assert "grant_category" not in req.detail and "grant_process" not in req.detail
+    assert emitted[0].type == "approval.requested"
+
+
+@pytest.mark.parametrize("method", ["commit_terminal", "commit_request_event"])
+def test_request_grant_expires_with_terminal_event_commit(request_grant_hub, method):
+    hub, _, _ = request_grant_hub
+    hub.store.put("approval_grants", "r1", {"workspace": "first"})
+    getattr(hub.store, method)("r1", {"status": "done"},
+                               {"type": "request.completed", "request_id": "r1", "data": {}}, 100)
+    assert hub.store.get("approval_grants", "r1") is None
+    assert hub.store.get("request", "r1")["status"] == "done"
+
+
+async def test_request_grant_pending_delivery_is_denied_after_end(request_grant_hub):
+    hub, _, sent = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("first"))
+    await hub.resolve_approval("first", True, grant_for_request=True)
+    hub.requests["r1"]["status"] = "cancelled"
+    hub.store.put("request", "r1", hub.requests["r1"])
+    await hub._send_decision("runner", "first")
+    assert sent[-1]["approved"] is False
+    assert hub.store.get("decision", "first")["approved"] is False
+
+
+async def test_request_grant_card_arriving_during_cancel_is_closed(request_grant_hub, monkeypatch):
+    hub, events, sent = request_grant_hub
+    hub.store.put("approval_grants", "r1", {"workspace": "first"})
+    add = hub._add_approval
+    async def cancel_during_add(aid, entry):
+        added = await add(aid, entry)
+        hub.requests["r1"]["status"] = "cancelled"
+        return added
+    monkeypatch.setattr(hub, "_add_approval", cancel_during_add)
+    await _receive_grant_card(hub, _grant_card("late"))
+    assert "late" not in hub.approvals
+    assert sent[-1]["approved"] is False
+    assert events[-1]["type"] == "approval.expired"
+
+
+async def test_request_grant_unfinished_commit_fails_closed_on_replay(request_grant_hub, monkeypatch):
+    hub, _, sent = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("unfinished"))
+    async def fail_finalize(*args):
+        raise OSError("gateway stopped before grant finalization")
+    monkeypatch.setattr(hub.store, "afinalize_grant_approval", fail_finalize)
+    with pytest.raises(OSError):
+        await hub.resolve_approval("unfinished", True, grant_for_request=True)
+    assert hub.store.get("approval_decision", "unfinished")["grant_pending"] is True
+    assert not hub._grant_ready("r1", "workspace")
+    await _receive_grant_card(hub, _grant_card("after-restart"))
+    assert "after-restart" in hub.approvals
+    await hub._send_decision("runner", "unfinished")
+    assert sent[-1]["approved"] is False
+    assert hub.store.get("approval_decision", "unfinished")["approved"] is False
+    assert hub.store.get("approval_grants", "r1") is None
+
+
+async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path):
+    from labhq.models import ApprovalRequest, Engine
+    from labhq.runner.daemon import Runner
+    hub, events, sent = request_grant_hub
+    internal = tmp_path / "internal"
+    internal.mkdir()
+    runner = Runner.__new__(Runner)
+    runner.s = Settings()
+    runner.s.policy.data_zones = [DataZone(path=internal.as_posix(), level="internal")]
+    runner.process = "process-1"
+    agent = SimpleNamespace(engine=Engine.claude_code, name="test", permission_mode="default")
+    task = SimpleNamespace(meta={}, agent_id="agent")
+    runner.workspaces = {"t1": SimpleNamespace(dir=tmp_path, task=task, agent=agent)}
+    runner.task_req, runner.active_roots = {"t1": "r1"}, {"t1": (False, [tmp_path])}
+    runner.tool_contexts = {"t1": SimpleNamespace(agent=agent, extra_dirs=[], private_paths=[],
+        private_enabled=False, private_open_reads=[], read_only=False, shared_environment_protected=False,
+        environment_step=False)}
+    runner.approval_tasks = {}
+    async def emit(frames):
+        for frame in frames:
+            if frame.type == "approval.requested":
+                await hub._on_runner_message("runner", frame.model_dump(mode="json"))
+    runner.emit_all = emit
+    def card(aid):
+        return ApprovalRequest(id=aid, kind="tool_permission", summary="internal read", task_id="t1",
+            request_id="r1", agent_id="agent", detail={"tool_name": "Bash",
+            "tool_input": {"command": f'cat "{internal.as_posix()}/a"'}, "policy_reason": "ignored"})
+    first = card("runner-first")
+    await runner._on_approval(first)
+    assert first.detail["grant_category"] == "internal_read"
+    await hub.resolve_approval(first.id, True, grant_for_request=True)
+    second = card("runner-second")
+    await runner._on_approval(second)
+    assert hub.store.get("approval_decision", second.id)["grant_source"] == first.id
+    assert sent[-1]["approved"] is True and events[-1]["data"]["automatic"] is True
+
+
 def _long_separator_runs(fraction=1):
     return "/" * int(65_536 * fraction) + "\\" * int(65_536 * fraction) + ":" * int(600_000 * fraction)
 

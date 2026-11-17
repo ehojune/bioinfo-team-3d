@@ -14,6 +14,7 @@ from typing import TypeVar
 
 from . import durable
 from .test_guard import guard_test_path
+from .request_status import is_active_request
 
 T = TypeVar("T")
 
@@ -305,7 +306,16 @@ class StateStore:
                 task = self._get_on(conn, "task", key) or {}
                 if task.get("completed") and not task.get("abandoned"):
                     return  # A queued cancel cannot resurrect intent after the result's cleanup.
+            if kind == "request":
+                self._write_request(conn, key, json.loads(raw))
+                return
             conn.execute("INSERT OR REPLACE INTO state VALUES (?, ?, ?)", (kind, key, raw))
+
+    @staticmethod
+    def _write_request(conn: sqlite3.Connection, rid: str, request: dict) -> None:
+        conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (rid, _dumps(request)))
+        if not is_active_request(request.get("status")) or request.get("cancelling"):
+            conn.execute("DELETE FROM state WHERE kind='approval_grants' AND key=?", (rid,))
 
     def delete(self, kind: str, key: str) -> None:
         durable.call(self.lane, self._delete_now, kind, key)
@@ -335,6 +345,78 @@ class StateStore:
             conn.execute("DELETE FROM state WHERE kind='decision' AND key=?", (aid,))
             if queued is not None:
                 conn.execute("INSERT INTO state VALUES ('decision', ?, ?)", (aid, queued))
+
+    async def acommit_grant_approval(self, aid: str, decision: dict, delivery: dict,
+                                     rid: str, category: str, *, create: bool) -> str:
+        return await durable.run(self.lane, self._commit_grant_approval_now, aid,
+                                 _dumps(decision), _dumps(delivery), rid, category, create)
+
+    def _commit_grant_approval_now(self, aid: str, raw: str, queued: str, rid: str,
+                                   category: str, create: bool) -> str:
+        with self._transaction() as conn:
+            request = self._get_on(conn, "request", rid) or {}
+            if not is_active_request(request.get("status")) or request.get("cancelling"):
+                raise ValueError("request is no longer active")
+            pending = self._get_on(conn, "approval", aid)
+            if not pending or (pending.get("approval") or {}).get("request_id") != rid:
+                raise ValueError("approval is no longer pending for this request")
+            grants = self._get_on(conn, "approval_grants", rid) or {}
+            if create:
+                source = aid
+                grants[category] = source
+                conn.execute("INSERT OR REPLACE INTO state VALUES ('approval_grants', ?, ?)",
+                             (rid, _dumps(grants)))
+            else:
+                source = grants.get(category)
+                if not source:
+                    raise ValueError("request grant is no longer active")
+            decision = json.loads(raw)
+            decision.update(grant_category=category, grant_source=source, automatic=not create, grant_pending=True)
+            delivery = json.loads(queued)
+            delivery["grant_pending"] = True
+            conn.execute("DELETE FROM state WHERE kind='approval' AND key=?", (aid,))
+            conn.execute("INSERT OR REPLACE INTO state VALUES ('approval_decision', ?, ?)",
+                         (aid, _dumps(decision)))
+            conn.execute("DELETE FROM state WHERE kind='decision' AND key=?", (aid,))
+            conn.execute("INSERT INTO state VALUES ('decision', ?, ?)", (aid, _dumps(delivery)))
+            return source
+
+    async def afinalize_grant_approval(self, aid: str, rid: str) -> None:
+        await durable.run(self.lane, self._finalize_grant_approval_now, aid, rid)
+
+    def _finalize_grant_approval_now(self, aid: str, rid: str) -> None:
+        with self._transaction() as conn:
+            request = self._get_on(conn, "request", rid) or {}
+            decision = self._get_on(conn, "approval_decision", aid) or {}
+            delivery = self._get_on(conn, "decision", aid) or {}
+            if (not is_active_request(request.get("status")) or request.get("cancelling")
+                    or not decision.get("grant_pending") or not delivery.get("grant_pending")):
+                raise ValueError("grant cannot be finalized")
+            decision.pop("grant_pending", None)
+            delivery.pop("grant_pending", None)
+            conn.execute("UPDATE state SET body=? WHERE kind='approval_decision' AND key=?", (_dumps(decision), aid))
+            conn.execute("UPDATE state SET body=? WHERE kind='decision' AND key=?", (_dumps(delivery), aid))
+
+    async def areject_grant_approval(self, aid: str, decision: dict, delivery: dict,
+                                     rid: str, category: str, *, revoke: bool) -> None:
+        await durable.run(self.lane, self._reject_grant_approval_now, aid, _dumps(decision),
+                          _dumps(delivery), rid, category, revoke)
+
+    def _reject_grant_approval_now(self, aid: str, raw: str, queued: str, rid: str,
+                                   category: str, revoke: bool) -> None:
+        with self._transaction() as conn:
+            grants = self._get_on(conn, "approval_grants", rid) or {}
+            if revoke and grants.get(category) == aid:
+                grants.pop(category)
+            request = self._get_on(conn, "request", rid) or {}
+            if not is_active_request(request.get("status")) or request.get("cancelling"):
+                grants = {}
+            if grants:
+                conn.execute("INSERT OR REPLACE INTO state VALUES ('approval_grants', ?, ?)", (rid, _dumps(grants)))
+            else:
+                conn.execute("DELETE FROM state WHERE kind='approval_grants' AND key=?", (rid,))
+            conn.execute("INSERT OR REPLACE INTO state VALUES ('approval_decision', ?, ?)", (aid, raw))
+            conn.execute("INSERT OR REPLACE INTO state VALUES ('decision', ?, ?)", (aid, queued))
 
     def all(self, kind: str) -> dict[str, dict]:
         return {key: json.loads(body) for key, body in
@@ -399,7 +481,7 @@ class StateStore:
                 if seen is not None and runner_seq <= seen[0]:
                     return None
             if request is not None:
-                conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (request[0], _dumps(request[1])))
+                self._write_request(conn, request[0], request[1])
             if activity is not None:
                 self._apply_activity(conn, activity[0], activity[1])
             body = self._insert_event(conn, body, limit)
@@ -481,7 +563,7 @@ class StateStore:
 
     def _commit_terminal_now(self, rid: str, request: dict, event: dict, limit: int) -> dict:
         with self._transaction() as conn:
-            conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (rid, _dumps(request)))
+            self._write_request(conn, rid, request)
             event = self._insert_event(conn, event, limit)
             conn.execute("INSERT OR REPLACE INTO state VALUES ('knowledge_pending', ?, ?)",
                          (rid, json.dumps({"seq": event["seq"]})))
@@ -499,7 +581,7 @@ class StateStore:
 
     def _commit_request_event_now(self, rid: str, request: dict, event: dict, limit: int) -> dict:
         with self._transaction() as conn:
-            conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (rid, _dumps(request)))
+            self._write_request(conn, rid, request)
             return self._insert_event(conn, event, limit)
 
     async def acommit_request_event(self, rid: str, request: dict, event: dict, limit: int) -> dict:
@@ -697,7 +779,7 @@ class StateStore:
                 conn.execute("UPDATE state SET body=? WHERE kind='runner_publication' AND key=?", (_dumps(record), key))
                 return previous
             if request is not None:
-                conn.execute("INSERT OR REPLACE INTO state VALUES ('request', ?, ?)", (request[0], _dumps(request[1])))
+                self._write_request(conn, request[0], request[1])
             if activity is not None:
                 self._apply_activity(conn, activity[0], activity[1])
             event = self._insert_event(conn, record["event"], limit)

@@ -24,7 +24,7 @@ Work-folder auto-allow accepts only a closed grammar. Variables, assignments, su
 | Commands outside the grammar, paths built at run time | Confirm |
 | Scripts and executed code outside the write scope | Confirm every time |
 
-A plan to reduce repeated approvals further is OS sandbox isolation, handled in a separate issue. [Grammar and replay basis](../reference/tool-approval-grammar.md).
+Each command asks by default. For an eligible Claude shell card, sending `grant_for_request: true` with approval grants the same category (work folder, unresolved path, or internal read) for that request and records the source card ID for each automatic approval. The grant expires when the request ends or is cancelled. Closed paths, credentials, other private paths, scheduler and network commands, writes outside scope, and deletion are excluded. This skips command-by-command confirmation and adds no OS isolation to Claude code execution. The web button is not yet available. [Grammar and replay basis](../reference/tool-approval-grammar.md).
 
 A bare `Write` or `Edit` of Claude staff is pre-allowed narrowed to the `Edit(//…/**)` rules of the work, project and upstream folders. For a folder written as a link or junction, one rule is placed on the written form and one on the real path (Claude allows only if both match). Writes elsewhere pass the approval gate (#219). If a shell write target starts with `~`, it is expanded to that shell's home and compared with the allowed write folders. Bash looks at `HOME` (if absent, `USERPROFILE` and `HOMEDRIVE`+`HOMEPATH`), and PowerShell on Windows looks at both `USERPROFILE` and `HOMEDRIVE`+`HOMEPATH`. If it cannot be expanded, such as `~user`, `~+` or `~-`, it asks, and read paths are left as they are (#521).
 

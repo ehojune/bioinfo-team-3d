@@ -960,6 +960,7 @@ class Runner:
     def capabilities(self) -> dict:
         external_hpc = any("labhq_hpc" in a.get("mcp", []) for a in self.registry.roster())
         capabilities = {"scheduler": self.s.hpc.scheduler, "hpc_input_preflight": True, "hpc_reuse_verify": True,
+                        "approval_grants": 1,
                         "runtime_env": ("wsl" if self.s.runner.environment == "wsl" else
                                         "windows" if sys.platform == "win32" else "linux"),
                         "workspace_root": str(self.s.path(self.s.runner.workspace_root)),
@@ -3647,6 +3648,32 @@ class Runner:
     async def _on_approval(self, req: ApprovalRequest) -> None:
         req.request_id = req.request_id or self.task_req.get(req.task_id or "")
         ws = self.workspaces.get(req.task_id or '')
+        # All detail from the task process is a claim. The runner alone can
+        # attach a grant category, using the currently running task's context.
+        req.detail.pop('grant_category', None)
+        req.detail.pop('grant_process', None)
+        ctx = self.__dict__.get('tool_contexts', {}).get(req.task_id or '')
+        if (req.kind == 'tool_permission' and ws and ctx and req.request_id
+                and self.task_req.get(req.task_id or '') == req.request_id
+                and req.task_id in self.active_roots and ctx.agent.engine == Engine.claude_code):
+            from ..approval_grants import classify
+            from ..environment_install import shared_environment_install_denial
+            tool_input = req.detail.get('tool_input')
+            try:
+                tool = str(req.detail.get('tool_name') or '')
+                denied = shared_environment_install_denial(
+                    tool, tool_input or {}, protected=ctx.shared_environment_protected,
+                    environment_step=ctx.environment_step, workdir=str(ws.dir))
+                category = None if denied else classify(tool, tool_input, self.s.policy,
+                                    workdir=str(ws.dir), extra_dirs=tuple(ctx.extra_dirs),
+                                    private_paths=tuple(ctx.private_paths), private_enabled=ctx.private_enabled,
+                                    private_open_reads=tuple(ctx.private_open_reads), read_only=ctx.read_only)
+            except Exception:
+                log.exception('request grant classification failed; keeping individual approval')
+                category = None
+            if category:
+                req.detail['grant_category'] = category
+                req.detail['grant_process'] = self.process
         if req.kind == 'tool_permission' and ws:
             from ..pi_text import approval_copy
             from ..recruit.paper2agent import skill_path

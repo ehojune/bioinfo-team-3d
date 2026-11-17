@@ -24,7 +24,7 @@ HPC 제출(코어·시간 기준), 위험한 셸 명령, 예산 초과, 파견�
 | 문법 밖 명령·실행 중에 만드는 경로 | 확인 |
 | 쓰기 범위 밖 스크립트·실행 코드 | 매번 확인 |
 
-반복 승인을 더 줄이는 방안은 OS sandbox 격리로 별도 이슈에서 다룹니다. [문법·재생 근거](../reference/tool-approval-grammar.md).
+기본은 명령마다 확인합니다. 묶을 수 있는 Claude 셸 카드에 한해 승인 API에서 `grant_for_request: true`를 함께 보내면 그 요청의 같은 부류(작업 폴더·경로 미확정·내부 자료 읽기)는 자동 승인하고 근거 카드 ID를 기록합니다. 요청 종료·취소 시 허용은 사라집니다. 닫힌 경로·credential·다른 개인 경로·scheduler·네트워크·범위 밖 쓰기·삭제는 묶지 않습니다. 이 선택은 명령별 확인을 생략하며 Claude 코드 실행에 OS 격리를 추가하지 않습니다. 웹 버튼은 아직 없습니다. [문법·재생 근거](../reference/tool-approval-grammar.md).
 
 Claude 직원의 맨 `Write`·`Edit`는 작업·project·upstream 폴더의 `Edit(//…/**)` 규칙으로 좁혀 사전 허용합니다. 링크·junction으로 적힌 폴더는 적힌 표기와 실제 경로에 규칙을 하나씩 둡니다(Claude는 둘 다 맞아야 허용). 그 밖 쓰기는 승인 게이트를 거칩니다(#219). 셸 쓰기 대상이 `~`로 시작하면 그 셸의 home으로 펼쳐 쓰기 허용 폴더와 대조합니다. Bash는 `HOME`(없으면 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`), PowerShell은 Windows에서 `USERPROFILE`과 `HOMEDRIVE`+`HOMEPATH`를 모두 봅니다. `~user`·`~+`·`~-`처럼 펼 수 없으면 묻고, 읽기 경로는 그대로 둡니다(#521).
 
