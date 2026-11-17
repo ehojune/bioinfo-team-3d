@@ -23,7 +23,7 @@ def test_unproven_read_card_does_not_claim_personal_access(request_paths_1456, c
     assert decision.action == 'ask'
     card = with_approval_copy({'kind': 'tool_permission', 'detail': {
         'tool_name': 'Bash', 'policy_reason': decision.reason, 'tool_input': {'command': command}}})
-    assert '명령의 읽기 범위 확인' in card['pi_reason']
+    assert '읽기 범위 미확인 — 개인 파일 접근 여부를 판단하지 못했습니다. 명령을 확인해 주세요.' in card['pi_reason']
     assert '개인 경로 접근 여부와 실행 범위 미확인' in card['pi_reason']
     assert '위험 등급: 낮음' not in card['pi_reason']
     assert '위험 등급: 높음' not in card['pi_reason']

@@ -211,14 +211,51 @@ def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequ
                                                        str(task), None, None)
         return
     assert decision.action == 'ask'
-    assert ('personal path' in decision.reason) == closed
-    assert ('read scope is ambiguous' in decision.reason) != closed
+    # r4 narrows warning evidence, not approval: retain every prior shell reproduction and ask/deny assertion.
+    # Only simple sequential cd is supported; branches/functions/stack/subshells stay explicitly unverified.
+    warning_closed = closed and sequence == 'cd {plugin}; wc -l ../notes.txt'
+    assert ('personal path' in decision.reason) == warning_closed
+    assert ('read scope is ambiguous' in decision.reason) != warning_closed
 
 
 def test_request_unknown_syntax_still_checks_registry(request_paths_1456):
     decision = request_gate_1456(request_paths_1456, 'Bash', {'command': 'reg query HKCU/Environment'})
     assert decision.action == 'ask'
     assert 'registry' in decision.reason
+
+
+@pytest.mark.parametrize('sequence', [
+    'if true; then cd {plugin}; fi; wc -l ../settings.json',
+    'while f() {{ cd {plugin}; }}; false; do :; done; wc -l ../notes.txt',
+    '(' * 33 + 'cd {plugin}; wc -l ../settings.json' + ')' * 33,
+])
+@pytest.mark.parametrize('direct_evidence', [False, True])
+def test_r4_unsupported_shell_preserves_unknown_scope_and_direct_evidence(
+        tmp_path, monkeypatch, sequence, direct_evidence):
+    from labhq.pi_text import with_approval_copy
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config, task = tmp_path / '.claude', tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    plugin.mkdir(parents=True)
+    task.mkdir()
+    command = sequence.format(plugin='"' + plugin.as_posix() + '"')
+    if direct_evidence:
+        command += '; wc -l "' + (config / 'settings.json').as_posix() + '"'
+    decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
+                             allowed_roots=[str(task)], workdir=str(task), private_enabled=True,
+                             private_paths=[str(config)], private_open_reads=[str(task), str(plugin)])
+    assert decision.action == 'ask'
+    assert ('explicit closed or credential path evidence' in decision.reason) == direct_evidence
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': {
+        'tool_name': 'Bash', 'policy_reason': decision.reason, 'tool_input': {'command': command}}})
+    assert '읽기 범위 미확인 — 개인 파일 접근 여부를 판단하지 못했습니다. 명령을 확인해 주세요.' in card['pi_reason']
+    assert '위험 등급: 낮음' not in card['pi_reason']
+    assert '접근을 감지했습니다' not in card['pi_reason']
+    assert ('명시한 닫힌 경로나 자격 증명 경로의 근거' in card['pi_reason']) == direct_evidence
+    if direct_evidence:
+        assert '위험 등급: 높음' in card['pi_reason']
 
 
 @pytest.mark.parametrize('kind', ['recursive', 'acyclic'])
@@ -241,6 +278,23 @@ def test_unknown_shell_function_expansion_is_bounded(request_paths_1456, kind):
     decision = request_gate_1456(request_paths_1456, 'Bash', {'command': open_command})
     assert decision.action == 'ask'
     assert 'read scope is ambiguous' in decision.reason
+
+
+@pytest.mark.parametrize('command', ['f() { :; }; f', 'if true; then pwd; fi',
+                                    'python -c "print(1)"', 'wc -l *.txt',
+                                    '(' * 33 + 'pwd' + ')' * 33])
+def test_unverified_private_scope_never_qualifies_for_batch_grant(request_paths_1456, command):
+    from labhq.approval_grants import classify
+
+    task, inputs, *_, private = request_paths_1456
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': command})
+    assert decision.action == 'ask'
+    assert 'read scope is ambiguous' in decision.reason
+    trace = []
+    assert classify('Bash', {'command': command}, PolicySettings(), workdir=str(task),
+                    private_paths=tuple(private), private_enabled=True,
+                    private_open_reads=(str(task), str(inputs)), trace=trace) is None
+    assert trace  # This is the actual runner classifier, not just the card's risk label.
 
 WIN_HOME = "C:\\Users\\pi"
 WIN_PRIVATE = ["C:\\Users\\pi\\.ssh", "C:\\Users\\pi\\AppData\\Local\\Google\\Chrome\\User Data"]

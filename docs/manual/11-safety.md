@@ -42,7 +42,7 @@ internal 구역을 가리키는 작업·project·참고 폴더 별칭은 Claude�
 
 ### PI 개인 경로
 
-- 작업 폴더 안의 명령이라도 자동 허용 문법으로 읽기 범위를 확인하지 못하면 개별 승인을 받습니다. 이때 카드는 범위 미확인으로 설명하며, 상위 작업 root와 일치했다는 이유만으로 개인 파일 접근을 단정하지 않습니다.
+- 읽기 범위 미확인 명령은 개별 승인을 받으며 묶음 허용에서 빠집니다. 경고는 명시한 닫힌 경로와 `;`로 이은 단순 읽기·`cd`의 경로만 근거로 삼고, 분기·함수·stack·동적 실행·해석 상한에서는 범위 미확인으로 표시합니다. 명시 경로 근거가 있으면 함께 경고하지만 실제 개인 파일 접근을 확인했다고 단정하지 않습니다.
 
 `policy.private_paths`. gateway·runner·직원 CLI는 기본으로 PI 계정에서 돕니다(PI 결정 2026-10-03). PI 개인 파일은 Claude 직원에게 세 겹, Windows elevated sandbox의 Codex 직원에게 두 겹, 다른 엔진 직원에게는 지침 한 겹으로 막습니다. 키가 없으면 기본 목록을 쓰고 `[]`이면 끕니다. 목록을 직접 쓰면 기본 목록은 빠지니 필요한 항목을 다시 적습니다.
 - 기본 목록: `~/.ssh`·`~/.aws`·`~/.azure`·`~/.gnupg`·`~/.docker`·`~/.kube`·`~/.config/gh`·`~/.config/gcloud`·`~/.git-credentials`·`~/.netrc`·`~/.claude`·`~/.claude.json`·`~/.codex`·`~/.gemini`·`~/.env`, Chrome·Edge·Firefox 프로필(Windows `AppData` 아래, Linux `~/.config/google-chrome`·`~/.config/microsoft-edge`·`~/.mozilla`), runner가 읽은 설정 파일, gateway 상태 폴더, `engines.claude_code.env.CLAUDE_CONFIG_DIR`(Claude 직원 설정 폴더), `engines.codex.env.CODEX_HOME`(직원 Codex 로그인 폴더, 설정했을 때), AlphaGenome 키 파일(`annot.alphagenome_key_file`, 있을 때).

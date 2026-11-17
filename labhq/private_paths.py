@@ -500,227 +500,95 @@ def _managed_operand(value: str, base: str, private: list[str], reads: list[str]
 def shell_closed_operand(command: str, private_paths: list[str], open_reads: list[str],
                          workdir: str, home: str | None,
                          environ: Mapping[str, str] | None) -> bool:
-    """Find closed operands in unknown syntax; this never approves the command."""
+    """Warning evidence only: literal absolute paths and small, sequential read commands.
+
+    Unsupported control flow never supplies a cwd. Scan direct absolute evidence independently,
+    including after parsing/depth/resolution limits; absence of evidence never grants approval.
+    """
     import shlex
     from .policy import MAX_RESOLVED_CANDIDATES, _scan_path_text
+    from .tool_command import read_commands
 
     home = home or host_home()
     environ = os.environ if environ is None else environ
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|\n()')
-    lexer.whitespace = ' \t\r'
+    resolved = 0
+
+    def closed(value: str, base: str | None) -> bool:
+        nonlocal resolved
+        expanded = _expand_dir(value, home, environ)
+        if expanded is None:
+            return False
+        absolute = bool(ntpath.isabs(expanded) or posixpath.isabs(expanded))
+        if not absolute and base is None:
+            return False
+        spelled = path_field_text(expanded, None if absolute else base)
+        # Lexical evidence is independent of the bounded filesystem work.
+        for root in private_paths:
+            eligible = [r for r in open_reads if inside_any(r, [root]) and not inside_any(root, [r])]
+            if inside_any(spelled, [root]) and (credential_path(spelled) or not inside_any(spelled, eligible)):
+                return True
+        if credential_path(spelled):
+            return True
+        if resolved >= MAX_RESOLVED_CANDIDATES:
+            return False
+        resolved += 1
+        raw = expanded if absolute else os.path.join(base, expanded)
+        try:
+            real = resolved_read_path(raw)
+        except (OSError, ValueError, RuntimeError):
+            return False
+        if inside_any(spelled, open_reads) and not open_read_allowed(real, open_reads):
+            return True
+        return not _managed_operand(real, base or workdir, private_paths, open_reads)
+
+    # No recursive parsing or function/branch execution. Splitting is lexical evidence only.
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|(){}<>')
     lexer.whitespace_split = True
     lexer.commenters = ''
     try:
         tokens = list(lexer)
     except ValueError:
-        tokens = [command]  # lexical absolute evidence survives malformed syntax
+        tokens = [command]
+    for token in tokens:
+        for value in dict.fromkeys([token, *_scan_path_text(token).candidates]):
+            if closed(value, None):
+                return True
+
+    # Warning grammar: semicolon-separated literal reads plus cd. Everything else is unverified.
+    if re.search(r'[$`{}()<>*?\[\]#\n\r&|]', command):
+        return False
     parts, words = [], []
-    tokens = [part for token in tokens for part in
-              (re.findall(r'&&|\|\||.', token, re.S) if token and set(token) <= set(';&|\n()') else [token])]
-    functions: dict[str, list[str]] = {}
-    expanding: set[str] = set()
-    expanded_tokens = 0
-
-    def function_commands(items: list[str], depth: int = 0) -> list[str]:
-        """Declarations do not execute; expand only literal invocations for evidence."""
-        nonlocal expanded_tokens
-        if depth >= MAX_CD_BASES or expanded_tokens >= MAX_CD_BASES * MAX_RESOLVED_CANDIDATES:
-            return ['__unproven_function__']
-        out, index, at_start = [], 0, True
-        while index < len(items):
-            expanded_tokens += 1
-            if expanded_tokens > MAX_CD_BASES * MAX_RESOLVED_CANDIDATES:
-                return [*out, *items[index:]]  # keep remaining lexical evidence without expansion
-            name_at = index + (items[index] == 'function')
-            if at_start and name_at < len(items) and re.fullmatch(r'[A-Za-z_]\w*', items[name_at]):
-                after = name_at + 1
-                if items[after:after + 2] == ['(', ')']:
-                    after += 2
-                if after < len(items) and items[after] == '{':
-                    end, nesting = after + 1, 1
-                    while end < len(items) and nesting:
-                        nesting += (items[end] == '{') - (items[end] == '}')
-                        end += 1
-                    if nesting == 0:
-                        functions[items[name_at]] = items[after + 1:end - 1]
-                        out.append('true')
-                        index, at_start = end, False
-                        continue
-            token = items[index]
-            if at_start and token in functions:
-                if token in expanding:
-                    out.append('__unproven_function__')
-                else:
-                    expanding.add(token)
-                    out.extend(['__function_begin__', *function_commands(functions[token], depth + 1), '__function_end__'])
-                    expanding.remove(token)
-            else:
-                out.append(token)
-            at_start = token in (';', '&&', '||', '|', '&', '\n', '(', '{', 'then', 'else', 'do', 'elif')
-            index += 1
-        return out
-
-    tokens = function_commands(tokens)
     for token in [*tokens, ';']:
-        if token and (set(token) <= set(';&|\n()') or token in ('{', '}', '__function_begin__', '__function_end__')):
-            parts.append((words, token))
+        if token == ';':
+            if not words:
+                return False
+            expanded = [_expand_dir(word, home, environ) for word in words]
+            if any(word is None for word in expanded):
+                return False
+            name, args = expanded[0], expanded[1:]
+            if name == 'wc':
+                if any(a.startswith('-') and not re.fullmatch(r'-[lwcmL]+', a) for a in args):
+                    return False
+                expanded = ['cat', *[a for a in args if not a.startswith('-')]]
+            parsed = read_commands(shlex.join(expanded))
+            if parsed is None:
+                return False
+            parts.extend(parsed)
             words = []
         else:
             words.append(token)
-    # cwd, OLDPWD, directory stack. Keep branch-local state for pushd/popd and cd -.
-    State = tuple[str | None, str | None, tuple[str | None, ...]]
-    succeeded: list[State] = [(workdir, None, ())]
-    failed: list[State] = []
-    previous = ';'
-    resolved = 0
-    pipeline = False
-    groups = []
-    for words, separator in parts:
-        bases = (succeeded if previous == '&&' else failed if previous == '||'
-                 else list(dict.fromkeys([*succeeded, *failed])))
-        skipped_success = succeeded if previous == '||' else []
-        skipped_failure = failed if previous == '&&' else []
-        if separator in ('(', '{', '__function_begin__') and not words:
-            if len(groups) >= MAX_CD_BASES:
+    if len(parts) > MAX_CD_BASES:
+        return False
+    bases = [workdir]
+    for name, operands in parts:
+        for value in operands:
+            if any(closed(value, base) for base in bases):
+                return True
+        if name == 'cd':
+            # A failed cd keeps the old cwd; never assert that a path was actually accessed.
+            bases = list(dict.fromkeys([*bases, *[path_field_text(operands[0], b) for b in bases]]))
+            if len(bases) > MAX_CD_BASES:
                 return False
-            groups.append([separator, bases, skipped_success, skipped_failure, pipeline, [], []])
-            succeeded, failed, previous, pipeline = bases, [], ';', False
-            continue
-        if not words and separator not in (')', '}', '__function_end__'):
-            previous = separator
-            pipeline = separator == '|'
-            continue
-        for word in words:
-            for value in dict.fromkeys([word, *_scan_path_text(word).candidates]):
-                expanded = _expand_dir(value, home, environ)
-                if expanded is None:
-                    continue
-                for base, _, _ in bases:
-                    if not os.path.isabs(expanded) and base is None:
-                        continue
-                    raw = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
-                    spelled = path_field_text(expanded, base)
-                    # Always retain direct evidence, even after the filesystem-resolution cap.
-                    for root in private_paths:
-                        eligible = [r for r in open_reads if inside_any(r, [root]) and not inside_any(root, [r])]
-                        if inside_any(spelled, [root]) and (credential_path(spelled)
-                                                           or not inside_any(spelled, eligible)):
-                            return True
-                    if resolved >= MAX_RESOLVED_CANDIDATES:
-                        continue
-                    resolved += 1
-                    try:
-                        real = resolved_read_path(raw)
-                    except (OSError, ValueError, RuntimeError):
-                        continue
-                    if not _managed_operand(real, base or workdir, private_paths, open_reads):
-                        return True
-        # Only later operands see a location change; a pipeline's builtin runs in a subshell.
-        location = words[1:] if words and words[0] in ('builtin', 'command') else words
-        if location and location[0] == '--':
-            location = location[1:]
-        next_success, next_failure = (bases, bases) if words else (succeeded, failed)
-        if (location and location[0].casefold() in ('cd', 'chdir', 'pushd', 'set-location', 'sl', 'push-location')
-                and not pipeline and separator not in ('|', '&')):
-            targets = []
-            push = location[0].casefold() in ('pushd', 'push-location')
-            restore = len(location) == 2 and location[1] == '-'
-            end_options = '--' in location[1:]
-            before = location[1:location.index('--')] if end_options else location[1:]
-            after = location[location.index('--') + 1:] if end_options else []
-            no_cd = push and '-n' in before
-            next_failure = []
-            for base, old, stack in bases:
-                args = [arg for arg in before if arg != '-n'] + after
-                selector = args[0] if push and not end_options and len(args) == 1 and re.fullmatch(r'[+-]\d+', args[0]) else None
-                if selector or (push and not args):
-                    entries = [base, *stack]
-                    index = (int(selector[1:]) if selector.startswith('+') else len(entries) - 1 - int(selector[1:])) \
-                        if selector else 1
-                    if not stack or not 0 <= index < len(entries):
-                        next_failure.append((base, old, stack))
-                        continue
-                    rotated = entries[index:] + entries[:index] if selector else [entries[1], entries[0], *entries[2:]]
-                    target = rotated[0]
-                    targets.append((base if no_cd else target, old if no_cd else base, tuple(rotated[1:])))
-                    if not no_cd and (not target or not os.path.isdir(target)):
-                        next_failure.append((base, old, stack))
-                    continue
-                if restore:
-                    moved = [old]
-                elif push and len(location) == 1:
-                    moved = [stack[0]] if stack else []
-                elif push and end_options and len(args) == 1:
-                    value = _expand_dir(args[0], home, environ)
-                    moved = [path_field_text(value, base)] if value is not None and (base or os.path.isabs(value)) else [None]
-                else:
-                    moved = shell_cd_bases(shlex.join(words), base, home, environ) or [None]
-                for target in moved:
-                    new_stack = ((base, *stack[1:]) if len(location) == 1 and stack
-                                 else (base, *stack)) if push else stack
-                    targets.append((base, old, (target, *stack)) if no_cd else (target, base, new_stack))
-                if not restore or not old or not os.path.isdir(old):
-                    next_failure.append((base, old, stack))
-            next_success = targets
-        elif (location and location[0].casefold() in ('popd', 'pop-location')
-              and not pipeline and separator not in ('|', '&')):
-            no_cd = '-n' in location[1:]
-            args = [arg for arg in location[1:] if arg not in ('-n', '--')]
-            next_success, next_failure = [], []
-            for base, old, stack in bases:
-                entries = [base, *stack]
-                selector = args[0] if len(args) == 1 and re.fullmatch(r'[+-]\d+', args[0]) else None
-                index = (int(selector[1:]) if selector.startswith('+') else len(entries) - 1 - int(selector[1:])) \
-                    if selector else 0
-                if no_cd and index == 0:
-                    index = 1  # suppress changing cwd: remove its next stack entry
-                if (args and selector is None) or not stack or not 0 <= index < len(entries):
-                    next_failure.append((base, old, stack))
-                    continue
-                remaining = entries[:index] + entries[index + 1:]
-                next_success.append((remaining[0], base if index == 0 else old, tuple(remaining[1:])))
-                if index == 0 and (not remaining[0] or not os.path.isdir(remaining[0])):
-                    next_failure.append((base, old, stack))
-        elif location and not pipeline and separator not in ('|', '&'):
-            if location[0] == 'return':
-                frame = next((frame for frame in reversed(groups) if frame[0] == '__function_begin__'), None)
-                if frame is not None:
-                    code = location[1] if len(location) == 2 else None
-                    if code is None or not code.isdigit() or int(code) == 0:
-                        frame[5].extend(bases)
-                    if code is None or not code.isdigit() or int(code) != 0:
-                        frame[6].extend(bases)
-                    next_success, next_failure = [], []
-            elif location[0] == 'exit':
-                next_success, next_failure = [], []
-            elif location[0] == 'true':
-                next_failure = []
-            elif location[0] == 'false':
-                next_success = []
-        # Keep skipped branches for the following list, not for operands in the guard itself.
-        succeeded = list(dict.fromkeys([*skipped_success, *next_success]))
-        failed = list(dict.fromkeys([*skipped_failure, *next_failure]))
-        succeeded = succeeded if len(succeeded) <= MAX_CD_BASES else [(None, None, ())]
-        failed = failed if len(failed) <= MAX_CD_BASES else [(None, None, ())]
-        if separator in (')', '}', '__function_end__') and groups:
-            kind, original, skipped_success, skipped_failure, pipeline, returned_success, returned_failure = groups.pop()
-            if kind in ('(', '$('):
-                succeeded = original if succeeded or kind == '$(' else []
-                failed = original if failed or kind == '$(' else []
-            if kind == '__function_begin__':
-                succeeded = list(dict.fromkeys([*succeeded, *returned_success]))
-                failed = list(dict.fromkeys([*failed, *returned_failure]))
-            succeeded = list(dict.fromkeys([*skipped_success, *succeeded]))
-            failed = list(dict.fromkeys([*skipped_failure, *failed]))
-        if separator == '(' and words and words[-1].endswith(('$', '<', '>')):
-            if len(groups) >= MAX_CD_BASES:
-                return False
-            original = list(dict.fromkeys([*succeeded, *failed]))
-            groups.append(['$(', original, [], [], pipeline, [], []])
-            succeeded, failed, previous, pipeline = original, [], ';', False
-            continue
-        pipeline = separator == '|'
-        previous = separator
     return False
 
 

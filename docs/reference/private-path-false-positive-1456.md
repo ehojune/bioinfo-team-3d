@@ -30,38 +30,19 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - `labhq/pi_language.py:202–205`의 2문장 상한만 충족하지 못해 `failed`가 됐다. 이 카드에서는 예산 부족·호출 실패·timeout이 원인이 아니다.
 - 형식 제한 완화나 별도 설명 개선은 이번 경로 수리와 분리해 판단한다. 호출 재실행은 하지 않았다.
 
-## 다음 수리 범위 제안
+## 현재 계약 — r4
 
-- 최소 후보: `labhq/policy.py`, `labhq/private_paths.py`, `labhq/tool_explanation.py`, `tests/test_private_paths.py`, `tests/test_tool_card_review_fixes.py`.
-- 작업 폴더의 경로 일치와 실제 닫힌 개인 경로 접근을 구별한다. 문법을 증명하지 못한 명령은 개별 승인으로 유지한다. private 목록의 작업 root를 통째로 빼지 않는다.
-- 회귀 양쪽: 자기 task·staged inputs의 개인 경로 사유 오탐 제거, 실제 개인 폴더·credential·형제 task·명시한 private 자식·link 탈출의 차단 유지. 입력 쓰기 보호도 유지한다.
-- 이 r1은 진단 문서만 작성했다. 제품 코드·회귀 시험·배포·실제 요청 변경은 없으며 수리 revision claim이 필요하다.
+[승인 계약](https://github.com/ehojune/bioinfo-team-3d/issues/1456#issuecomment-6947828510). r3의 셸 실행 해석은 아래 범위로 축소했다. 당시 리뷰·수리 기록은 PR #1457에 보존한다.
 
-## r2 수리
+| 범위 | 처리 |
+|---|---|
+| 명시한 절대경로·home 표기 | 각 경로의 private 자식·credential·열린 하위 폴더·실제 위치를 확인 |
+| 단순 경고 문법 | `;`로 이은 cd·pwd·which·ls·cat·head·tail·find와 wc의 literal 인자. 승인 문법 확장 아님 |
+| 분기·함수·stack·substitution·동적 실행·상한 | 실행 의미를 추정하지 않고 읽기 범위 미확인. 뒤의 독립적인 명시 경로 근거는 유지 |
+| 승인 | 미확인은 ask, 실제 runner의 batch classifier에서도 제외. 파일 거부·입력 쓰기·private 목록·registry 보호 유지 |
 
-- 읽기 문법 밖인 Bash 명령은 계속 `ask`다. 닫힌 경로를 확인한 경우와 읽기 범위를 증명하지 못한 경우를 구별했다. 상위 작업 root 일치만으로 개인 파일 접근을 단정하지 않는다.
-- 명시한 개인 경로·registry 근거는 남긴다. `private_paths` 목록과 파일·쓰기 보호는 그대로 사용한다. `managed_shell_read=None`은 경로 일치가 아니라 미확인이라는 계약을 명시했다.
-- 미확인 카드에는 읽기 범위 확인 사유를 쓴다. 삭제·통제 자료 등 별도로 확인한 위험은 낮추지 않는다.
-- 회귀는 자기 task·staged inputs 읽기 허용과 개인 폴더·credential·형제 task·private 자식·link·입력 쓰기 보호를 함께 확인한다.
-- 이 수정은 승인 문법을 넓히지 않는다. 위 복합 명령의 카드도 남으므로 실제 카드 수 감소·실행 A 재생·배포 효과는 별도 확인이 필요하다. pi_display 문장 수 제한도 바꾸지 않았다.
+남은 P1의 `then cd`, while 조건의 미호출 함수, 33단계 그룹을 보존했다. 각각 직접 닫힌 절대경로를 뒤에 붙인 대조도 확인한다. 기존 실행 의미 문구 단언은 계약에 맞춰 변경했으며 ask/deny 단언과 재현은 유지했다.
 
-## r3 리뷰 수리
+`policy._private_decision`의 미확인 사유에는 `closed or credential` 제외 표식을 남긴다. `approval_grants.classify`는 이 표식으로 개별 카드를 유지한다. 표시만 바꾸고 batch 허용으로 새는 결함을 실제 classifier 호출로 검사한다.
 
-- P1: private root 아래 읽기 예외가 하나라도 있으면 root 전체를 경고 근거에서 빼던 결함을 수정했다. 미확인 문법에서도 각 경로의 표기·실제 위치를 대조해 열린 하위 폴더만 예외로 둔다.
-- 절대경로·home·상대경로 × settings·history·다른 task·plugin·project 15건을 추가했다. 관련 4개 시험 파일은 717 passed, 10 skipped.
-- safety 안내 길이: 한국어 20,168→20,293자, 영어 36,437→36,711자. 각 언어에 한 항목만 추가했다.
-- 후속 P1 2건: 상한 뒤에도 경로 표기의 직접 근거를 남기며 filesystem 해석만 제한한다. 명령을 순서대로 읽고 pipeline 안 `cd`를 바깥 폴더 변경으로 쓰지 않는다. 상한·순서·pipeline 7건 추가, 표적 42건 통과.
-- 다음 리뷰의 OR guard·위치 builtin P1 2건도 수리했다. 앞선 폴더 이동에서 도달 가능한 위치만 다음 명령으로 넘기고 `shell_cd_bases`의 위치 표기를 재사용한다. guard·pushd·builtin·`--` 5건 추가, 표적 47건 통과.
-- guard 실행 분기 4건과 background·command wrapper 2건도 추가했다. 종료한 분기와 건너뛴 분기를 구별하고 background 위치 이동을 다음 명령에 적용하지 않는다.
-- 관련 4개 파일 729 passed, 10 skipped. 분기·wrapper 최종 보완 뒤 표적 53 passed이며 background의 기존 `deny`도 유지했다.
-- 그룹·subshell·디렉터리 복원 P1 2건도 수리했다. 상태에 OLDPWD·directory stack을 보존하고 subshell이 끝나면 바깥 상태로 돌아간다. 양방향 7건 추가, 표적 60건 통과.
-- 최종 관련 4개 파일: 742 passed, 10 skipped.
-- command substitution·popd -n의 P1 2건도 수리했다. substitution 종료 시 바깥 폴더로 복원하고 pushd·popd의 `-n`은 stack만 바꾼다. 양방향 4건 추가, 표적 64건 통과.
-- 해당 수리 뒤 관련 4개 파일: 746 passed, 10 skipped.
-- process substitution·indexed popd의 P1 2건도 수리했다. substitution 안팎과 선택한 stack 항목을 구별한다. 격리 Bash fixture·help와 대조했고 회귀 3건 추가, 표적 67건 통과.
-- 해당 수리 뒤 관련 4개 파일: 749 passed, 10 skipped.
-- indexed pushd·미호출 함수 P1 2건도 수리했다. selector를 stack 회전으로 판정하고 선언 본문은 직접 호출될 때만 반영한다. 양방향 5건 추가, 표적 72건 통과.
-- 해당 수리 뒤 관련 4개 파일: 754 passed, 10 skipped.
-- `pushd --`·reserved word 뒤 선언·함수 return P1 3건과 재귀 확장 상한을 보완했다. 호출 경계를 보존하고 확장은 수·깊이를 제한하며 남은 직접 경로 근거는 유지한다. 회귀 5건 추가, 표적 77건 통과.
-- 해당 수리 뒤 관련 4개 파일: 759 passed, 10 skipped. 재귀 상한은 판정 함수 직접 호출과 열린 경로 대조 2건을 별도로 확인했다.
-- 이전 head d7d8d006의 clean-install은 설치·mock 검증 뒤 Visual Studio telemetry의 임시 파일 잠금(WinError 32)으로 실패했다([job](https://github.com/ehojune/bioinfo-team-3d/actions/runs/44079060520/job/134024868070)). 새 코드 head의 CI는 별도 확인한다.
+실제 카드 수·실행 A·배포 효과는 미검증이다. 실제 요청·인스턴스·HPC·pi_display 문장 상한은 변경하지 않았다.
