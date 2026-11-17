@@ -16,6 +16,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 01:40 | [`fd02c37`](https://github.com/ehojune/bioinfo-team-3d/pull/1460/commits/fd02c37) | **자기 세션 출력 파일 이름을 앞에 붙인 다른 경로는 묶음 허용에 들어가지 않습니다.**<br>리뷰 P1 수정. 자기 세션 tool-results 파일을 개인 경로 검사에서 가릴 때 피연산자 전체가 그 파일일 때만 가린다. 같은 글자로 시작하는 더 긴 경로는 그대로 판정한다 |
 | 01:10 | [`9bff881`](https://github.com/ehojune/bioinfo-team-3d/pull/1460/commits/9bff881) | **다 풀지 못한 파일 옮기기·고치기 대상은 묶음 허용에서 작업 폴더로 보지 않습니다.**<br>리뷰 P1 수정. 따옴표 조각이 붙은 mover 피연산자와 쓰기 대상, 값 없는 switch·-i[확장자]·따로 쓴 -e CODE 밖의 perl -i 옵션 모양은 피연산자를 읽지 않고 경로 미확정으로 둔다 |
+| 00:50 | [`f29898c`](https://github.com/ehojune/bioinfo-team-3d/pull/1461/commits/f29898c) | **Claude 직원의 셸은 명령마다 작업 폴더에서 시작해 승인 판정과 실제 실행 위치가 같습니다.**<br>Claude 직원 환경에 CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1을 넣어 Bash가 명령마다 작업 폴더로 돌아오게 했다. 승인 판정이 가정하는 현재 폴더(작업 폴더)와 실제 셸이 어긋나지 않는다. PI 설정 값보다 뒤에 둬 끌 수 없다 |
 | 00:30 | [`708193e`](https://github.com/ehojune/bioinfo-team-3d/pull/1460/commits/708193e) | **옵션이나 특수 따옴표로 감춘 경로도 이번 요청 묶음 허용에서 빠집니다.**<br>리뷰 P1 수정. mv 옵션에 붙은 값(-t../out, -S.bak, -Destination:..)은 경로 미확정으로 두고, $'...'를 풀어 쓴 명령을 한 번 더 판정해 닫힌 구역·개인 경로·쓰기 대상 사유가 나오면 개별로 남긴다 |
 | 00:20 | [`c186d7e`](https://github.com/ehojune/bioinfo-team-3d/commit/c186d7e) | **레지스트리 접근을 승인하기 전 확인할 내용을 보여 줍니다.**<br>레지스트리 접근 사유와 확인된 위험 등급을 표시한다. |
 | 00:16 | [`44dbede`](https://github.com/ehojune/bioinfo-team-3d/commit/44dbede) | **도구 위험 표시와 승인 집계 조회를 고쳤습니다.**<br>명령 치환 안의 위험을 표시하고 종료된 요청의 집계 재조회를 줄인다. |
