@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: 4dbecd9
+    at: '2026-11-17 18:25'
+    summary: locale 인용이 든 명령도 따로 확인합니다.
+    text: 셸의 locale 인용 표기를 요청 묶음 허용에서 제외한다. Refs #1445.
   - sha: a5b3048
     at: '2026-11-17 18:20'
     summary: 원본을 옮기는 명령은 따로 확인합니다.
