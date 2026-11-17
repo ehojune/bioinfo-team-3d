@@ -158,3 +158,26 @@ def test_card_normalizes_relative_path_against_workdir(layout):
             'file_path': (skills / 'guide.md').as_posix().upper()},
             'path_labels': {str(skills): '스킬 참고 자료'}})
         assert '스킬 참고 자료' in action
+
+
+@pytest.mark.parametrize('tool, command, policy_reason', [
+    ('PowerShell', 'New-Item outputs/sub', 'PowerShell reaches a PI personal path (policy.private_paths) through a link'),
+    ('Bash', 'mkdir -p outputs/sub', 'Bash read scope is ambiguous (policy.private_paths)'),
+])
+def test_task_folder_write_card_is_not_a_personal_path_risk(tool, command, policy_reason):
+    """#1445 r22: a write the runner grouped as the task folder is shown as one, without a high risk."""
+    detail = {'tool_name': tool, 'policy_reason': policy_reason, 'tool_input': {'command': command}}
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': {**detail, 'grant_category': 'workspace'}})
+    assert '작업 폴더 안에서 파일을 만들거나 고칩니다.' in card['pi_reason']
+    assert '위험 등급: 높음' not in card['pi_reason'] and '개인' not in card['pi_reason']
+    # Without the runner's category the same reason keeps its existing warning.
+    plain = with_approval_copy({'kind': 'tool_permission', 'detail': detail})
+    assert '작업 폴더 안에서 파일을 만들거나 고칩니다.' not in plain['pi_reason']
+
+
+def test_task_folder_read_card_does_not_claim_a_write():
+    detail = {'tool_name': 'Bash', 'policy_reason': 'Bash read scope is ambiguous (policy.private_paths)',
+              'tool_input': {'command': 'grep -n x outputs/a.txt'}, 'grant_category': 'workspace'}
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': detail})
+    assert '작업 폴더 안의 파일을 다룹니다.' in card['pi_reason'] and '만들거나 고칩니다' not in card['pi_reason']
+    assert '위험 등급: 높음' not in card['pi_reason']

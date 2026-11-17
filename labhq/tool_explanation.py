@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from .tool_command import commands, read_commands
 
@@ -128,6 +129,17 @@ def explain(detail: dict) -> tuple[str, str, bool]:
     return result('', '미확인 · 스크립트의 읽기·쓰기·삭제·네트워크 범위 확인 필요', False)
 
 
+def _writes(detail: dict) -> bool:
+    """Whether a shell command visibly writes: a redirect or writer target, or a file-creating command."""
+    from .policy import _shell_write_targets
+
+    tool_input = detail.get('tool_input') or {}
+    command = str(tool_input.get('command') or '') if isinstance(tool_input, dict) else ''
+    return bool(list(_shell_write_targets(command, powershell=detail.get('tool_name') == 'PowerShell'))
+                or re.search(r'(?:^|[;&|(]\s*)(?:mkdir|md|touch|cp|mv|tee|ni|perl\s+-\S*i)\b'
+                             r'|\bsed\s+(?:\S+\s+)*?-[^-\s]*i', command, re.I))
+
+
 def reason(detail: dict, policy_reason: str, risk: str) -> str:
     from .pi_text import plain_text
 
@@ -148,6 +160,12 @@ def reason(detail: dict, policy_reason: str, risk: str) -> str:
     elif detail.get('internal_output_classification') == 'summary':
         rule = '머리줄·집계로 보이지만 내부 자료의 실제 출력 범위를 승인 전에 확인하세요.'
         risk = '중간 · 내부 자료 출력 범위 확인 필요'
+    elif detail.get('grant_category') == 'workspace':
+        # The runner resolved every path into this task's folder; deletes and network never get this category.
+        if _writes(detail):
+            rule, risk = '작업 폴더 안에서 파일을 만들거나 고칩니다.', '중간 · 작업 폴더 안 쓰기'
+        else:
+            rule, risk = '작업 폴더 안의 파일을 다룹니다.', '중간 · 작업 폴더 안'
     elif 'restricted' in policy_reason.lower() or 'data_zones' in policy_reason or '통제' in policy_reason:
         rule = '걸린 규칙: 통제 데이터 경계. 보호된 자료 경로에 접근합니다.'
         risk = '높음 · 통제 데이터 노출 확인 필요; ' + risk.split(' · ', 1)[-1]

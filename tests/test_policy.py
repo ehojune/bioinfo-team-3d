@@ -149,7 +149,8 @@ def _grant_category(work, command, trace=None, **kw):
     ("echo x > a.txt; mv a.txt b.txt", "task_write", None),
     ("echo x > a.txt; mv -t nested a.txt", "task_write", None),
     ("echo x > a.txt; sed -i s/x/y/ a.txt", "task_write", None),
-    ("echo x > a.txt; perl -pi -e s/x/y/ a.txt", "task_write", None),
+    # Perl code can open other paths, so an in-place Perl edit is never proven task-local.
+    ("echo x > a.txt; perl -pi -e s/x/y/ a.txt", "unresolved_path", None),
     # Its operands cannot be read: unresolved path.
     ('echo x > a.txt; mv a.txt "$DEST"', "unresolved_path", None),
     ("echo x > a.txt; ls | xargs mv", "unresolved_path", None),
@@ -171,9 +172,8 @@ def test_request_grant_move_and_in_place_edit(tmp_path, command, category, reaso
     work = tmp_path / "work"
     (work / "nested").mkdir(parents=True)
     if category == "task_write":
-        # Under a private runs root the plain write is itself "unresolved_path" (resolved_match).
         category = _grant_category(work, "echo x > a.txt")
-        assert category in {"workspace", "unresolved_path"}
+        assert category == "workspace"  # r22: a plain write in the task folder below a private parent
     trace = []
     assert _grant_category(work, command, trace) == category
     assert trace == ([reason] if reason else [])
@@ -227,6 +227,56 @@ def test_request_grant_dynamic_quote_and_unresolved_write(tmp_path, command, cat
     assert trace == ([reason] if reason else [])
 
 
+@pytest.mark.parametrize("tool, command, category, reason", [
+    # A write that resolves inside the task folder, below the private runs root: workspace.
+    ("PowerShell", "New-Item outputs/sub", "workspace", None),
+    ("PowerShell", "Set-Content outputs/a.txt x", "workspace", None),
+    ("Bash", "mkdir -p outputs/sub", "workspace", None),
+    ("Bash", "echo x > outputs/a.txt", "workspace", None),
+    ("Bash", "cat inputs/s1/a.txt > outputs/a.txt", "workspace", None),
+    # Outside the task folder, a private item registered inside it, or a link out: individual.
+    ("PowerShell", "New-Item ../other/sub", None, "outside_write_target"),
+    ("Bash", "echo x > ../other/a.txt", None, "outside_write_target"),
+    ("PowerShell", "New-Item inputs/sub", None, "other_private_path"),
+    ("Bash", "echo x > inputs/a.txt", None, "other_private_path"),
+    ("Bash", "echo x > inputs/s1/a.txt", None, "other_private_path"),
+    ("Bash", "cat inputs/closed.txt > outputs/a.txt", None, "other_private_path"),
+    ("PowerShell", "Set-Content link/a.txt x", None, "outside_write_target"),
+    ("Bash", "echo x > link/a.txt", None, "outside_write_target"),
+    # An option carrying a path is read as one, or the command is not proven task-local.
+    ("Bash", "sort --output=../other/out.txt outputs/a.txt", None, "other_private_path"),
+    ("Bash", "sort -o../other/out.txt outputs/a.txt", "unresolved_path", None),
+    ("Bash", "sort --output=outputs/b.txt outputs/a.txt", "unresolved_path", None),
+    ("Bash", "sort --files0-from=outputs/list -o outputs/out outputs/a.txt", "unresolved_path", None),
+    ("Bash", "sed -f outputs/edit.sed outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("Bash", "sort -o outputs/b.txt outputs/a.txt", "workspace", None),
+    ("Bash", "sed -i s/x/y/g outputs/a.txt", "workspace", None),
+    ("Bash", "sed 'e sh outputs/run.sh' outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("Bash", "sed 'r outputs/c.txt' outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("Bash", "sed 's/x/y/w outputs/c.txt' outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("PowerShell", "Set-Content outputs/a,outputs/b x", "unresolved_path", None),
+    ("PowerShell", "Set-Content @args x", "unresolved_path", None),
+    # A script's runtime paths are not visible: still unresolved.
+    ("Bash", "python outputs/run.py", "unresolved_path", None),
+])
+def test_request_grant_task_folder_write_below_private_runs_root(tmp_path, tool, command, category, reason):
+    """#1445 r22: the task folder lies below the private runs root, so its writes used to read as a personal path."""
+    from labhq.approval_grants import classify
+    from tests.test_private_paths import _link_dir
+
+    runs = tmp_path / "runs"
+    work = runs / "day" / "task"
+    for folder in (work / "outputs", work / "inputs" / "s1", runs / "day" / "other"):
+        folder.mkdir(parents=True)
+    _link_dir(work / "link", runs / "day" / "other")
+    trace = []
+    assert classify(tool, {"command": command}, PolicySettings(), workdir=work.as_posix(),
+                    private_paths=(runs.as_posix(), (work / "inputs").as_posix()), private_enabled=True,
+                    private_open_reads=(work.as_posix(), (work / "inputs" / "s1").as_posix()),
+                    trace=trace, environ={}) == category
+    assert trace == ([reason] if reason else [])
+
+
 def test_request_grant_own_session_tool_results(tmp_path, monkeypatch):
     """Reading the staff's own session's saved long output groups like a task file; other config files do not."""
     from labhq.private_paths import claude_project_slug
@@ -254,9 +304,7 @@ def test_request_grant_own_session_tool_results(tmp_path, monkeypatch):
     (work / "notes.txt").write_text("x\n", encoding="utf-8")
     assert category(work / "notes.txt") == (None, ["policy_allow"])  # a task file needs no card at all
     granted, trace = category(own / "tool-results" / "out.txt")
-    # Under the private runs root the task folder itself resolves as a match, so this is "unresolved_path",
-    # the category an ordinary write in the task folder gets there too.
-    assert (granted, trace) == (_grant_category(work, "echo x > a.txt", **kw), [])
+    assert (granted, trace) == ("workspace", []) == (_grant_category(work, "echo x > a.txt", **kw), [])
     assert category(old / "tool-results" / "out.txt")[0] is None
     # A longer path sharing the accepted file's text as a prefix is judged as written.
     results = (own / "tool-results").as_posix()
@@ -324,6 +372,27 @@ async def test_request_grant_is_explicit_audited_and_scoped(request_grant_hub):
     hub.store.put("task", "t1", {"request_id": "r2", "runner_id": "runner", "payload": {"agent_id": "agent"}})
     await _receive_grant_card(hub, _grant_card("other-request", rid="r2"))
     assert "other-request" in hub.approvals
+
+
+async def test_unresolved_path_grant_covers_a_task_folder_write(request_grant_hub):
+    """#1445 r23: a proven task-folder write is narrower than an unresolved path a person already granted."""
+    hub, events, sent = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("broad", category="unresolved_path"))
+    await hub.resolve_approval("broad", True, grant_for_request=True)
+    await _receive_grant_card(hub, _grant_card("narrow", category="workspace"))
+    decision = hub.store.get("approval_decision", "narrow")
+    assert decision["automatic"] is True and decision["grant_source"] == "broad"
+    assert decision["grant_category"] == "unresolved_path" and sent[-1]["approved"] is True
+    assert hub.store.get("approval_grants", "r1") == {"unresolved_path": "broad"}
+
+
+async def test_task_folder_grant_does_not_cover_an_unresolved_path(request_grant_hub):
+    hub, events, sent = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("narrow"))
+    await hub.resolve_approval("narrow", True, grant_for_request=True)
+    await _receive_grant_card(hub, _grant_card("broad", category="unresolved_path"))
+    assert "broad" in hub.approvals and hub.store.get("approval_decision", "broad") is None
+    assert hub.store.get("approval_grants", "r1") == {"workspace": "narrow"}
 
 
 @pytest.mark.parametrize("change", ["wrong_task", "wrong_process", "unsupported", "not_approved", "cancelled"])

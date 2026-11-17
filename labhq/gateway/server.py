@@ -2310,9 +2310,17 @@ class Hub:
         return category
 
     def _grant_ready(self, rid: str, category: str) -> bool:
-        source = (self.store.get("approval_grants", rid) or {}).get(category)
-        decision = self.store.get("approval_decision", source) if source else None
-        return bool(decision and decision.get("approved") and not decision.get("grant_pending"))
+        return self._grant_key(rid, category) is not None
+
+    def _grant_key(self, rid: str, category: str) -> str | None:
+        """The confirmed grant that covers `category`: its own, or for a proven task-folder write the broader
+        unresolved-path grant (#1445). A task-folder grant never covers an unresolved path."""
+        grants = self.store.get("approval_grants", rid) or {}
+        for key in ((category, "unresolved_path") if category == "workspace" else (category,)):
+            decision = self.store.get("approval_decision", grants[key]) if grants.get(key) else None
+            if decision and decision.get("approved") and not decision.get("grant_pending"):
+                return key
+        return None
 
     def approval_summary(self, rid: str) -> dict:
         decisions = self.store.all("approval_decision")
@@ -5864,9 +5872,10 @@ class Hub:
                 async with self._grant_lock(rid):
                     if self._grant_category(entry) != category:
                         raise ValueError("request or runner is no longer eligible")
+                    key = category if grant_for_request else (self._grant_key(rid, category) or category)
                     source = await self.store.acommit_grant_approval(
-                        approval_id, decision, delivery, rid, category, create=grant_for_request)
-                    chosen.update(grant_category=category, grant_source=source, automatic=grant_auto)
+                        approval_id, decision, delivery, rid, key, create=grant_for_request)
+                    chosen.update(grant_category=key, grant_source=source, automatic=grant_auto)
                     eligible = self._grant_category(entry) == category
                     if eligible:
                         try:
