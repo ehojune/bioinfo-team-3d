@@ -482,6 +482,13 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     safe_cd.detail["tool_input"]["command"] = "cd internal/sub && cat a"
     await runner._on_approval(safe_cd)
     assert hub.store.get("approval_decision", safe_cd.id)["grant_source"] == first.id
+    (tmp_path / "-").mkdir()
+    special_cd = card("unsafe-oldpwd")
+    special_cd.detail["tool_input"]["command"] = "cd - && cat internal/a"
+    await runner._on_approval(special_cd)
+    assert not special_cd.detail.get("grant_category")
+    assert hub.store.get("approval_decision", special_cd.id) is None
+    assert special_cd.id in hub.approvals
     runner.tool_contexts["t1"].env["CDPATH"] = str(tmp_path / "other")
     adapter.staff_env(runner.tool_contexts["t1"])
     unsafe_cd = card("unsafe-cdpath")

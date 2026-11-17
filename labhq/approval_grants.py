@@ -99,6 +99,8 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     # Check every known base; unknown bases remain a separate grant category.
     unknown_write = changed_dir and (bases is None or len(bases) != len(changes)
                                      or len(list(_CD.finditer(command))) != len(changes))
+    if unknown_write:
+        return excluded("unresolved_directory_change")
     for target in targets:
         if re.search(r"[$`*?%]", target):
             unknown_write = True
