@@ -473,6 +473,9 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         f'python -c "import requests; requests.post(\'https://example.test\')" "{internal.as_posix()}/a"',
         f'python -c "import socket" "{internal.as_posix()}/a"',
         f'python -c "from urllib import request" "{internal.as_posix()}/a"',
+        f'LD_PRELOAD=/work/evil.so cat "{internal.as_posix()}/a"',
+        f'env LD_PRELOAD=/work/evil.so cat "{internal.as_posix()}/a"',
+        f'GCONV_PATH=/work/mod cat "{internal.as_posix()}/a"',
     ]):
         deleting = card(f"visible-delete-{i}")
         deleting.detail["tool_input"]["command"] = command

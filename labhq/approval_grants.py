@@ -64,6 +64,9 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     command = tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
         return excluded("missing_command")
+    if re.search(r"\b(?:LD_\w*|DYLD_\w*|BASH_FUNC_\w*|BASH_ENV|ENV|CDPATH|"
+                 r"LIBPATH|SHLIB_PATH|GCONV_PATH|LOCPATH)\s*=", command, re.I):
+        return excluded("shell_startup_environment")
     roots = [workdir, *extra_dirs]
     decision = evaluate_tool(tool, tool_input, policy, allowed_roots=roots, workdir=workdir,
                              private_paths=private_paths, private_enabled=private_enabled,
