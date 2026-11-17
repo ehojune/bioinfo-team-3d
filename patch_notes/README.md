@@ -16,7 +16,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 |---|---|---|
 | 03:40 | [`2953a9d`](https://github.com/ehojune/bioinfo-team-3d/pull/1462/commits/2953a9d) | **코드를 실행하거나 여러 경로를 담을 수 있는 sed·PowerShell 표기는 작업 폴더 묶음에 들어가지 않습니다.**<br>리뷰 P1 수정. 작업 폴더 증명은 sed 스크립트가 안전한 플래그의 s///나 줄 출력일 때만 받고(e·r·w 등은 경로 미확정), PowerShell 피연산자의 쉼표 배열·splat·부분식은 증명하지 않는다 |
 | 03:10 | [`1aa6362`](https://github.com/ehojune/bioinfo-team-3d/pull/1462/commits/1aa6362) | **파일 목록이나 스크립트 파일로 경로를 감출 수 있는 명령은 작업 폴더 묶음에 들어가지 않습니다.**<br>리뷰 P1 수정. 작업 폴더 증명은 긴 옵션(--output=F, --files0-from=F 등)을 통째로 받지 않고, sed 스크립트 파일(-f)도 받지 않는다. 그런 명령은 경로 미확정 부류로 남는다 |
+| 03:03 | [`0c1c1ca`](https://github.com/ehojune/bioinfo-team-3d/commit/0c1c1ca) | **3D 승인 카드에서도 위험 등급을 확인할 수 있습니다.**<br>3D 도구 카드에도 서버가 보낸 위험 등급을 표시한다. |
 | 03:01 | [`90a5f14`](https://github.com/ehojune/bioinfo-team-3d/pull/1464/commits/90a5f14) | **자동 승인 기록 시험을 Windows 검사에도 포함합니다.**<br>기존 Windows 승인 시험 파일에 새 회귀 세 건을 옮겼다. |
+| 02:59 | [`7d9da9c`](https://github.com/ehojune/bioinfo-team-3d/commit/7d9da9c) | **도구 승인 카드가 서버와 같은 확인 사유를 보여 줍니다.**<br>웹 도구 카드에 서버의 사유와 위험 등급을 우선 표시하고 사유가 없을 때 부류별 안내를 쓴다. |
 | 02:57 | [`1b6c54e`](https://github.com/ehojune/bioinfo-team-3d/pull/1464/commits/1b6c54e) | **자동 승인된 명령과 그 근거를 기록에서 확인합니다.**<br>승인 이벤트에 기존 카드와 단계 ID를 보존하고 허용 저장·조회 코드를 분리했다. |
 | 02:40 | [`8614e63`](https://github.com/ehojune/bioinfo-team-3d/pull/1462/commits/8614e63) | **옵션에 밖의 경로를 담은 명령은 작업 폴더 묶음에 들어가지 않습니다.**<br>리뷰 P1 수정. 작업 폴더 증명에서 --output=FILE 같은 옵션 값은 피연산자로 검사하고, -o/tmp/out처럼 붙은 값은 증명하지 않는다. 작업 폴더 카드는 쓰기가 보일 때만 "작업 폴더 안에서 파일을 만들거나 고칩니다"라고 쓰고, 읽기는 "작업 폴더 안의 파일을 다룹니다"로 쓴다 |
 | 02:10 | [`e9f639b`](https://github.com/ehojune/bioinfo-team-3d/pull/1462/commits/e9f639b) | **경로 미확정을 한 번 허용하면 작업 폴더 안 쓰기 카드도 다시 묻지 않습니다.**<br>이 요청에서 경로 미확정 부류가 허용돼 있으면 작업 폴더 부류 카드도 그 허용으로 자동 승인한다. 작업 폴더 허용은 경로 미확정을 덮지 않는다. 요청 재생 사람 카드 A 12, B 21 유지 |
