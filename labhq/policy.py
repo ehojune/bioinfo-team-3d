@@ -2630,12 +2630,26 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         cmd = str(tool_input.get("command", ""))
         if workspace_operation and not registry_access(cmd):
             return None
+        # Judge registry evidence before a managed parent can obscure its reason.
+        spelled = registry_access(cmd)
+        if spelled:
+            return Decision("ask", f"{tool_name} touches the registry (any registry access asks while private paths "
+                                   f"are on; HKCU\\Environment holds the PI's tokens such as GITHUB_TOKEN; 레지스트리 "
+                                   f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`")
         if tool_name == 'Bash' and open_reads:
             managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
             if managed is True:
                 return None
             if managed is False:
                 return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)' + input_hint)
+            # Unknown syntax still asks. A managed parent match alone does not prove access to PI files.
+            # Keep explicit closed-path and registry evidence; do not remove the parent from the actual guards.
+            closed = [p for p in private_paths if not holds_open_read(p, open_reads)]
+            if not (mentioned_private_path(cmd, closed, home, environ)
+                    or touches_resolved({'command': cmd}, closed, workdir=workdir)
+                    or _cd_reaches_private(cmd, closed, workdir, home, environ)):
+                return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); '
+                                      'confirmation required' + input_hint)
         if private_paths and mentioned_private_path(cmd, private_paths, home, environ):
             return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`"
                             + input_hint)
@@ -2647,12 +2661,6 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         if private_paths and _cd_reaches_private(cmd, private_paths, workdir, home, environ):
             return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
                                    f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")
-        # The PI's GITHUB_TOKEN is stripped from staff env but stays readable in the user registry (#325).
-        spelled = registry_access(cmd)
-        if spelled:
-            return Decision("ask", f"{tool_name} touches the registry (any registry access asks while private paths "
-                                   f"are on; HKCU\\Environment holds the PI's tokens such as GITHUB_TOKEN; 레지스트리 "
-                                   f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`")
         if tool_name == 'Bash' and open_reads:
             return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); confirmation required')
     return None

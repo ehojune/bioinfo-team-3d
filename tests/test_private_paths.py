@@ -27,6 +27,88 @@ pytestmark = pytest.mark.usefixtures("pre_v1_defaults")  # these tests hire or r
 REAL_LABHQ_ENTRIES = private_paths._labhq_entries  # conftest replaces it for every other test
 REAL_SHORT_NAME = private_paths._short_name
 
+
+@pytest.fixture
+def request_paths_1456(tmp_path, monkeypatch):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    runs = tmp_path / 'runs'
+    task = runs / 'day' / 'task_bio'
+    inputs = task / 'inputs' / 'precedent'
+    personal = tmp_path / 'personal'
+    sibling = runs / 'day' / 'task_other'
+    explicit = task / 'private'
+    for path in (inputs, personal, sibling, explicit):
+        path.mkdir(parents=True)
+    (inputs / 'records.txt').write_text('fixture\n', encoding='utf-8')
+    return task, inputs, personal, sibling, explicit, [str(runs), str(task / 'inputs'), str(personal), str(explicit)]
+
+
+def request_gate_1456(paths, tool, data):
+    task, inputs, _, _, _, private = paths
+    return evaluate_tool(tool, data, PolicySettings(), allowed_roots=[str(task)], workdir=str(task),
+                         private_enabled=True, private_paths=private,
+                         private_open_reads=[str(task), str(inputs)])
+
+
+def test_request_compound_read_has_unproven_scope_not_personal_path(request_paths_1456):
+    task, _, _, _, _, private = request_paths_1456
+    command = (f'cd "{task.as_posix()}"; ls -la inputs/precedent; wc -l inputs/precedent/*; '
+               'cat inputs/precedent/.labhq-inputs.json | head -50')
+    assert private_paths.managed_shell_read(command, private, [str(task)], str(task)) is None
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': command})
+    assert decision.action == 'ask'
+    assert 'read scope is ambiguous' in decision.reason
+    assert 'PI personal path' not in decision.reason
+
+
+@pytest.mark.parametrize('tool', ['Read', 'Bash'])
+@pytest.mark.parametrize('location', ['task', 'inputs'])
+def test_request_literal_reads_remain_open(request_paths_1456, tool, location):
+    task, inputs, *_ = request_paths_1456
+    path = (task if location == 'task' else inputs) / 'records.txt'
+    data = {'file_path': str(path)} if tool == 'Read' else {'command': f'cat "{path.as_posix()}"'}
+    decision = request_gate_1456(request_paths_1456, tool, data)
+    assert decision.action == 'allow', decision.reason
+
+
+@pytest.mark.parametrize('tool', ['Read', 'Bash'])
+@pytest.mark.parametrize('location', ['personal', 'credential', 'sibling', 'explicit', 'link'])
+def test_request_closed_paths_remain_protected(request_paths_1456, tool, location):
+    task, _, personal, sibling, explicit, _ = request_paths_1456
+    alias = task / 'alias'
+    _link_dir(alias, personal)
+    path = {'personal': personal / 'diary.txt', 'credential': task / '.env',
+            'sibling': sibling / 'records.txt', 'explicit': explicit / 'diary.txt',
+            'link': alias / 'diary.txt'}[location]
+    data = {'file_path': str(path)} if tool == 'Read' else {'command': f'cat "{path.as_posix()}"'}
+    decision = request_gate_1456(request_paths_1456, tool, data)
+    assert decision.action == ('deny' if tool == 'Read' else 'ask')
+    assert 'private_paths' in decision.reason
+
+
+@pytest.mark.parametrize('tool', ['Write', 'Bash'])
+def test_request_inputs_never_gain_write_permission(request_paths_1456, tool):
+    path = request_paths_1456[1] / 'records.txt'
+    data = ({'file_path': str(path), 'content': 'overwrite'} if tool == 'Write'
+            else {'command': f'printf overwrite > "{path.as_posix()}"'})
+    assert request_gate_1456(request_paths_1456, tool, data).action != 'allow'
+
+
+@pytest.mark.parametrize('location', ['personal', 'explicit'])
+def test_request_unknown_syntax_keeps_explicit_personal_evidence(request_paths_1456, location):
+    path = request_paths_1456[2 if location == 'personal' else 4] / 'diary.txt'
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': f'wc -l "{path.as_posix()}"'})
+    assert decision.action == 'ask'
+    assert 'PI personal path' in decision.reason
+
+
+def test_request_unknown_syntax_still_checks_registry(request_paths_1456):
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': 'reg query HKCU/Environment'})
+    assert decision.action == 'ask'
+    assert 'registry' in decision.reason
+
 WIN_HOME = "C:\\Users\\pi"
 WIN_PRIVATE = ["C:\\Users\\pi\\.ssh", "C:\\Users\\pi\\AppData\\Local\\Google\\Chrome\\User Data"]
 WIN_ENV = {"LOCALAPPDATA": "C:\\Users\\pi\\AppData\\Local", "APPDATA": "C:\\Users\\pi\\AppData\\Roaming"}

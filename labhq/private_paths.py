@@ -442,7 +442,10 @@ def scoped_open_reads(settings: Settings, candidates: Iterable[str], cwd=None,
 
 def managed_shell_read(command: str, private_paths: Iterable[str], open_reads: Iterable[str],
                        workdir: str | None) -> bool | None:
-    """Prove a literal read sequence stays outside closed paths; never relax other policy decisions."""
+    """Prove a literal read sequence stays outside closed paths; never relax other policy decisions.
+
+    False identifies a closed/credential operand. None means unproven syntax or scope, not a private-path hit.
+    """
     from .tool_command import read_commands
 
     parts = read_commands(command)
