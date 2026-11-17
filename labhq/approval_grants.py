@@ -158,8 +158,11 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         return excluded("other_private_path")
     protected = [p for p in private if not _inside(work, _norm(p))]
     resolved_private = touches_resolved(checked, private, workdir=workdir, exempt=_real(workdir))
-    if resolved_private and not isinstance(resolved_private, Unresolved):
-        return excluded("resolved_private_path")
+    if resolved_private:
+        # touches_resolved is Unresolved only when it stopped at MAX_RESOLVED_CANDIDATES: the operands it never
+        # resolved may still reach a private directory through a link, so a request grant must not cover it.
+        return excluded("private_scan_capped" if isinstance(resolved_private, Unresolved)
+                        else "resolved_private_path")
     other = _private_decision(tool, checked, protected, workdir, None, environ,
                               list(private_open_reads), closed)
     if other and other.private_kind != "unresolved":
@@ -177,7 +180,6 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         return "internal_read" if literal_read else excluded("unproven_internal_read")
     internal = next((hit for hit in internal_hits if isinstance(hit, Unresolved)), None)
     if (unknown_write or isinstance(internal, Unresolved) or isinstance(resolved_closed, Unresolved)
-            or isinstance(resolved_private, Unresolved)
             or decision.private_kind in {"resolved_match", "unresolved"}
             or (other and other.private_kind == "unresolved")
             or re.search(r"\$|`|\*|\?|\b(?:for|while)\b", command, re.I)):

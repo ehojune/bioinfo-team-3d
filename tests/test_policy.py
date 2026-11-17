@@ -95,6 +95,30 @@ def test_managed_read_uncertainty_has_typed_evidence(tmp_path):
                     private_enabled=True, private_open_reads=tuple(reads), environ=env) is None
 
 
+def test_capped_private_scan_stays_out_of_request_grants(tmp_path):
+    """Past the resolved-candidate cap an operand may still be a link into a private directory (PR #1458
+    review): the scan stopping short is not "path unresolved" a person granted once, it is an individual card."""
+    from labhq.approval_grants import classify
+    from labhq.policy import MAX_RESOLVED_CANDIDATES
+
+    work = tmp_path / "work"
+    work.mkdir()
+    private = (tmp_path / "private").as_posix()
+    names = [f"f{i}" for i in range(MAX_RESOLVED_CANDIDATES + 2)]
+    for name in names:
+        (work / name).write_text("x\n", encoding="utf-8")
+    command = "if true; then cat " + " ".join(names) + "; fi"
+    trace = []
+    assert classify("Bash", {"command": command}, PolicySettings(), workdir=str(work),
+                    private_paths=(private,), private_enabled=True,
+                    private_open_reads=(work.as_posix(),), environ={}, trace=trace) is None
+    assert trace == ["private_scan_capped"]
+    short = "if true; then cat " + " ".join(names[:3]) + "; fi"
+    assert classify("Bash", {"command": short}, PolicySettings(), workdir=str(work),
+                    private_paths=(private,), private_enabled=True,
+                    private_open_reads=(work.as_posix(),), environ={}) == "unresolved_path"
+
+
 def test_request_grant_cd_write_scope(tmp_path):
     from labhq.approval_grants import classify
 
