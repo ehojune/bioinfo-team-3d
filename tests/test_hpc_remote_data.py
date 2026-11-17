@@ -13,6 +13,10 @@ import pytest
 
 from labhq import hpc_transfer as ht
 from tests.test_hpc_transfer_1308 import cluster, site, write_script
+from labhq.adapters.mock import MockAdapter
+from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.runner.daemon import Runner
+from tests.test_workspace_boundary import _settings
 
 
 def inventory(request='r', data=b'large', path='tx2gene.tsv'):
@@ -383,6 +387,10 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             runner.store.close()
             runner = Runner(settings)
             monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
+            notices = []
+            async def capture_notice(kind, message):
+                notices.append((kind, message))
+            monkeypatch.setattr(runner, '_emit_hpc_notice', capture_notice)
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
             if step == 's1' and layout in {'local_conflict', 'changed_copy'}:
@@ -409,6 +417,11 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             fetched_copy = step == 's1' and layout in {'fetched_copy', 'unchanged_copy'}
             required_remote = not fetched_copy and not collect_all
             assert ('Required outputs remaining on HPC (not fetched locally)' in result.text) is required_remote
+            if required_remote:
+                assert '로컬에 받지 못한 선언 산출' in result.text
+                assert 'outputs/' + collected_output in result.text
+                assert any(kind == 'transfer' and '로컬에 받지 못한 선언 산출' in text
+                           for kind, text in notices)
             assert ('outputs/' + output in result.output_sha256) is fetched_copy
             assert (Path(result.workdir) / 'outputs' / output).exists() is fetched_copy
             expected_bytes = 6 if fetched_copy else 6000000 if step == 's1' and layout == 'many_files' else 20000000
@@ -420,6 +433,34 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
                 runner = Runner(settings)  # re-admit inventory from persisted run and job rows
     finally:
         runner.store.close()
+
+
+def test_local_receipt_report_handles_multiple_jobs_and_partial_directory():
+    from labhq.runner.hpc_fetch import missing_received_outputs
+
+    jobs = [
+        {'files': [{'path': 'dir/a', 'bytes': 4}, {'path': 'dir/b', 'bytes': 9}],
+         '_local_copy_sha256': {'dir/a': 'sha-a'},
+         '_fetch_skipped': [{'path': 'dir/b', 'bytes': 9, 'reason': 'retained in request remote data'},
+                            {'path': 'dir/c', 'reason': 'depth limit'}]},
+        {'files': [{'path': 'dir/d', 'bytes': 3}, {'path': 'unrelated', 'bytes': 8}],
+         '_local_copy_sha256': {'dir/d': 'sha-d'}},
+    ]
+    rows = missing_received_outputs(['outputs/dir'], jobs,
+                                    {'outputs/dir/a': 'sha-a', 'outputs/dir/d': 'sha-d'})
+    assert rows == [{'path': 'outputs/dir/b', 'bytes': 9, 'reason': 'fetch size limit'},
+                    {'path': 'outputs/dir/c', 'bytes': None, 'reason': 'depth limit'}]
+
+
+def test_superseded_skipped_output_is_not_reported_when_later_job_received_it():
+    from labhq.runner.hpc_fetch import missing_received_outputs
+
+    manifests = [
+        {'files': [], '_fetch_skipped': [{'path': 'result.tsv', 'bytes': 9,
+                                           'reason': 'retained in request remote data'}]},
+        {'files': [{'path': 'result.tsv', 'bytes': 3}], '_local_copy_sha256': {'result.tsv': 'sha'}},
+    ]
+    assert missing_received_outputs(['outputs/result.tsv'], manifests, {'outputs/result.tsv': 'sha'}) == []
 
 
 def test_listing_hashes_large_outputs_and_next_input_rejects_same_size_change(cluster, tmp_path):
@@ -647,3 +688,63 @@ async def test_fetch_receipts_are_saved_with_the_job_for_local_copy_admission():
     await runner._fetch_finished_jobs()
     assert job['fetched_sha256'] == {'x.tsv': digest}
     assert runner.store.put.call_args.args[2]['fetched_sha256'] == {'x.tsv': digest}
+
+
+@pytest.mark.parametrize('case', ['oversize', 'absent', 'optional'])
+async def test_remote_or_absent_output_after_restart(site, monkeypatch, case):
+    settings = _settings(site.tmp)
+    settings.hpc = site.settings.hpc
+    settings.policy.approvals.hpc_core_hours_threshold = 1000
+    settings.runner.mock_delay_s = 0
+    runner = Runner(settings)
+    agent = AgentSpec(id='worker', name='Worker', role='test', engine=Engine.mock, builtin_mcp=['hpc'])
+    monkeypatch.setattr(ht, 'verify_remote_data', lambda transfer, manifest, request_id: transfer.path(manifest['data']))
+
+    async def run(adapter, ctx):
+        ctx.before_spawn()
+        if ctx.task.resume_session_id:
+            return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text='done')
+        site.workdir = ctx.workdir
+        submitted = await runner._on_submit_raw({'task_id': ctx.task.id, 'agent_id': agent.id,
+                                                 'request_id': 'r', 'script': str(write_script(site))})
+        assert submitted.get('submitted'), submitted
+        job = runner.jobs[submitted['job_id']]
+        m = inventory(path='peak.bed' if case != 'absent' else 'other.bed', data=b'x' * 2000)
+        m['data'] = submitted['transfer']['data']
+        job.update(terminal=True, state='completed', exit_status=0, fetched=True, remote_manifest=m)
+        if case != 'absent':
+            job['fetch_skipped'] = [{'path': 'peak.bed', 'bytes': 2000,
+                                     'reason': 'retained in request remote data'}]
+        runner.store.put('job', job['job_id'], job)
+        return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text='submitted', session_id='session')
+
+    monkeypatch.setattr(MockAdapter, 'run', run)
+    meta = {'kind': 'step', 'step_id': 's1', 'execution_location': {'mode': 'hpc', 'runner_id': settings.runner.id},
+            'outputs': ['outputs/peak.bed']}
+    if case == 'optional':
+        meta.update(required_outputs=[], optional_outputs=['outputs/peak.bed'])
+    try:
+        monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
+        pending = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='test', meta=meta))
+        assert pending.ok and pending.pending_jobs
+        runner.store.close()
+        runner = Runner(settings)
+        monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
+        notices = []
+        async def capture_notice(kind, text):
+            notices.append((kind, text))
+        monkeypatch.setattr(runner, '_emit_hpc_notice', capture_notice)
+        result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
+                                            resume_session_id='session'))
+        if case != 'absent':
+            assert result.ok
+            assert not result.missing_outputs
+            assert 'outputs/peak.bed' in result.text and '로컬에 받지 못한 선언 산출 1개' in result.text
+            assert '2000 bytes' in result.text and 'fetch size limit' in result.text
+            assert any(kind == 'transfer' and 'outputs/peak.bed' in text and 'fetch size limit' in text
+                       for kind, text in notices)
+        else:
+            assert not result.ok
+            assert result.missing_outputs == ['outputs/peak.bed']
+    finally:
+        runner.store.close()
