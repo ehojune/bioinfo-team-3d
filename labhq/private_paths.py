@@ -581,6 +581,7 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
             targets = []
             push = location[0].casefold() in ('pushd', 'push-location')
             restore = len(location) == 2 and location[1] == '-'
+            no_cd = push and '-n' in location[1:]
             next_failure = []
             for base, old, stack in bases:
                 if restore:
@@ -592,15 +593,17 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
                 for target in moved:
                     new_stack = ((base, *stack[1:]) if len(location) == 1 and stack
                                  else (base, *stack)) if push else stack
-                    targets.append((target, base, new_stack))
+                    targets.append((base, old, (target, *stack)) if no_cd else (target, base, new_stack))
                 if not restore or not old or not os.path.isdir(old):
                     next_failure.append((base, old, stack))
             next_success = targets
         elif (location and location[0].casefold() in ('popd', 'pop-location')
               and not pipeline and separator not in ('|', '&')):
-            next_success = [(stack[0], base, stack[1:]) for base, _, stack in bases if stack]
+            no_cd = '-n' in location[1:]
+            next_success = [(base, old, stack[1:]) if no_cd else (stack[0], base, stack[1:])
+                            for base, old, stack in bases if stack]
             next_failure = [(base, old, stack) for base, old, stack in bases
-                            if not stack or not stack[0] or not os.path.isdir(stack[0])]
+                            if not stack or (not no_cd and (not stack[0] or not os.path.isdir(stack[0])))]
         elif location and not pipeline and separator not in ('|', '&'):
             if location[0] == 'exit':
                 next_success, next_failure = [], []
@@ -615,11 +618,18 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
         failed = failed if len(failed) <= MAX_CD_BASES else [(None, None, ())]
         if separator in (')', '}') and groups:
             kind, original, skipped_success, skipped_failure, pipeline = groups.pop()
-            if kind == '(':
-                succeeded = original if succeeded else []
-                failed = original if failed else []
+            if kind in ('(', '$('):
+                succeeded = original if succeeded or kind == '$(' else []
+                failed = original if failed or kind == '$(' else []
             succeeded = list(dict.fromkeys([*skipped_success, *succeeded]))
             failed = list(dict.fromkeys([*skipped_failure, *failed]))
+        if separator == '(' and words and words[-1].endswith('$'):
+            if len(groups) >= MAX_CD_BASES:
+                return False
+            original = list(dict.fromkeys([*succeeded, *failed]))
+            groups.append(('$(', original, [], [], pipeline))
+            succeeded, failed, previous, pipeline = original, [], ';', False
+            continue
         pipeline = separator == '|'
         previous = separator
     return False

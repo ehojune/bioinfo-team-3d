@@ -176,6 +176,10 @@ def test_unknown_read_keeps_lexical_evidence_past_resolution_cap(tmp_path, monke
     ('pushd {plugin}; popd; wc -l ../notes.txt', False),
     ('cd {plugin}; cd -; wc -l ../notes.txt', False),
     ('cd {plugin}; cd -; cd -; wc -l ../notes.txt', True),
+    ('echo $(cd {plugin}); wc -l ../notes.txt', False),
+    ('echo $(cd {plugin}; wc -l ../notes.txt)', True),
+    ('pushd {plugin}; popd -n; wc -l ../notes.txt', True),
+    ('pushd -n {plugin}; wc -l ../notes.txt', False),
 ])
 def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequence, closed):
     from tests.test_tool_card_explain import _system_commands

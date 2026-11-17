@@ -56,3 +56,5 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - 관련 4개 파일 729 passed, 10 skipped. 분기·wrapper 최종 보완 뒤 표적 53 passed이며 background의 기존 `deny`도 유지했다.
 - 그룹·subshell·디렉터리 복원 P1 2건도 수리했다. 상태에 OLDPWD·directory stack을 보존하고 subshell이 끝나면 바깥 상태로 돌아간다. 양방향 7건 추가, 표적 60건 통과.
 - 최종 관련 4개 파일: 742 passed, 10 skipped.
+- command substitution·popd -n의 P1 2건도 수리했다. substitution 종료 시 바깥 폴더로 복원하고 pushd·popd의 `-n`은 stack만 바꾼다. 양방향 4건 추가, 표적 64건 통과.
+- 해당 수리 뒤 관련 4개 파일: 746 passed, 10 skipped.
