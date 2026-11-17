@@ -495,7 +495,9 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         assert script.detail["grant_category"] in {"workspace", "unresolved_path"}
         assert hub.store.get("approval_decision", script.id)["automatic"] is True
     for i, command in enumerate(["gh gist create output.txt",
-                                 "python -c 'import smtplib; smtplib.SMTP(\"example.test\")'"]):
+                                 "python -c 'import smtplib; smtplib.SMTP(\"example.test\")'",
+                                 f'git -C "{tmp_path.as_posix()}" push https://example.test/repo HEAD',
+                                 f'git -C "{tmp_path.as_posix()}" reset --hard HEAD']):
         network = card(f"workspace-network-{i}")
         network.detail["tool_input"]["command"] = command
         await runner._on_approval(network)
