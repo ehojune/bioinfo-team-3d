@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: 2d59515
+    at: '2026-11-17 19:16'
+    summary: OpenSSL 명령은 묶음 허용에서 따로 확인합니다.
+    text: 명시된 OpenSSL 연결 명령을 요청 묶음 허용에서 제외한다. Refs #1445.
   - sha: eda7eb8
     at: '2026-11-17 19:08'
     summary: Git 명령은 묶음 허용에서 따로 확인합니다.
