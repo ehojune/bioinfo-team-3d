@@ -1,5 +1,9 @@
 pr: null
 rows:
+  - sha: e5ff114
+    at: '2026-11-17 12:30'
+    summary: HPC 도구 환경 폴더를 빠진 결과로 잘못 알리지 않습니다.
+    text: 원격 산출 판정과 같이 의도적으로 생략된 environment folder를 경고에서 제외한다. Refs #1447.
   - sha: a17764a
     at: '2026-11-17 12:25'
     summary: HPC 미수신 알림을 해당 작업의 피드에 표시합니다.
