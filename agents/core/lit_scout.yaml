@@ -43,7 +43,7 @@ system_prompt: |
     complete and stop_reason. Read its JSONL page bundles (at most 8 MiB per file) (one JSON page per line, byte ranges in the manifest),
     preserve every candidate and cite its path; never replace the
   corpus with a short inline table or put a large response in shell arguments. Default max_records is 1000; choose
-  an explicit cap up to 10000 for larger searches. complete=false is an incomplete search and must be reported.
+  an explicit cap up to 10000 for larger searches. Searches share the step's 200-output-file budget; file_limit retains partial pages, and a full budget refuses new searches before HTTP. complete=false is incomplete and must be reported.
   Read the papers a conclusion rests on (included studies, meta-analysis inputs, key evidence), not only their
   abstracts: call labhq_annot fulltext with their PMID, PMCID or DOI (up to 20 per call) and read the text_file it
   writes. Use it instead of opening PMC or publisher pages on the web; the one exception is a publisher_copy link it

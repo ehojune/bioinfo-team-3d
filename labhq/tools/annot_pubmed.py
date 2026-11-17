@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 import httpx
 
 from ..adapters.owned import OwnedPathError, _held_parent, append_owned, write_owned_bytes
+from ..runner.step_inputs import MAX_FILES
 from .annot import Annotator, EUTILS, LookupFailed, QUERY_LOG, RESULT_DIR, ResponseTooLarge, _now, _sha256
 
 DEFAULT_MAX_RECORDS = 1000
@@ -27,6 +28,10 @@ PAGE_SIZE = 100
 PAGE_BYTES = 8 * 1024 * 1024
 BUNDLE_BYTES = 8 * 1024 * 1024  # Below the default request export's 50 MiB per-file cap.
 TOTAL_BYTES = 64 * 1024 * 1024
+
+
+class CollectionFileLimit(LookupFailed):
+    """No new corpus file fits the step-wide ancestor artifact budget."""
 
 
 def _text(node: ET.Element | None) -> str:
@@ -73,6 +78,7 @@ class PubmedCollection:
         self.bundle_bytes = 0
         self.bundle_identity = None
         self.bundle_hash = hashlib.sha256()
+        self.manifest_created = False
         self.seen: set[str] = set()
         self.bytes = 0
         self.state = {"tool": "pubmed_search", "query": query.strip(), "queried_at": _now(),
@@ -81,6 +87,29 @@ class PubmedCollection:
                       "max_records": max_records, "page_size": PAGE_SIZE,
                       "found_count": None, "fetched_count": 0, "unique_count": 0,
                       "complete": False, "stop_reason": "in_progress", "pages": []}
+
+    def reserve_artifacts(self, paths: set[str]) -> None:
+        """Count existing output entries without following links; reserve final metadata too."""
+        count, missing = 0, set(paths)
+        def visit(folder, prefix, depth):
+            nonlocal count
+            rows = folder.entries(MAX_FILES + 1)
+            if depth > 10 or len(rows) > MAX_FILES:
+                raise CollectionFileLimit("PubMed output file budget inventory is incomplete")
+            for row in rows:
+                path = f"{prefix}/{row.name}"
+                if row.kind == "dir":
+                    with folder.child(row.name) as child:
+                        visit(child, path, depth + 1)
+                else:
+                    count += 1
+                    missing.discard(path)
+                    if count > MAX_FILES:
+                        raise CollectionFileLimit("PubMed step-wide output file budget exhausted")
+        with _held_parent(self.root, PurePath("outputs/.pubmed-budget")) as outputs:
+            visit(outputs, "outputs", 0)
+        if count + len(missing) > MAX_FILES:
+            raise CollectionFileLimit("PubMed step-wide output file budget exhausted")
 
     def append_page(self, data: bytes) -> tuple[str, int]:
         """Append exact bytes through a held parent; committed pages remain a readable prefix."""
@@ -93,6 +122,7 @@ class PubmedCollection:
         relative = PurePath(self.bundle)
         flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
         if self.bundle_identity is None:
+            self.reserve_artifacts({self.bundle, self.path, QUERY_LOG})
             flags |= os.O_CREAT | os.O_EXCL
         with _held_parent(self.root, relative) as parent:
             with os.fdopen(parent.open_file(relative.name, flags), "ab") as target:
@@ -117,9 +147,13 @@ class PubmedCollection:
         return self.bundle, byte_offset
 
     def checkpoint(self, reason: str) -> dict:
+        if not self.manifest_created:
+            self.reserve_artifacts({self.path, QUERY_LOG})
+            append_owned(self.root, QUERY_LOG, "")  # The final log slot exists before page writes start.
         self.state["stop_reason"] = reason
         text = json.dumps(self.state, ensure_ascii=False, indent=1) + "\n"
         write_owned_bytes(self.root, self.path, text.encode("utf-8"))
+        self.manifest_created = True
         return {"full_result": self.path, "query_log": QUERY_LOG,
                 **{key: self.state[key] for key in ("found_count", "fetched_count", "unique_count",
                                                    "complete", "stop_reason")}}
@@ -183,6 +217,8 @@ class PubmedCollection:
             # wait_for must still see cancellation, so the shared deadline remains a timeout.
             self.checkpoint("interrupted")
             raise
+        except CollectionFileLimit:
+            return self.finish("file_limit")
         except ResponseTooLarge:
             return self.finish("response_byte_limit")
         except (LookupFailed, httpx.HTTPError):

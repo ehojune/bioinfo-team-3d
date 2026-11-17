@@ -186,6 +186,36 @@ async def test_bundles_rotate_below_export_cap_and_keep_partial_ranges(tmp_path,
         assert len(json.loads(data)["records"]) == page["record_count"]
 
 
+async def test_repeated_searches_share_file_budget_and_stage_all_saved_pages(tmp_path, monkeypatch):
+    monkeypatch.setattr(pubmed, "MAX_FILES", 12)
+    monkeypatch.setattr(pubmed, "BUNDLE_BYTES", 80000)
+    upstream = workspace(tmp_path)
+    results = []
+    for _ in range(3):
+        collection, client, _ = make(upstream.dir, Provider(300, "short"))
+        async with client:
+            results.append(await collection.run())
+    assert [r["fetched_count"] for r in results] == [300, 300, 200]
+    assert results[-1]["stop_reason"] == "file_limit" and not results[-1]["complete"]
+    captured = collect(upstream)
+    assert len(captured.outputs) == 12 and not captured.excluded
+    provider = Provider(1, "short")
+    rejected, client, _ = make(upstream.dir, provider)
+    async with client:
+        with pytest.raises(pubmed.CollectionFileLimit):
+            await rejected.run()
+    assert not provider.calls and len(collect(upstream).outputs) == 12
+    upstream.update_run("source", ok=True)
+    downstream = workspace(tmp_path, "consumer", "synthesis")
+    staged, refused = stage_inputs(downstream, {"search": {
+        "task_id": "source", "workdir": str(upstream.dir), "outputs": captured.outputs,
+        "output_sha256": captured.hashes}}, tmp_path, [], [], 16 * 1024 * 1024, 32 * 1024 * 1024)
+    assert staged and not refused
+    for path in captured.outputs:
+        copied = downstream.dir / "inputs/search" / path.removeprefix("outputs/")
+        assert hashlib.sha256(copied.read_bytes()).hexdigest() == captured.hashes[path]
+
+
 async def test_middle_failure_preserves_first_page_and_original_count(tmp_path):
     provider = Provider()
     provider.fail_page = 2

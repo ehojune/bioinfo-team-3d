@@ -510,7 +510,8 @@ async def pubmed_search(query: str, max_records: int = annot_pubmed.DEFAULT_MAX_
     manifest of byte_offset/bytes and page SHA256s. max_records defaults to 1000 (1..10000); pages have
     100 records, at most 8 MiB each and 64 MiB total. Returns only manifest path, counts and completion status.
     Read the bundle's JSON lines or the manifest's byte ranges; complete=false means an incomplete review corpus.
-    The normal step-wide 20-minute lookup deadline and outbound request admission apply."""
+    The step-wide 200-output-file budget is shared across searches; file_limit keeps partial pages, while a full
+    budget refuses a new manifest before HTTP. The step-wide 20-minute deadline and outbound admission apply."""
     return await _run_literature("pubmed_search", query, max_records)
 
 
