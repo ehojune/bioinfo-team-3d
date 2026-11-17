@@ -127,14 +127,15 @@ class PubmedCollection:
         with _held_parent(self.root, relative) as parent:
             with os.fdopen(parent.open_file(relative.name, flags), "ab") as target:
                 info = os.fstat(target.fileno())
-                identity = (info.st_dev, info.st_ino)
+                identity = (info.st_dev, info.st_ino, info.st_ctime_ns)
                 if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != self.bundle_bytes
                         or self.bundle_identity is not None and identity != self.bundle_identity):
                     raise OwnedPathError("PubMed page bundle was linked, replaced or resized")
                 target.write(data)
                 target.flush()
                 os.fsync(target.fileno())
-                self.bundle_identity = identity
+                after = os.fstat(target.fileno())
+                self.bundle_identity = (after.st_dev, after.st_ino, after.st_ctime_ns)
         self.bundle_hash.update(data)
         self.bundle_bytes += len(data)
         bundles = self.state.setdefault("bundles", [])
