@@ -361,6 +361,27 @@ async def test_request_grant_is_explicit_audited_and_scoped(request_grant_hub):
     assert "other-request" in hub.approvals
 
 
+async def test_unresolved_path_grant_covers_a_task_folder_write(request_grant_hub):
+    """#1445 r23: a proven task-folder write is narrower than an unresolved path a person already granted."""
+    hub, events, sent = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("broad", category="unresolved_path"))
+    await hub.resolve_approval("broad", True, grant_for_request=True)
+    await _receive_grant_card(hub, _grant_card("narrow", category="workspace"))
+    decision = hub.store.get("approval_decision", "narrow")
+    assert decision["automatic"] is True and decision["grant_source"] == "broad"
+    assert decision["grant_category"] == "unresolved_path" and sent[-1]["approved"] is True
+    assert hub.store.get("approval_grants", "r1") == {"unresolved_path": "broad"}
+
+
+async def test_task_folder_grant_does_not_cover_an_unresolved_path(request_grant_hub):
+    hub, events, sent = request_grant_hub
+    await _receive_grant_card(hub, _grant_card("narrow"))
+    await hub.resolve_approval("narrow", True, grant_for_request=True)
+    await _receive_grant_card(hub, _grant_card("broad", category="unresolved_path"))
+    assert "broad" in hub.approvals and hub.store.get("approval_decision", "broad") is None
+    assert hub.store.get("approval_grants", "r1") == {"workspace": "narrow"}
+
+
 @pytest.mark.parametrize("change", ["wrong_task", "wrong_process", "unsupported", "not_approved", "cancelled"])
 async def test_request_grant_rejects_untrusted_or_inactive_card(request_grant_hub, change):
     hub, _, _ = request_grant_hub
