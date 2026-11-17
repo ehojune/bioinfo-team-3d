@@ -517,6 +517,39 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
     parts, words = [], []
     tokens = [part for token in tokens for part in
               (re.findall(r'&&|\|\||.', token, re.S) if token and set(token) <= set(';&|\n()') else [token])]
+    functions: dict[str, list[str]] = {}
+
+    def function_commands(items: list[str], depth: int = 0) -> list[str]:
+        """Declarations do not execute; expand only literal invocations for evidence."""
+        if depth >= MAX_CD_BASES:
+            return ['__unproven_function__']
+        out, index, at_start = [], 0, True
+        while index < len(items):
+            name_at = index + (items[index] == 'function')
+            if at_start and name_at < len(items) and re.fullmatch(r'[A-Za-z_]\w*', items[name_at]):
+                after = name_at + 1
+                if items[after:after + 2] == ['(', ')']:
+                    after += 2
+                if after < len(items) and items[after] == '{':
+                    end, nesting = after + 1, 1
+                    while end < len(items) and nesting:
+                        nesting += (items[end] == '{') - (items[end] == '}')
+                        end += 1
+                    if nesting == 0:
+                        functions[items[name_at]] = items[after + 1:end - 1]
+                        out.append('true')
+                        index, at_start = end, False
+                        continue
+            token = items[index]
+            if at_start and token in functions:
+                out.extend(['{', *function_commands(functions[token], depth + 1), '}'])
+            else:
+                out.append(token)
+            at_start = token in (';', '&&', '||', '|', '&', '\n', '(', '{')
+            index += 1
+        return out
+
+    tokens = function_commands(tokens)
     for token in [*tokens, ';']:
         if token and (set(token) <= set(';&|\n()') or token in ('{', '}')):
             parts.append((words, token))
@@ -584,6 +617,21 @@ def shell_closed_operand(command: str, private_paths: list[str], open_reads: lis
             no_cd = push and '-n' in location[1:]
             next_failure = []
             for base, old, stack in bases:
+                args = [arg for arg in location[1:] if arg not in ('-n', '--')]
+                selector = args[0] if push and len(args) == 1 and re.fullmatch(r'[+-]\d+', args[0]) else None
+                if selector or (push and not args):
+                    entries = [base, *stack]
+                    index = (int(selector[1:]) if selector.startswith('+') else len(entries) - 1 - int(selector[1:])) \
+                        if selector else 1
+                    if not stack or not 0 <= index < len(entries):
+                        next_failure.append((base, old, stack))
+                        continue
+                    rotated = entries[index:] + entries[:index] if selector else [entries[1], entries[0], *entries[2:]]
+                    target = rotated[0]
+                    targets.append((base if no_cd else target, old if no_cd else base, tuple(rotated[1:])))
+                    if not no_cd and (not target or not os.path.isdir(target)):
+                        next_failure.append((base, old, stack))
+                    continue
                 if restore:
                     moved = [old]
                 elif push and len(location) == 1:
