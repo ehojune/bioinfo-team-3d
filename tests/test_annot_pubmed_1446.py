@@ -354,6 +354,33 @@ async def test_mcp_admission_refuses_fourth_send_and_keeps_partial_pages(tmp_pat
     assert len(manifest(tmp_path, result)["pages"]) == 2
 
 
+@pytest.mark.parametrize("search_failure", [False, True])
+async def test_partial_transport_failure_keeps_failed_admission_receipts(
+        tmp_path, monkeypatch, mcp_module, limited, search_failure):
+    provider = Provider(200, "short")
+    limited.ledger.limit = 100
+    limited.ledger.transient_limit = 100
+    monkeypatch.setattr(annot, "MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(annot.Http, "_pace", lambda *a: asyncio.sleep(0))
+    def respond(request):
+        if ((search_failure and request.url.path.endswith("esearch.fcgi"))
+                or (not search_failure and request.url.path.endswith("efetch.fcgi")
+                    and b"id=101" in request.content)):
+            raise httpx.ConnectError("synthetic outage", request=request)
+        return provider(request)
+    limited.provider = respond
+    result = json.loads(await mcp_module.pubmed_search("fixture"))
+    assert not result["complete"] and result["stop_reason"] == "lookup_failed"
+    assert result["fetched_count"] == (0 if search_failure else 100)
+    rows = limited.ledger.sends("req-1")
+    unanswered = [row for row in rows if row["http_status"] is None]
+    assert len(unanswered) == 3 and {r["outcome"] for r in unanswered} == {"failed"}
+    assert all(r["outcome"] == "ok" for r in rows if r["http_status"] == 200)
+    assert "eutils.ncbi.nlm.nih.gov" in limited.ledger.paused_hosts("req-1")
+    next_send = limited.ledger.admit("req-1", "later-task", "worker", "pubmed_search", "eutils.ncbi.nlm.nih.gov")
+    assert not next_send["admitted"] and next_send["reason"] == "host_paused"
+
+
 async def test_owned_parent_link_is_refused_without_touching_target(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()

@@ -14,6 +14,7 @@ the runner-owned Atlas endpoint; the staff CLI and this MCP process never receiv
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from itertools import groupby
 import json
 import os
 import time
@@ -243,8 +244,11 @@ async def _admitted(tool: str):
         outcome = "timeout" if isinstance(exc.__cause__, LookupTimeout) else "failed"
         raise
     finally:
-        if sends:
-            await _finish([[seq, status] for seq, status in sorted(sends.items())], outcome)
+        # A backend may return a partial result after catching a transport error.
+        # No HTTP response is still a failed probe, even when the tool returns normally.
+        for settled, rows in groupby(sorted(sends.items()),
+                                     key=lambda row: "failed" if row[1] is None and outcome == "ok" else outcome):
+            await _finish([[seq, status] for seq, status in rows], settled)
 
 
 async def _run(method: str, *args: object, **kwargs: object) -> str:
