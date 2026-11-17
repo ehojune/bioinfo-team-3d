@@ -113,6 +113,10 @@ test('tool reasons are deterministic and grant categories do not inherit high ri
     assert.match(toolCardReason(wrapped),/삭제/,command);
     assert.ok(decisionFacts(wrapped).some(([label,value])=>label==='위험 등급' && value==='높음'),command);
   }
+  const commentOnly={...destructive,detail:{...destructive.detail,tool_input:{command:'printf ok # comment; rm -r outputs'}}};
+  assert.doesNotMatch(toolCardReason(commentOnly),/삭제/);
+  const afterComment={...destructive,detail:{...destructive.detail,tool_input:{command:'printf ok # comment\nrm -r outputs'}}};
+  assert.match(toolCardReason(afterComment),/삭제/);
   const quoted={...destructive,detail:{...destructive.detail,tool_input:{command:"printf 'rm -r data'"}}};
   assert.match(toolCardReason(quoted),/경로를 미리 확인하지 못했습니다/);
   assert.ok(!decisionFacts(quoted).some(([label])=>label==='위험 등급'));

@@ -448,14 +448,16 @@ function explicitToolAction(value) {
   const found = new Set();
   function scan(text, depth = 0) {
     if (depth > 4) return;
-    const segments = []; let words = [], word = '', quote = '', escaped = false, started = false;
+    const segments = []; let words = [], word = '', quote = '', escaped = false, started = false, comment = false;
     const endWord = () => { if (started) words.push(word); word = ''; started = false; };
     const endSegment = () => { endWord(); if (words.length) segments.push(words); words = []; };
     for (const char of text) {
+      if (comment) { if (char === '\n') { comment = false; endSegment(); } continue; }
       if (escaped) { word += char; started = true; escaped = false; continue; }
       if (char === '\\' && quote !== "'") { escaped = true; started = true; continue; }
       if (quote) { if (char === quote) quote = ''; else word += char; started = true; continue; }
       if (char === "'" || char === '"') { quote = char; started = true; continue; }
+      if (char === '#' && !started) { comment = true; continue; }
       if (';|&\n'.includes(char)) { endSegment(); continue; }
       if (/\s/.test(char)) { endWord(); continue; }
       word += char; started = true;
