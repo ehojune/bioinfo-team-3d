@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 import posixpath
-from typing import Any, Iterator
+from typing import Any
 
 from .policy import (SHELL_TOOLS, Unresolved, _absolute, _candidate_paths, _evaluate_tool,
                      _blank_non_syntax, _inside, _norm, _private_decision, _real, _word_value, _zone_hit, evaluate_tool,
@@ -80,7 +80,11 @@ def _move_edit_targets(command: str, powershell: bool) -> tuple[list[str], bool]
                     # An option may carry its own path (`-t../out`, `-Destination:..`): not read here.
                     unknown = True
         elif name == "perl":
-            targets.extend(_perl_in_place_files(words[1:]))
+            files = _perl_in_place_files(words[1:])
+            unknown = unknown or files is None
+            targets.extend(files or [])
+    # A word the shell joins from quoted pieces (`"/tmp"/out`) is not decoded here: not read either.
+    unknown = unknown or any(re.search(r"[\"']" if powershell else r"[\"'\\]", target) for target in targets)
     # Every mention must be a parsed mover command (`mv a b; xargs mv` leaves one unparsed).
     return targets, unknown or mentioned > parsed
 
@@ -94,9 +98,12 @@ def _plain_mover_option(word: str, powershell: bool) -> bool:
                         "--no-target-directory", "--strip-trailing-slashes", "--target-directory"})
 
 
-def _perl_in_place_files(words: list[str]) -> Iterator[str]:
-    """File operands of `perl -i` (`-pi -e CODE FILE...`, `-i.bak SCRIPT FILE...`)."""
-    in_place = code_given = skip = ended = False
+def _perl_in_place_files(words: list[str]) -> list[str] | None:
+    """File operands of `perl -i` (`-pi -e CODE FILE...`, `-i.bak SCRIPT FILE...`); [] without -i.
+
+    Only switches that take no value, `-i[extension]` and a separate `-e CODE` are read. Any other
+    option shape (`-e'code'`, `-I dir`, `-Mmod`) could shift which word is a file: None, unresolved."""
+    in_place = code_given = skip = ended = unknown = False
     operands: list[str] = []
     for word in words:
         if skip:
@@ -109,13 +116,19 @@ def _perl_in_place_files(words: list[str]) -> Iterator[str]:
             letters = word[1:]
             if "i" in letters:
                 in_place = True
+                extension = letters[letters.index("i") + 1:]
                 letters = letters[:letters.index("i")]  # the rest is the backup extension
-            if letters.endswith(("e", "E")):
+                unknown = unknown or not re.fullmatch(r"[\w.~-]*", extension)
+            if not re.fullmatch(r"[plnaswtTWX]*[eE]?", letters):
+                unknown = True
+            elif letters.endswith(("e", "E")):
                 code_given = skip = True
             continue
         operands.append(word)
-    if in_place:
-        yield from (operands if code_given else operands[1:])
+    if not in_place:
+        # An unread option may have taken a value (`-I lib`), hiding a later `-i` among the operands.
+        return None if unknown and any(re.match(r"-\w*i", word) for word in words) else []
+    return None if unknown else (operands if code_given else operands[1:])
 
 
 def _own_tool_results(workdir: str, open_reads: tuple[str, ...]) -> list[str]:
@@ -274,7 +287,7 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     if unknown_write:
         return excluded("unresolved_directory_change")
     for target in targets:
-        if re.search(r"[$`*?%]", target):
+        if re.search(r"[$`*?%\"']", target):  # unexpanded or partly quoted: not read here
             unknown_write = True
             continue
         for base in ([workdir, *(bases or [])] if not _absolute(target) else [workdir]):

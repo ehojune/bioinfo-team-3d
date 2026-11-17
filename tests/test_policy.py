@@ -156,6 +156,7 @@ def _grant_category(work, command, trace=None, **kw):
     ("echo x > a.txt; sed -i s/x/y/ *.txt", "unresolved_path", None),
     ("echo x > a.txt; mv -t../outside a.txt", "unresolved_path", None),
     ("echo x > a.txt; mv -S.bak a.txt b.txt", "unresolved_path", None),
+    ('echo x > a.txt; mv a.txt "/tmp"/out', "unresolved_path", None),
     # Resolved outside the task folder, or a delete: still an individual card.
     ("echo x > a.txt; mv a.txt ../b.txt", None, "outside_write_target"),
     ("echo x > a.txt; mv ../b.txt a.txt", None, "outside_write_target"),
@@ -176,6 +177,28 @@ def test_request_grant_move_and_in_place_edit(tmp_path, command, category, reaso
     trace = []
     assert _grant_category(work, command, trace) == category
     assert trace == ([reason] if reason else [])
+
+
+@pytest.mark.parametrize("command, targets, unknown", [
+    ("mv a.txt b.txt", ["a.txt", "b.txt"], False),
+    ("mv -t out a.txt", ["out", "a.txt"], False),
+    ("perl -pi -e s/x/y/ a.txt", ["a.txt"], False),
+    ("perl -i.bak script.pl a.txt", ["a.txt"], False),
+    ("perl -e s/x/y/ a.txt", [], False),
+    # Shapes whose operands are not read stay unresolved instead of dropping a file.
+    ("mv -t../out a.txt", ["a.txt"], True),
+    ('mv a.txt "/tmp"/out', None, True),
+    ("perl -pi -e's/x/y/' /tmp/out", [], True),
+    ("perl -I lib -pi -e s/x/y/ /tmp/out", [], True),
+    ("ls | xargs mv", [], True),
+])
+def test_request_grant_mover_operands(command, targets, unknown):
+    from labhq.approval_grants import _move_edit_targets
+
+    found, unresolved = _move_edit_targets(command, False)
+    assert unresolved is unknown
+    if targets is not None:
+        assert found == targets
 
 
 @pytest.mark.parametrize("command, category, reason", [
