@@ -503,6 +503,9 @@ function explicitToolAction(value) {
   return [...found];
 }
 export function toolCardReason(value) {
+  const lines = String(value.pi_reason || '').trim().split(/\n/);
+  const supplied = lines.filter(line => !/^(?:작업 목적|논문 ‘|위험 등급:)/.test(line.trim())).join('\n').trim();
+  if (supplied) return supplied;
   const d = value.detail || {}, policy = String(d.policy_reason || '').toLowerCase();
   const category = d.grant_category;
   const action = explicitToolAction(value);
@@ -512,11 +515,11 @@ export function toolCardReason(value) {
   if (d.internal_row_output === true) return withAction('내부 자료 원본 행이 노출될 수 있어 확인이 필요합니다.');
   if (/registry|레지스트리/.test(policy)) return withAction('레지스트리의 계정 정보에 접근할 수 있어 확인이 필요합니다.');
   if (/restricted|data_zones|통제|closed|credential/.test(policy)) return withAction('닫힌 경로나 자격 증명 경로가 포함되어 확인이 필요합니다.');
+  if (category === 'workspace') return withAction('작업 폴더에서 도구를 실행하려 합니다.');
   if ((/personal path/.test(policy) || (!category && /private_paths/.test(policy))) && !/ambiguous/.test(policy)) return withAction('다른 개인 경로에 접근할 수 있어 확인이 필요합니다.');
   if (/outside/.test(policy) && /write/.test(policy)) return withAction('작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.');
   if (actionText) return category === 'unresolved_path' ? withAction('경로를 미리 확인하지 못했습니다.') : actionText;
   if (category === 'internal_read' || /internal data zone/.test(policy)) return '내부 자료를 읽으려 합니다. 출력 범위를 확인해 주세요.';
-  if (category === 'workspace') return '작업 폴더에서 도구를 실행하려 합니다.';
   if (category === 'unresolved_path') return '경로를 미리 확인하지 못했습니다.';
   if (/recursive|delete|삭제|\b(?:rm|rmdir|unlink|remove-item)\b/.test(policy)) return '파일이나 폴더 삭제가 포함되어 확인이 필요합니다.';
   if (/network|네트워크|\b(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)\b/.test(policy)) return '네트워크 통신이 포함되어 확인이 필요합니다.';
@@ -528,12 +531,9 @@ export function toolCardReason(value) {
 export function toolCardExplanation(value) {
   const supplied = String(value.pi_reason || '').trim();
   const lines = supplied.split(/\n+/), first = lines[0] || '';
-  // The producer puts task purpose and step on the first line. Rules and grades
-  // can be stale after classification, so render those from current evidence.
+  // The server provides the purpose, rule and risk on separate lines.
   const structured = /^(?:작업 목적|논문 ‘)/.test(first);
-  const safeLegacy = lines.length === 1 && /[가-힣]/.test(first) && !/[A-Za-z_]/.test(first)
-    && !/높음|개인 경로|자격 증명|통제|닫힌 경로/.test(first);
-  const context = structured || safeLegacy ? plainPiText(first) : '';
+  const context = structured ? plainPiText(first) : '';
   return [context, toolCardReason(value)].filter(Boolean).join('\n');
 }
 export function approvalSummaryText(request, summary) {
@@ -787,10 +787,7 @@ export function decisionFacts(value, who = '') {
     case 'research_continue': return [['이번 차수', text(d.round)], ['차수 상한', text(d.limit)]];
     case 'resume': return [['남은 단계', Array.isArray(d.steps) ? d.steps.join(', ') || (d.has_plan === false ? '요청 전체' : '없음') : missing], ['접수', receivedAt(d.created_at) || missing]];
     case 'tool_permission': {
-      const reason = toolCardReason(value);
-      const evidence = /닫힌 경로|다른 개인 경로|삭제|네트워크|작업 폴더 밖|스케줄러|원본 행|레지스트리/.test(reason);
-      let grade = String(value.pi_reason || '').match(/(?:^|\n)위험 등급:\s*(높음|중간|낮음|미확인)(?=\s|·|\.|$)/)?.[1];
-      if (grade === '높음' && !evidence) grade = null;
+      const grade = String(value.pi_reason || '').match(/(?:^|\n)위험 등급:\s*([^\n]+)/)?.[1];
       return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing], ...(grade ? [['위험 등급', grade]] : [])];
     }
     case 'recruit': return [['제안 직원', who || missing], ['출처', d.repo || value.repo ? '저장소 · 자세히' : '자세히에서 확인']];
