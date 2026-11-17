@@ -253,6 +253,7 @@ async def test_runner_collects_unlisted_annotation_and_stages_it_for_consumer(tm
     from tests.test_tool_card_explain import _system_commands
 
     settings = _runner_settings(tmp_path, None)
+    settings.runner.output_hash_max_bytes = 1024  # the unlisted annotation exceeds observation, not input limits
     _system_commands(monkeypatch)
     runner, _ = _capture_runner(settings, monkeypatch)
     payload = json.dumps({"results": [{"id": i, "abstract": "가상 문헌 초록 " * 300}
