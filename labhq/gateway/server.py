@@ -2286,61 +2286,24 @@ class Hub:
         return self._approval_locks.setdefault(aid, asyncio.Lock())
 
     def _grant_lock(self, rid: str):
-        if not hasattr(self, "_grant_locks"):
-            self._grant_locks = WeakValueDictionary()
-        return self._grant_locks.setdefault(rid, asyncio.Lock())
+        from ..approval_grants import _grant_lock
+        return _grant_lock(self, rid)
 
-    def _grant_category(self, entry: dict) -> str | None:
-        card = entry.get("approval") or {}
-        detail = card.get("detail") or {}
-        rid, tid, origin = card.get("request_id"), card.get("task_id"), entry.get("origin")
-        category = detail.get("grant_category")
-        request = self.requests.get(rid) or {}
-        task = self.store.get("task", tid) if tid else None
-        process = self.runner_processes.get(origin)
-        if (card.get("kind") != "tool_permission" or category not in {"workspace", "unresolved_path", "internal_read"}
-                or not origin or not process or detail.get("grant_process") != process
-                or entry.get("origin_process") != process
-                or self.runner_capabilities.get(origin, {}).get("approval_grants") != 1
-                or not is_active_request(request.get("status")) or request.get("cancelling")
-                or not task or task.get("request_id") != rid or task.get("runner_id") != origin
-                or (task.get("payload") or {}).get("agent_id") != card.get("agent_id")
-                or task.get("completed") or task.get("abandoned") or self.store.get("task_cancel", tid)):
-            return None
-        return category
+    def _grant_category(self, entry: dict):
+        from ..approval_grants import _grant_category
+        return _grant_category(self, entry)
 
-    def _grant_ready(self, rid: str, category: str) -> bool:
-        return self._grant_key(rid, category) is not None
+    def _grant_ready(self, rid: str, category: str):
+        from ..approval_grants import _grant_ready
+        return _grant_ready(self, rid, category)
 
-    def _grant_key(self, rid: str, category: str) -> str | None:
-        """The confirmed grant that covers `category`: its own, or for a proven task-folder write the broader
-        unresolved-path grant (#1445). A task-folder grant never covers an unresolved path."""
-        grants = self.store.get("approval_grants", rid) or {}
-        for key in ((category, "unresolved_path") if category == "workspace" else (category,)):
-            decision = self.store.get("approval_decision", grants[key]) if grants.get(key) else None
-            if decision and decision.get("approved") and not decision.get("grant_pending"):
-                return key
-        return None
+    def _grant_key(self, rid: str, category: str):
+        from ..approval_grants import _grant_key
+        return _grant_key(self, rid, category)
 
-    def approval_summary(self, rid: str) -> dict:
-        decisions = self.store.all("approval_decision")
-        confirmed = {aid: d for aid, d in decisions.items()
-                     if (d.get("approval") or {}).get("request_id") == rid
-                     and d.get("approved") is True and not d.get("grant_pending")}
-        granted = {d["grant_category"] for aid, d in confirmed.items()
-                   if d.get("automatic") is False and d.get("grant_source") == aid
-                   and isinstance(d.get("grant_category"), str)}
-        request = self.store.get("request", rid) or {}
-        active = []
-        if is_active_request(request.get("status")) and not request.get("cancelling"):
-            for category, source in (self.store.get("approval_grants", rid) or {}).items():
-                decision = confirmed.get(source) or {}
-                if (category in granted and decision.get("grant_category") == category
-                        and decision.get("automatic") is False and decision.get("grant_source") == source):
-                    active.append(category)
-        return {"request_id": rid,
-                "automatic_approved_count": sum(d.get("automatic") is True for d in confirmed.values()),
-                "granted_categories": sorted(granted), "active_grant_categories": sorted(active)}
+    def approval_summary(self, rid: str):
+        from ..approval_grants import approval_summary
+        return approval_summary(self, rid)
 
     async def _approval_operation(self, aid: str, operation):
         """Serialize a card's lifecycle and settle it even under repeated cancellation."""
@@ -4764,8 +4727,10 @@ class Hub:
                 if prior.get("origin") == runner_id:
                     await self.flush_decisions(runner_id)
                     prior = self.store.get("approval_decision", a["id"])
+                from ..approval_grants import automatic_audit
                 msg = {**msg, "type": "approval.resolved", "data": {"id": a["id"],
-                    **{k: prior[k] for k in ("approved", "note", "state", "automatic", "grant_category", "grant_source") if k in prior}}}
+                    **{k: prior[k] for k in ("approved", "note", "state", "automatic", "grant_category", "grant_source") if k in prior},
+                    **automatic_audit(prior, self.store)}}
             elif _ended_by_cancel(self.requests.get(a.get("request_id")) or {}):
                 await self.close_approval(a["id"], "요청 취소로 닫힘")
                 msg = {**msg, "type": "approval.expired", "data": {"id": a["id"], "note": "요청 취소로 닫힘"}}
@@ -4781,8 +4746,10 @@ class Hub:
                         pass  # a cancellation, timeout, or grant expiry won the race
                     else:
                         prior = self.store.get("approval_decision", a["id"])
+                        from ..approval_grants import automatic_audit
                         msg = {**msg, "type": "approval.resolved", "data": {"id": a["id"],
-                            **{k: prior[k] for k in ("approved", "note", "automatic", "grant_category", "grant_source") if k in prior}}}
+                            **{k: prior[k] for k in ("approved", "note", "automatic", "grant_category", "grant_source") if k in prior},
+                            **automatic_audit(prior, self.store)}}
         elif typ == "approval.timed_out":
             aid = str((msg.get("data") or {}).get("id") or "")
             decision = await self._timeout_approval(aid, runner_id=runner_id)
@@ -5868,40 +5835,9 @@ class Hub:
         async def commit_and_deliver():
             nonlocal approved, note
             if category:
-                rid = entry["approval"]["request_id"]
-                async with self._grant_lock(rid):
-                    if self._grant_category(entry) != category:
-                        raise ValueError("request or runner is no longer eligible")
-                    key = category if grant_for_request else (self._grant_key(rid, category) or category)
-                    source = await self.store.acommit_grant_approval(
-                        approval_id, decision, delivery, rid, key, create=grant_for_request)
-                    chosen.update(grant_category=key, grant_source=source, automatic=grant_auto)
-                    eligible = self._grant_category(entry) == category
-                    if eligible:
-                        try:
-                            await self.store.afinalize_grant_approval(approval_id, rid)
-                        except ValueError:
-                            eligible = False
-                    if not eligible or self._grant_category(entry) != category:
-                        # Cancel may have marked the request while the durable writer was busy.
-                        # Do not release the just-recorded yes to its runner.
-                        approved, note = False, "request ended"
-                        await self.store.areject_grant_approval(approval_id,
-                            {**decision, **chosen, "approved": False, "note": note},
-                            {**delivery, "approved": False, "note": note},
-                            rid, category, revoke=grant_for_request)
-                    self.approvals.pop(approval_id, None)
-                    if entry["origin"] in self.runners:
-                        try:
-                            sent_approved = await self._send_decision(entry["origin"], approval_id)
-                            if approved and sent_approved is False:
-                                approved, note = False, "request ended"
-                                await self.store.areject_grant_approval(approval_id,
-                                    {**decision, **chosen, "approved": False, "note": note},
-                                    {**delivery, "approved": False, "note": note},
-                                    rid, category, revoke=grant_for_request)
-                        except RunnerUnavailable:
-                            pass
+                from ..approval_grants import commit_grant
+                approved, note = await commit_grant(self, approval_id, entry, category, decision, delivery,
+                                                    chosen, grant_for_request, grant_auto, approved, note)
             else:
                 await self.store.acommit_approval(approval_id, decision, delivery)
             self.approvals.pop(approval_id, None)
