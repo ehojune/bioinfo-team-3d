@@ -233,7 +233,11 @@ class ClaudeCodeAdapter(AgentAdapter):
     def engine_env(self) -> dict[str, str]:
         # Claude Code documents this as disabling run_in_background, automatic backgrounding and Ctrl+B.
         # A PI-supplied engines.claude_code.env value remains authoritative.
-        return {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1", **super().engine_env()}
+        # Bash returns to the task folder after every command, so a `cd` does not carry into the next one.
+        # The approval gate judges each command from the task folder; this keeps that assumption true,
+        # so it is set after the PI's values (#1445).
+        return {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1", **super().engine_env(),
+                "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR": "1"}
 
     def _plugin_dirs(self, ctx: RunContext, env: dict[str, str]) -> list[str]:
         directories = [expand_env({"dir": raw}, env)["dir"] for raw in ctx.agent.plugin_dirs]

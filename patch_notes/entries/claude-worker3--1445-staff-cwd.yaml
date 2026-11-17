@@ -1,0 +1,6 @@
+pr: 1461
+rows:
+  - sha: 'f29898c'
+    at: 2026-11-18 00:50
+    text: Claude 직원 환경에 CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1을 넣어 Bash가 명령마다 작업 폴더로 돌아오게 했다. 승인 판정이 가정하는 현재 폴더(작업 폴더)와 실제 셸이 어긋나지 않는다. PI 설정 값보다 뒤에 둬 끌 수 없다
+    summary: Claude 직원의 셸은 명령마다 작업 폴더에서 시작해 승인 판정과 실제 실행 위치가 같습니다.
