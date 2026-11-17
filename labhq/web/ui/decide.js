@@ -622,7 +622,7 @@ function createCard(item, options) {
   const actions = add(body, 'div', '', 'acts');
   const approve = add(actions, 'button', '', 'btn go');
   approve.type = 'button';
-  const grant = add(actions, 'button', '이 요청에서 같은 부류 허용', 'btn');
+  const grant = add(actions, 'button', options.presentation === 'journal' ? '이 요청에서 같은 부류 허용' : '', 'btn');
   grant.type = 'button'; grant.hidden = true; grant.dataset.act = 'grant';
   const grantExplanation = add(body, 'p', '', 'decision-meta'); grantExplanation.hidden = true;
   const revise = add(actions, 'button', '', 'btn');  // CP2 evidence review only
