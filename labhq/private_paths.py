@@ -497,6 +497,35 @@ def _managed_operand(value: str, base: str, private: list[str], reads: list[str]
     return True
 
 
+def shell_closed_operand(command: str, private_paths: list[str], open_reads: list[str],
+                         workdir: str, home: str | None,
+                         environ: Mapping[str, str] | None) -> bool:
+    """Find closed operands in unknown syntax; this never approves the command."""
+    from .policy import MAX_RESOLVED_CANDIDATES, _scan_path_text
+
+    home = home or host_home()
+    environ = os.environ if environ is None else environ
+    bases = shell_cd_bases(command, workdir, home, environ)
+    if bases is None:
+        return False  # unproven scope, not evidence of a personal file
+    candidates = list(dict.fromkeys(_scan_path_text(command).candidates))
+    if len(candidates) > MAX_RESOLVED_CANDIDATES:
+        return False
+    for value in candidates:
+        expanded = _expand_dir(value, home, environ)
+        if expanded is None:
+            continue
+        for base in dict.fromkeys([workdir, *bases]):
+            raw = expanded if os.path.isabs(expanded) else os.path.join(base, expanded)
+            try:
+                targets = (path_field_text(expanded, base), resolved_read_path(raw))
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if any(not _managed_operand(target, base, private_paths, open_reads) for target in targets):
+                return True
+    return False
+
+
 def holds_open_read(private: str, open_reads: Iterable[str]) -> bool:
     """Whether the private path `private` contains a folder this task may read."""
     return any(inside_any(folder, [private]) for folder in open_reads if folder)

@@ -44,3 +44,9 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - 미확인 카드에는 읽기 범위 확인 사유를 쓴다. 삭제·통제 자료 등 별도로 확인한 위험은 낮추지 않는다.
 - 회귀는 자기 task·staged inputs 읽기 허용과 개인 폴더·credential·형제 task·private 자식·link·입력 쓰기 보호를 함께 확인한다.
 - 이 수정은 승인 문법을 넓히지 않는다. 위 복합 명령의 카드도 남으므로 실제 카드 수 감소·실행 A 재생·배포 효과는 별도 확인이 필요하다. pi_display 문장 수 제한도 바꾸지 않았다.
+
+## r3 리뷰 수리
+
+- P1: private root 아래 읽기 예외가 하나라도 있으면 root 전체를 경고 근거에서 빼던 결함을 수정했다. 미확인 문법에서도 각 경로의 표기·실제 위치를 대조해 열린 하위 폴더만 예외로 둔다.
+- 절대경로·home·상대경로 × settings·history·다른 task·plugin·project 15건을 추가했다. 관련 4개 시험 파일은 717 passed, 10 skipped.
+- safety 안내 길이: 한국어 20,168→20,293자, 영어 36,437→36,711자. 각 언어에 한 항목만 추가했다.

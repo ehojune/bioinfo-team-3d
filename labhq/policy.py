@@ -2644,10 +2644,14 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
                 return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)' + input_hint)
             # Unknown syntax still asks. A managed parent match alone does not prove access to PI files.
             # Keep explicit closed-path and registry evidence; do not remove the parent from the actual guards.
+            from .private_paths import shell_closed_operand
+
             closed = [p for p in private_paths if not holds_open_read(p, open_reads)]
             if not (mentioned_private_path(cmd, closed, home, environ)
                     or touches_resolved({'command': cmd}, closed, workdir=workdir)
-                    or _cd_reaches_private(cmd, closed, workdir, home, environ)):
+                    or _cd_reaches_private(cmd, closed, workdir, home, environ)
+                    or (workdir and shell_closed_operand(cmd, private_paths, open_reads,
+                                                         workdir, home, environ))):
                 return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); '
                                       'confirmation required' + input_hint)
         if private_paths and mentioned_private_path(cmd, private_paths, home, environ):

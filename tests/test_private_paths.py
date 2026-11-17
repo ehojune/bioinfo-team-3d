@@ -104,6 +104,36 @@ def test_request_unknown_syntax_keeps_explicit_personal_evidence(request_paths_1
     assert 'PI personal path' in decision.reason
 
 
+@pytest.mark.parametrize('location', ['settings', 'history', 'sibling', 'plugin', 'project'])
+@pytest.mark.parametrize('spelling', ['absolute', 'home', 'relative'])
+def test_unknown_read_preserves_private_parent_evidence(tmp_path, monkeypatch, location, spelling):
+    from tests.test_tool_card_explain import _system_commands
+
+    _system_commands(monkeypatch)
+    config = tmp_path / '.claude'
+    task = tmp_path / 'task'
+    plugin = config / 'plugins' / 'skill'
+    project = config / 'projects' / 'current'
+    for folder in (task, plugin, project):
+        folder.mkdir(parents=True)
+    target = {'settings': config / 'settings.json', 'history': config / 'history.jsonl',
+              'sibling': config / 'projects' / 'other' / 'result.txt',
+              'plugin': plugin / 'guide.md', 'project': project / 'result.txt'}[location]
+    operand = {'absolute': target.as_posix(), 'home': '~/' + target.relative_to(tmp_path).as_posix(),
+               'relative': '../' + target.relative_to(tmp_path).as_posix()}[spelling]
+    decision = evaluate_tool('Bash', {'command': f'wc -l "{operand}"'}, PolicySettings(),
+                             allowed_roots=[str(task)], workdir=str(task),
+                             private_enabled=True, private_paths=[str(config)],
+                             private_open_reads=[str(task), str(plugin), str(project)],
+                             home=str(tmp_path), environ={})
+    assert decision.action == 'ask'
+    if location in ('plugin', 'project'):
+        assert 'read scope is ambiguous' in decision.reason
+    else:
+        assert 'personal path' in decision.reason
+        assert 'ambiguous' not in decision.reason
+
+
 def test_request_unknown_syntax_still_checks_registry(request_paths_1456):
     decision = request_gate_1456(request_paths_1456, 'Bash', {'command': 'reg query HKCU/Environment'})
     assert decision.action == 'ask'
