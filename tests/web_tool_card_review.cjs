@@ -88,3 +88,73 @@ test('only recognized server grant categories on tool cards expose eligibility',
   assert.equal(grantCategory({...card,kind:'budget'}),null);
   assert.equal(grantCategory({...card,detail:{grant_category:'unknown'}}),null);
 });
+
+test('tool reasons are deterministic and grant categories do not inherit high risk', async () => {
+  const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
+  const {toolCardReason,decisionFacts}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  for (const [category, expected] of [['workspace','작업 폴더'],['unresolved_path','경로를 미리 확인하지 못했습니다'],['internal_read','내부 자료']]) {
+    const card={kind:'tool_permission',detail:{grant_category:category,tool_name:'Bash',policy_reason:'Bash read scope is ambiguous (policy.private_paths)'},pi_reason:'위험 등급: 높음 · 개인 정보'};
+    assert.ok(toolCardReason(card).includes(expected));
+    if (category !== 'internal_read') assert.ok(!decisionFacts(card).some(([label])=>label==='위험 등급'));
+  }
+  for (const [reason, text] of [['restricted zone','닫힌 경로'],['PI personal path (policy.private_paths)','다른 개인 경로'],['recursive delete','삭제'],['network access','네트워크'],['write outside workspace','작업 폴더 밖'],['scheduler submit','스케줄러']])
+    assert.ok(toolCardReason({detail:{policy_reason:reason}}).includes(text),reason);
+  assert.ok(decisionFacts({kind:'tool_permission',detail:{policy_reason:'restricted zone'},pi_reason:'위험 등급: 높음 · 확인'}).some(([label,value])=>label==='위험 등급' && value==='높음'));
+  assert.ok(!decisionFacts({kind:'tool_permission',detail:{},pi_reason:'위험 등급: 높음 · 확인'}).some(([label])=>label==='위험 등급'));
+  const registry={kind:'tool_permission',detail:{policy_reason:'registry access requires approval',tool_input:{command:'reg query HKCU\\Environment'}},pi_reason:'위험 등급: 높음 · 계정 정보'};
+  assert.match(toolCardReason(registry),/레지스트리/);
+  assert.ok(decisionFacts(registry).some(([label,value])=>label==='위험 등급' && value==='높음'));
+  const destructive={kind:'tool_permission',detail:{grant_category:'unresolved_path',tool_input:{command:'cd outputs && rm -r data'},policy_reason:'Bash read scope is ambiguous (policy.private_paths)'},pi_reason:'위험 등급: 높음 · 삭제'};
+  assert.match(toolCardReason(destructive),/삭제/);
+  assert.ok(decisionFacts(destructive).some(([label,value])=>label==='위험 등급' && value==='높음'));
+  const mixed={...destructive,detail:{...destructive.detail,policy_reason:'Bash reaches a closed or credential path'}};
+  assert.match(toolCardReason(mixed),/닫힌 경로/); assert.match(toolCardReason(mixed),/삭제/);
+  const compound={...destructive,detail:{...destructive.detail,tool_input:{command:'curl https://example.com && rm -r data; sbatch job.sh'}}};
+  for (const reason of ['삭제','네트워크','스케줄러']) assert.ok(toolCardReason(compound).includes(reason));
+  for (const command of ['sudo -u root rm -r data','env rm -r data','bash -c "rm -r data"','sudo env bash -c "rm -r data"']) {
+    const wrapped={...destructive,detail:{...destructive.detail,tool_input:{command}}};
+    assert.match(toolCardReason(wrapped),/삭제/,command);
+    assert.ok(decisionFacts(wrapped).some(([label,value])=>label==='위험 등급' && value==='높음'),command);
+  }
+  for (const command of ['if test -d outputs; then rm -r outputs; fi','(rm -r outputs)','! rm -r outputs','while true; do rm -r outputs; done']) {
+    const controlled={...destructive,detail:{...destructive.detail,tool_input:{command}}};
+    assert.match(toolCardReason(controlled),/삭제/,command);
+    assert.ok(decisionFacts(controlled).some(([label,value])=>label==='위험 등급' && value==='높음'),command);
+  }
+  for (const command of ['echo `rm -r outputs`','echo "$(rm -r outputs)"']) {
+    const substitution={...destructive,detail:{...destructive.detail,tool_input:{command}}};
+    assert.match(toolCardReason(substitution),/삭제/,command);
+    assert.ok(decisionFacts(substitution).some(([label,value])=>label==='위험 등급' && value==='높음'),command);
+  }
+  assert.doesNotMatch(toolCardReason({...destructive,detail:{...destructive.detail,tool_input:{command:"echo '$(rm -r outputs)'"}}}),/삭제/);
+  const commentOnly={...destructive,detail:{...destructive.detail,tool_input:{command:'printf ok # comment; rm -r outputs'}}};
+  assert.doesNotMatch(toolCardReason(commentOnly),/삭제/);
+  const afterComment={...destructive,detail:{...destructive.detail,tool_input:{command:'printf ok # comment\nrm -r outputs'}}};
+  assert.match(toolCardReason(afterComment),/삭제/);
+  const quoted={...destructive,detail:{...destructive.detail,tool_input:{command:"printf 'rm -r data'"}}};
+  assert.match(toolCardReason(quoted),/경로를 미리 확인하지 못했습니다/);
+  assert.ok(!decisionFacts(quoted).some(([label])=>label==='위험 등급'));
+  for (const [command,reason] of [['curl https://example.com','네트워크'],['sbatch job.sh','스케줄러'],['mv a b','작업 폴더'],['sed -i s/a/b/ file','작업 폴더']]) {
+    assert.ok(toolCardReason({detail:{grant_category:'workspace',tool_input:{command}}}).includes(reason),command);
+  }
+});
+
+test('review cards show the corresponding count including zero and hide unavailable totals', async () => {
+  class Element {
+    constructor(tag) { this.tagName=tag; this.children=[]; this.dataset={}; this._text=''; }
+    set textContent(v) { this._text=String(v); this.children=[]; }
+    get textContent() { return this._text+this.children.map(c=>c.textContent).join(''); }
+    append(...nodes) { this.children.push(...nodes); }
+    replaceChildren(...nodes) { this.children=nodes; this._text=''; }
+    setAttribute() {}
+  }
+  global.document={createElement:tag=>new Element(tag)};
+  global.LabHQState={needsPiReview:()=>true,needsStorage:()=>false,reviewLabel:()=> '검토 대기'};
+  const source=fs.readFileSync(path.join(root,'ui/decide.js'),'utf8');
+  const {syncReviewCards}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const parent=new Element('div'), requests=[{id:'a',status:'done'},{id:'b',status:'done'},{id:'c',status:'done'}];
+  const summaries=new Map([['a',{request_id:'a',automatic_approved_count:0}],['b',{request_id:'b',automatic_approved_count:4}],['c',{request_id:'other',automatic_approved_count:5}]]);
+  const rows=syncReviewCards(parent,requests,{presentation:'journal',approvalSummaries:summaries});
+  assert.match(rows[0].textContent,/자동 승인0건/); assert.match(rows[1].textContent,/자동 승인4건/);
+  assert.doesNotMatch(rows[2].textContent,/자동 승인/);
+});

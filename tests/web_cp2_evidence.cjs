@@ -105,6 +105,31 @@ test('journal keeps the tool risk grade visible even when the reason is summariz
   assert.doesNotMatch(row._decisionParts.facts.textContent,/위험 등급/);
 });
 
+test('failed tool translation stays hidden and raw policy reason stays in details',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const card={id:'tool-failed',kind:'tool_permission',request_id:'r',summary:'English source',pi_summary:'현재 작업 폴더: 파일 목록 보기.',pi_display:{status:'failed'},
+    pi_reason:'위험 등급: 높음 · 개인 경로',detail:{tool_name:'Bash',grant_category:'unresolved_path',policy_reason:'Bash read scope is ambiguous (policy.private_paths)'}};
+  const [row]=decide.syncDecisionCards(container,[card],[],{presentation:'journal'});
+  const p=row._decisionParts;
+  assert.match(p.reason.textContent,/경로를 미리 확인하지 못했습니다/);
+  assert.doesNotMatch(p.summary.textContent,/번역 못 함|English source/);
+  assert.match(p.summary.textContent,/파일 목록 보기/);
+  assert.doesNotMatch(p.facts.textContent,/위험 등급/);
+  assert.match(p.detail.textContent,/Bash read scope is ambiguous/);
+  decide.syncDecisionCards(container,[{...card,pi_display:{status:'translated',text:'분석 코드를 실행하려 합니다.'}}],[],{presentation:'journal'});
+  assert.match(p.summary.textContent,/분석 코드를 실행하려 합니다/);
+});
+
+test('tool card retains purpose and step but replaces a stale ambiguous-path warning',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const card={id:'tool-context',kind:'tool_permission',request_id:'r',pi_reason:'작업 목적: 비교 분석. 단계: s2.\n걸린 규칙: PI 개인 경로 보호.\n위험 등급: 높음 · 개인 정보',
+    detail:{tool_name:'Bash',grant_category:'unresolved_path',policy_reason:'Bash read scope is ambiguous (policy.private_paths)'}};
+  const [row]=decide.syncDecisionCards(container,[card],[],{presentation:'journal'});
+  assert.match(row._decisionParts.reason.textContent,/작업 목적: 비교 분석.*단계: s2/);
+  assert.match(row._decisionParts.reason.textContent,/경로를 미리 확인하지 못했습니다/);
+  assert.doesNotMatch(row._decisionParts.reason.textContent,/PI 개인 경로|위험 등급: 높음/);
+});
+
 test('other approvals keep two buttons and send no choice',async()=>{
   const decide=await modulePromise,container=new Element(),sent=[];
   const [row]=decide.syncDecisionCards(container,[{id:'t',kind:'tool_permission',summary:'Bash',detail:{tool_name:'Bash'}}],[],

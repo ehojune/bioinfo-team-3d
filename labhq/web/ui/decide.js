@@ -439,6 +439,103 @@ export function grantCategory(approval) {
     ? approval.detail.grant_category : null;
 }
 export function grantCategoryLabel(category) { return GRANT_CATEGORIES[category] || '알 수 없는 부류'; }
+function explicitToolAction(value) {
+  const d = value.detail || {};
+  let input = d.tool_input ?? d.input ?? {};
+  if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = {}; } }
+  const command = typeof input?.command === 'string' ? input.command : '';
+  // Parse only executable positions; quoted arguments to echo/printf are not commands.
+  const found = new Set();
+  function scan(text, depth = 0) {
+    if (depth > 4) return;
+    const segments = []; let words = [], word = '', quote = '', escaped = false, started = false, comment = false;
+    const endWord = () => { if (started) words.push(word); word = ''; started = false; };
+    const endSegment = () => { endWord(); if (words.length) segments.push(words); words = []; };
+    for (let pos = 0; pos < text.length; pos++) {
+      const char = text[pos];
+      if (comment) { if (char === '\n') { comment = false; endSegment(); } continue; }
+      if (escaped) { word += char; started = true; escaped = false; continue; }
+      if (char === '\\' && quote !== "'") { escaped = true; started = true; continue; }
+      if (char === '`' && quote !== "'") {
+        let end = pos + 1;
+        while (end < text.length && (text[end] !== '`' || text[end - 1] === '\\')) end++;
+        if (end < text.length) { scan(text.slice(pos + 1, end), depth + 1); pos = end; word += '__substitution__'; started = true; continue; }
+      }
+      if (char === '$' && text[pos + 1] === '(' && quote !== "'") {
+        let end = pos + 2, level = 1;
+        for (; end < text.length && level; end++) { if (text[end] === '(') level++; else if (text[end] === ')') level--; }
+        if (!level) { scan(text.slice(pos + 2, end - 1), depth + 1); pos = end - 1; word += '__substitution__'; started = true; continue; }
+      }
+      if (quote) { if (char === quote) quote = ''; else word += char; started = true; continue; }
+      if (char === "'" || char === '"') { quote = char; started = true; continue; }
+      if (char === '#' && !started) { comment = true; continue; }
+      if (';|&\n()'.includes(char)) { endSegment(); continue; }
+      if (/\s/.test(char)) { endWord(); continue; }
+      word += char; started = true;
+    }
+    endSegment();
+    for (const parts of segments) {
+      let i = 0;
+      while (/^(?:if|then|else|elif|while|until|do|!|\{|time)$/.test(parts[i] || '') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i] || '')) i++;
+      while (i < parts.length) {
+        const exe = parts[i++].split(/[\\/]/).pop().toLowerCase();
+        if (exe === 'sudo' || exe === 'env') {
+          while (i < parts.length && (parts[i].startsWith('-') || (exe === 'env' && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i])))) {
+            const option = parts[i++];
+            if ((exe === 'sudo' && ['-u','-g','-h','-p','-C','-T','--user','--group','--host'].includes(option)) || (exe === 'env' && ['-u','--unset','-C','--chdir'].includes(option))) i++;
+          }
+          continue;
+        }
+        if (['bash','sh','zsh','dash'].includes(exe)) {
+          while (i < parts.length && parts[i].startsWith('-')) {
+            const flag = parts[i++];
+            if (/^-\w*c\w*$/.test(flag) && parts[i] != null) { scan(parts[i], depth + 1); break; }
+          }
+        }
+        if (/^(?:rm|rmdir|unlink|remove-item|del|erase)(?:\.exe)?$/.test(exe)) found.add('delete');
+        if (/^(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)(?:\.exe)?$/.test(exe)) found.add('network');
+        if (/^(?:qsub|sbatch)(?:\.exe)?$/.test(exe)) found.add('scheduler');
+        break;
+      }
+    }
+  }
+  scan(command);
+  return [...found];
+}
+export function toolCardReason(value) {
+  const d = value.detail || {}, policy = String(d.policy_reason || '').toLowerCase();
+  const category = d.grant_category;
+  const action = explicitToolAction(value);
+  const labels = {delete:'파일이나 폴더 삭제가 포함되어 확인이 필요합니다.', network:'네트워크 통신이 포함되어 확인이 필요합니다.', scheduler:'스케줄러 작업을 실행하기 전에 확인이 필요합니다.'};
+  const actionText = action.map(name => labels[name]).join(' ');
+  const withAction = text => actionText ? `${text} ${actionText}` : text;
+  if (d.internal_row_output === true) return withAction('내부 자료 원본 행이 노출될 수 있어 확인이 필요합니다.');
+  if (/registry|레지스트리/.test(policy)) return withAction('레지스트리의 계정 정보에 접근할 수 있어 확인이 필요합니다.');
+  if (/restricted|data_zones|통제|closed|credential/.test(policy)) return withAction('닫힌 경로나 자격 증명 경로가 포함되어 확인이 필요합니다.');
+  if ((/personal path/.test(policy) || (!category && /private_paths/.test(policy))) && !/ambiguous/.test(policy)) return withAction('다른 개인 경로에 접근할 수 있어 확인이 필요합니다.');
+  if (/outside/.test(policy) && /write/.test(policy)) return withAction('작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.');
+  if (actionText) return category === 'unresolved_path' ? withAction('경로를 미리 확인하지 못했습니다.') : actionText;
+  if (category === 'internal_read' || /internal data zone/.test(policy)) return '내부 자료를 읽으려 합니다. 출력 범위를 확인해 주세요.';
+  if (category === 'workspace') return '작업 폴더에서 도구를 실행하려 합니다.';
+  if (category === 'unresolved_path') return '경로를 미리 확인하지 못했습니다.';
+  if (/recursive|delete|삭제|\b(?:rm|rmdir|unlink|remove-item)\b/.test(policy)) return '파일이나 폴더 삭제가 포함되어 확인이 필요합니다.';
+  if (/network|네트워크|\b(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)\b/.test(policy)) return '네트워크 통신이 포함되어 확인이 필요합니다.';
+  if (/outside|write/.test(policy)) return '작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.';
+  if (/scheduler|qsub|sbatch|스케줄러/.test(policy)) return '스케줄러 작업을 실행하기 전에 확인이 필요합니다.';
+  if (/ambiguous/.test(policy)) return '경로를 미리 확인하지 못했습니다.';
+  return '자동 허용 범위 밖이어서 실행 전 확인이 필요합니다.';
+}
+export function toolCardExplanation(value) {
+  const supplied = String(value.pi_reason || '').trim();
+  const lines = supplied.split(/\n+/), first = lines[0] || '';
+  // The producer puts task purpose and step on the first line. Rules and grades
+  // can be stale after classification, so render those from current evidence.
+  const structured = /^(?:작업 목적|논문 ‘)/.test(first);
+  const safeLegacy = lines.length === 1 && /[가-힣]/.test(first) && !/[A-Za-z_]/.test(first)
+    && !/높음|개인 경로|자격 증명|통제|닫힌 경로/.test(first);
+  const context = structured || safeLegacy ? plainPiText(first) : '';
+  return [context, toolCardReason(value)].filter(Boolean).join('\n');
+}
 export function approvalSummaryText(request, summary) {
   if (!request || !summary || summary.request_id !== request.id) return '집계 확인 불가';
   return `이 요청에서 자동 승인 ${summary.automatic_approved_count}건 · 허용한 부류: ${summary.granted_categories.map(grantCategoryLabel).join(', ') || '없음'} · 현재 유효: ${summary.active_grant_categories.map(grantCategoryLabel).join(', ') || '없음'}`;
@@ -510,7 +607,7 @@ export function renderDetail(container, kind, detail, approval = null) {
     if (container._detailSignature === signature) return;
     container._detailSignature = signature;
     container.replaceChildren(); container.hidden = false;
-    piText(add(container, 'p'), approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
+    piText(add(container, 'p'), kind === 'tool_permission' ? toolCardExplanation(approval || {detail}) : approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
     piText(add(container, 'p'), approval?.pi_outcome || '승인하면 제안된 작업을 진행합니다.');
     const fold = expandableText(container, '', {fold: true, summary: '자세히', truncated: detail?.input_truncated});
     // The existing field labels and exact received strings remain accessible inside one closed fold.
@@ -690,7 +787,10 @@ export function decisionFacts(value, who = '') {
     case 'research_continue': return [['이번 차수', text(d.round)], ['차수 상한', text(d.limit)]];
     case 'resume': return [['남은 단계', Array.isArray(d.steps) ? d.steps.join(', ') || (d.has_plan === false ? '요청 전체' : '없음') : missing], ['접수', receivedAt(d.created_at) || missing]];
     case 'tool_permission': {
-      const grade = String(value.pi_reason || '').match(/(?:^|\n)위험 등급:\s*(높음|중간|낮음|미확인)(?=\s|·|\.|$)/)?.[1];
+      const reason = toolCardReason(value);
+      const evidence = /닫힌 경로|다른 개인 경로|삭제|네트워크|작업 폴더 밖|스케줄러|원본 행|레지스트리/.test(reason);
+      let grade = String(value.pi_reason || '').match(/(?:^|\n)위험 등급:\s*(높음|중간|낮음|미확인)(?=\s|·|\.|$)/)?.[1];
+      if (grade === '높음' && !evidence) grade = null;
       return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing], ...(grade ? [['위험 등급', grade]] : [])];
     }
     case 'recruit': return [['제안 직원', who || missing], ['출처', d.repo || value.repo ? '저장소 · 자세히' : '자세히에서 확인']];
@@ -710,17 +810,7 @@ function updateJournalCard(p, value, suggestion) {
       const cell = add(p.facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
     }
   }
-  const policy = String(value.detail?.policy_reason || '').toLowerCase();
-  const toolReason = value.detail?.internal_row_output === true ? '내부 자료의 원본 행이 노출될 수 있어 확인이 필요합니다.' :
-    /restricted|data_zones|통제/.test(policy) ? '보호된 자료 경로에 접근할 수 있어 확인이 필요합니다.' :
-    /private_paths|credential/.test(policy) ? '개인 파일이나 자격 증명 경로를 확인해야 합니다.' :
-    /recursive|삭제/.test(policy) ? '파일이나 폴더 삭제가 포함되어 확인이 필요합니다.' :
-    /outside|write/.test(policy) ? '작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.' :
-    '자동 허용 범위 밖이어서 실행 전 확인이 필요합니다.';
-  const suppliedReason = String(value.pi_reason || '');
-  const safeReason = /[가-힣]/.test(suppliedReason) && !/\b[a-z]+_[a-z_]+\b/i.test(suppliedReason)
-    ? suppliedReason.split(/\n+/).filter(Boolean).slice(0, 2).join(' ') : toolReason;
-  syncExpandableText(p.reason, kind === 'tool_permission' ? safeReason : value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
+  syncExpandableText(p.reason, kind === 'tool_permission' ? toolCardExplanation(value) : value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
   syncExpandableText(p.outcome, value.pi_outcome || '', {pi: true});
   p.reason.hidden = !p.reason.textContent; p.outcome.hidden = !p.outcome.textContent;
   // These legacy renderers already fold their raw fields. Reuse that content inside the
@@ -869,8 +959,8 @@ function updateCard(row, item, options) {
   syncExpandableText(p.request, request?.text ? `요청: ${request.text}` : '', {limit: 90});
   p.request.hidden = !p.request.textContent;
   syncExpandableText(p.summary, item.type === 'suggestion' ? '필요한 일을 맡길 직원을 추가하려 합니다.' :
-    value.kind === 'tool_permission' && !value.pi_summary ? '직원이 도구를 실행하려 합니다. 작업 내용은 자세히에서 확인해 주세요.' : displaySummary(value) || value.id,
-      {pi: true, attribution: value.pi_display?.status === 'failed' ? '번역 못 함' : value.pi_explainer || value.pi_display ? '펭귄 비서실장 설명' : '',
+    value.kind === 'tool_permission' ? (value.pi_display?.status === 'translated' ? value.pi_display.text : value.pi_summary ? plainPiText(value.pi_summary) : '직원이 도구를 실행하려 합니다. 작업 내용은 자세히에서 확인해 주세요.') : displaySummary(value) || value.id,
+      {pi: true, attribution: value.kind === 'tool_permission' ? (value.pi_display?.status === 'translated' ? '펭귄 비서실장 설명' : '') : value.pi_display?.status === 'failed' ? '번역 못 함' : value.pi_explainer || value.pi_display ? '펭귄 비서실장 설명' : '',
         ...(value.pi_summary || value.kind === 'tool_permission' ? {} : {original: value.summary})});
   renderDetail(p.detail, item.type === 'suggestion' ? 'recruit' : value.kind,
     item.type === 'suggestion' ? {reason: value.reason, repo: value.repo, paper: value.paper} : value.detail,
@@ -959,7 +1049,9 @@ export function syncReviewCards(container, requests, options = {}) {
     const reviewPending = globalThis.LabHQState.needsPiReview(q);
     const final = q.status === 'review_pending' ? q.final_checkpoint : null;
     const reportReady = q.status === 'done' || !!final;
-    const key = JSON.stringify([q.text, q.status, final, q.resultStorage, reviewPending, options.disabled?.(q) || false]);
+    const summary = options.approvalSummaries?.get(q.id);
+    const count = summary?.request_id === q.id && Number.isSafeInteger(summary.automatic_approved_count) && summary.automatic_approved_count >= 0 ? summary.automatic_approved_count : null;
+    const key = JSON.stringify([q.text, q.status, final, q.resultStorage, reviewPending, options.disabled?.(q) || false, count]);
     const prior = existing.get(q.id);
     if (prior?.dataset.reviewKey === key) return prior;
     const row = doc().createElement('article'); row.className = 'ap';
@@ -970,7 +1062,7 @@ export function syncReviewCards(container, requests, options = {}) {
       row.className += ' ui-card decision-card';
       add(body, 'h3', !reviewPending ? '결과를 어디에 저장할까요?' : reportReady ? '보고서를 검토할까요?' : '종료된 요청의 결과를 확인할까요?', 'decision-question');
       const facts = add(body, 'dl', '', 'decision-facts');
-      for (const [label, value] of [['상태', globalThis.LabHQState.reviewLabel(q)], ['자동 승인', '없음']]) {
+      for (const [label, value] of [['상태', globalThis.LabHQState.reviewLabel(q)], ...(count === null ? [] : [['자동 승인', `${count}건`]])]) {
         const cell = add(facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
       }
       const status = add(body, 'span', '', 'ui-chip decision-status');
