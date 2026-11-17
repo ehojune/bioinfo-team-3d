@@ -1,6 +1,6 @@
 pr: null
 rows:
-- sha: 0c1c1ca6
+- sha: 0c1c1ca
   at: 2026-11-18 03:03
   text: 3D 도구 카드에도 서버가 보낸 위험 등급을 표시한다.
   summary: 3D 승인 카드에서도 위험 등급을 확인할 수 있습니다.
