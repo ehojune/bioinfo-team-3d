@@ -472,6 +472,7 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         f'cat "{internal.as_posix()}/a" > output',
         f'python script.py "{internal.as_posix()}/a"',
         f'python -c "print(1)" "{internal.as_posix()}/a"',
+        f'gh gist create "{internal.as_posix()}/a"',
         f'python - "{internal.as_posix()}/a" <<\'PY\'\nprint(1)\nPY',
         f'cd "{internal.as_posix()}" && touch a',
     ]):
@@ -493,6 +494,14 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         await runner._on_approval(script)
         assert script.detail["grant_category"] in {"workspace", "unresolved_path"}
         assert hub.store.get("approval_decision", script.id)["automatic"] is True
+    for i, command in enumerate(["gh gist create output.txt",
+                                 "python -c 'import smtplib; smtplib.SMTP(\"example.test\")'"]):
+        network = card(f"workspace-network-{i}")
+        network.detail["tool_input"]["command"] = command
+        await runner._on_approval(network)
+        assert not network.detail.get("grant_category")
+        assert hub.store.get("approval_decision", network.id) is None
+        assert network.id in hub.approvals
     runner.s.policy.data_zones = [DataZone(path=internal.as_posix(), level="internal")]
     runner.tool_contexts["t1"].private_paths = []
     runner.tool_contexts["t1"].private_enabled = False

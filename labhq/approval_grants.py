@@ -18,9 +18,9 @@ from .workspace_commands import literal_commands, workspace_command
 
 
 _EXCLUDED_COMMAND = re.compile(
-    r"\b(?:curl|wget|ssh|scp|sftp|rsync|ftp|nc|ncat|netcat|"
+    r"\b(?:curl|wget|gh|ssh|scp|sftp|rsync|ftp|nc|ncat|netcat|"
     r"invoke-webrequest|invoke-restmethod|irm|iwr|requests|urllib|socket|httpx|aiohttp|"
-    r"ftplib|paramiko|http\.client|"
+    r"ftplib|smtplib|paramiko|http\.client|"
     r"rm|rmdir|remove|removedirs|unlink|rmtree|shred|del|delete|clean|truncate|erase|remove-item|rd|"
     r"mv|move|move-item|rename|rename-item|"
     r"os\.remove|os\.unlink|shutil\.rmtree|path\.unlink)\b", re.I)
