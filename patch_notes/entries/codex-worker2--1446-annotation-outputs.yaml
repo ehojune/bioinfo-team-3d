@@ -1,5 +1,9 @@
 pr: 1448
 rows:
+  - sha: "72b0bcf"
+    at: "2026-11-17 13:16"
+    summary: "받아 둔 주석 파일을 HPC 검증에서도 인식합니다."
+    text: "리뷰 P1의 오래된 hash 사본을 수집 결과로 갱신한다. mock remote manifest와 receipt로 정상 수신 허용·receipt 누락 거부를 검증하며 실제 HPC 접속은 없다 (#1446)."
   - sha: "b859a2f"
     at: "2026-11-17 13:10"
     summary: "검증에 실패한 파일도 읽기 예산에서 차감합니다."
