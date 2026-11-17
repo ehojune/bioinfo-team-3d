@@ -399,6 +399,21 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     assert hub.store.get("approval_decision", second.id)["grant_source"] == first.id
     assert sent[-1]["approved"] is True and events[-1]["data"]["automatic"] is True
 
+    (internal / "sub").mkdir()
+    safe_cd = card("safe-cd")
+    safe_cd.detail["tool_input"]["command"] = "cd internal/sub && cat a"
+    await runner._on_approval(safe_cd)
+    assert hub.store.get("approval_decision", safe_cd.id)["grant_source"] == first.id
+    runner.tool_contexts["t1"].env["CDPATH"] = str(tmp_path / "other")
+    adapter.staff_env(runner.tool_contexts["t1"])
+    unsafe_cd = card("unsafe-cdpath")
+    unsafe_cd.detail["tool_input"]["command"] = "cd internal/sub && cat a"
+    await runner._on_approval(unsafe_cd)
+    assert not unsafe_cd.detail.get("grant_category")
+    assert hub.store.get("approval_decision", unsafe_cd.id) is None
+    assert unsafe_cd.id in hub.approvals
+    runner.tool_contexts["t1"].env.clear()
+
     # A task-supplied PATH must reach both policy and executable verification;
     # a trusted runner PATH cannot validate a different staff executable.
     fake_bin = tmp_path / "fake-bin"
