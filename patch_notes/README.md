@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:27 | [`f12f9ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1454/commits/f12f9ba) | **평가 결과와 단일 모드·팀 모드를 고르는 기준을 평가 문서에 정리하고 영문판을 추가했습니다.**<br>문서: #1427 평가 결과(짝 비교 1~3·5·9, 어려운 과제 세 갈래)와 단일·팀 사용 기준, 영문판 |
 | 15:40 | [`5f9b0ca`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/5f9b0ca) | **PubMed 수집 상한을 보수적으로 9,999건에 맞춥니다.**<br>최대 인자·직원 안내·한영 매뉴얼을 맞춘다. 정확한 9,999건 완료, 초과 건수의 부분 상태와 최대 두 검색의 19,998건 전달을 포함한 회귀 215 passed, 3 skipped; 실제 API 검색은 미검증 (#1446). |
 | 15:32 | [`d2104ac`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/d2104ac) | **PubMed 결과 파일의 교체를 inode 재사용 때도 확인합니다.**<br>Linux CI의 교체 거부 실패 뒤 파일 신원에 ctime을 포함하고 append 후 값을 보존한다. assertion 유지, 배포 venv 관련 회귀 213 passed, 3 skipped (#1446). |
 | 15:22 | [`b5d01d5`](https://github.com/ehojune/bioinfo-team-3d/pull/1451/commits/b5d01d5) | **반복 문헌 검색도 단계 전체 파일 한도 안에서 보존합니다.**<br>기존 산출·manifest·로그를 포함한 200파일 예산을 공유한다. file_limit은 부분 manifest를 남기고 새 슬롯이 없으면 HTTP 전에 거절한다. 보존 파일 전부의 전달·SHA를 포함한 회귀 213 passed, 3 skipped (#1446). |
