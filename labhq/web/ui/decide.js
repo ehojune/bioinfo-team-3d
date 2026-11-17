@@ -439,6 +439,10 @@ export function grantCategory(approval) {
     ? approval.detail.grant_category : null;
 }
 export function grantCategoryLabel(category) { return GRANT_CATEGORIES[category] || '알 수 없는 부류'; }
+export function approvalSummaryText(request, summary) {
+  if (!request || !summary || summary.request_id !== request.id) return '집계 확인 불가';
+  return `이 요청에서 자동 승인 ${summary.automatic_approved_count}건 · 허용한 부류: ${summary.granted_categories.map(grantCategoryLabel).join(', ') || '없음'} · 현재 유효: ${summary.active_grant_categories.map(grantCategoryLabel).join(', ') || '없음'}`;
+}
 export function createApprovalSummaryLoader(fetchSummary, selected, changed) {
   let serial = 0, current = null, value = null;
   return {

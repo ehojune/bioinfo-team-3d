@@ -53,6 +53,15 @@ test('approval totals discard stale results and do not invent zero on failure', 
   assert.equal(loader.get(),null);
 });
 
+test('approval summary tolerates no request or a stale response', async () => {
+  const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
+  const {approvalSummaryText}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const summary={request_id:'r1',automatic_approved_count:3,granted_categories:['workspace'],active_grant_categories:[]};
+  assert.equal(approvalSummaryText(null,null),'집계 확인 불가');
+  assert.equal(approvalSummaryText({id:'other'},summary),'집계 확인 불가');
+  assert.match(approvalSummaryText({id:'r1'},summary),/자동 승인 3건 · 허용한 부류: 작업 폴더 · 현재 유효: 없음/);
+});
+
 test('only recognized server grant categories on tool cards expose eligibility', async () => {
   const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
   const {grantCategory}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
