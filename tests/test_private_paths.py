@@ -280,10 +280,14 @@ def test_unknown_shell_function_expansion_is_bounded(request_paths_1456, kind):
     assert 'read scope is ambiguous' in decision.reason
 
 
-@pytest.mark.parametrize('command', ['f() { :; }; f', 'if true; then pwd; fi',
-                                    'python -c "print(1)"', 'wc -l *.txt',
-                                    '(' * 33 + 'pwd' + ')' * 33])
-def test_unverified_private_scope_never_qualifies_for_batch_grant(request_paths_1456, command):
+@pytest.mark.parametrize(('command', 'expected'), [
+    ('f() { :; }; f', 'unresolved_path'), ('if true; then pwd; fi', 'unresolved_path'),
+    ('python -c "print(1)"', 'unresolved_path'), ('(' * 33 + 'pwd' + ')' * 33, 'unresolved_path'),
+    ('wc -l *.txt', None)])
+def test_unverified_private_scope_batches_only_as_unresolved_path(request_paths_1456, command, expected):
+    """An unresolved read scope is not evidence of a private access, so it joins the "path unresolved" class a
+    person may grant once per request (#1445 lead decision issuecomment-6948521227). A literal read the shell
+    scan could not prove stays an individual card."""
     from labhq.approval_grants import classify
 
     task, inputs, *_, private = request_paths_1456
@@ -293,8 +297,9 @@ def test_unverified_private_scope_never_qualifies_for_batch_grant(request_paths_
     trace = []
     assert classify('Bash', {'command': command}, PolicySettings(), workdir=str(task),
                     private_paths=tuple(private), private_enabled=True,
-                    private_open_reads=(str(task), str(inputs)), trace=trace) is None
-    assert trace  # This is the actual runner classifier, not just the card's risk label.
+                    private_open_reads=(str(task), str(inputs)), trace=trace) == expected
+    # This is the actual runner classifier, not just the card's risk label.
+    assert trace == ([] if expected else ['unproven_literal_read'])
 
 WIN_HOME = "C:\\Users\\pi"
 WIN_PRIVATE = ["C:\\Users\\pi\\.ssh", "C:\\Users\\pi\\AppData\\Local\\Google\\Chrome\\User Data"]
