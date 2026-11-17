@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,7 +28,8 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
                                scan_notes: list[str] = ()) -> AnnotationOutputs:
     """Merge the runner's bounded, no-follow output scan into collected artifacts.
 
-    Only scan-proven hashes are adopted; source handles recheck links and content.
+    Source handles verify links and content against the bounded scan. An annotation
+    skipped only for the observation hash cap is hashed within input admission limits.
     Existing non-annotation outputs keep their order and budget priority. The query log
     comes next, then response paths in lexical order. Every excluded candidate has a
     reason; a truncated scan also records that unobserved paths may be missing.
@@ -51,11 +53,14 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
             excluded[path] = "not present in the bounded output scan"
             continue
         digest = row.get("sha256")
-        if not isinstance(digest, str):
+        capped = re.fullmatch(r"output_hash_max_bytes 상한 초과 \(\d+\)", str(row.get("reason", "")))
+        if not isinstance(digest, str) and not capped:
             excluded[path] = str(row.get("skipped") or row.get("reason") or "no verified hash")
             continue
         proposed = [*kept, path]
-        proposed_hashes = {**kept_hashes, path: digest}
+        # Admission checks names/count/bytes before reading. The sentinel never escapes:
+        # only the verified descriptor's digest is published after all checks succeed.
+        proposed_hashes = {**kept_hashes, path: digest if isinstance(digest, str) else "0" * 64}
         problem = baseline or staging_problem(proposed, proposed_hashes, sizes, max_file, max_total)
         if problem:
             excluded[path] = problem
@@ -72,6 +77,9 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
                         raise ValueError("hard-linked file")
                     if info.st_size != row.get("size") or info.st_mtime_ns != row.get("mtime_ns"):
                         raise ValueError("file changed since the output scan")
+                    if any(row.get(key) is not None and row[key] != getattr(info, "st_" + key)
+                           for key in ("dev", "ino")):
+                        raise ValueError("file replaced since the output scan")
                     actual, read = hashlib.sha256(), 0
                     while chunk := source.read(min(1024 * 1024, max_file + 1 - read)):
                         read += len(chunk)
@@ -79,12 +87,14 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
                         if read > max_file:
                             raise ValueError("file grew beyond the per-file input limit")
                     after = os.fstat(source.fileno())
-                    if (read != info.st_size or actual.hexdigest() != digest or after.st_nlink != 1
+                    if (read != info.st_size or (isinstance(digest, str) and actual.hexdigest() != digest)
+                            or after.st_nlink != 1
                             or (after.st_size, after.st_mtime_ns) != (info.st_size, info.st_mtime_ns)):
                         raise ValueError("file content changed since the output scan")
         except (OSError, ValueError) as exc:
             excluded[path] = str(exc) if isinstance(exc, ValueError) else "link or unreadable artifact"
             continue
+        proposed_hashes[path] = actual.hexdigest()
         kept, kept_hashes = proposed, proposed_hashes
 
     if scan_notes:

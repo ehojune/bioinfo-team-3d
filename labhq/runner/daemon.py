@@ -2962,10 +2962,10 @@ class Runner:
             observed_outputs: list[dict[str, Any]] = []
             output_scan_notes: list[str] = []
             output_shape_before = None
-            # Step artifacts, including unlisted annotations, are future ancestor inputs.
-            # Hash through their admission cap even when the staff output list is empty.
+            # A declared step artifact is a future ancestor input. Hash through the same admission cap;
+            # unlisted annotations are verified separately without raising the cap for unrelated outputs.
             artifact_hash_limit = self.s.runner.output_hash_max_bytes
-            if task.meta.get('kind') in {'step', 'result_correction'}:
+            if (task.meta.get('kind') == 'step' and task.meta.get('outputs')) or task.meta.get('kind') == 'result_correction':
                 artifact_hash_limit = max(artifact_hash_limit, min(
                     self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes))
 

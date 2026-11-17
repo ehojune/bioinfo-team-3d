@@ -80,17 +80,41 @@ def test_existing_outputs_keep_priority_and_log_uses_last_slot(tmp_path):
     assert len(result.hashes) == MAX_FILES
 
 
-@pytest.mark.parametrize("limit", ["file", "total", "hash"])
+@pytest.mark.parametrize("limit", ["file", "total"])
 def test_limits_name_excluded_files_without_exceeding_budget(tmp_path, limit):
     ws = workspace(tmp_path)
     path = "outputs/annotation/a.json"
     put(ws, path, b"a" * 20)
-    rows, notes = scan(ws, hash_limit=10 if limit == "hash" else 100)
+    rows, notes = scan(ws, hash_limit=100)
     result = collect(ws, records=rows, notes=notes,
                      max_file=10 if limit == "file" else 100,
                      max_total=10 if limit == "total" else 100)
     assert not result.outputs and not result.hashes
     assert result.excluded[path]
+
+
+def test_annotation_above_observation_cap_is_verified_within_input_limits(tmp_path):
+    ws = workspace(tmp_path)
+    path = "outputs/annotation/a.json"
+    put(ws, path, b"a" * 20)
+    rows, notes = scan(ws, hash_limit=10)
+    assert rows[0].get("reason") == "output_hash_max_bytes 상한 초과 (10)" and rows[0].get("sha256") is None
+    result = collect(ws, records=rows, notes=notes, max_file=30, max_total=30)
+    assert result.outputs == [path] and not result.excluded
+    assert result.hashes[path] == hashlib.sha256(b"a" * 20).hexdigest()
+    refused = collect(ws, records=rows, notes=notes, max_file=10, max_total=30)
+    assert not refused.outputs and path in refused.excluded
+
+
+@pytest.mark.parametrize("reason", ["changed", "restricted", "unreadable"])
+def test_unverified_annotation_does_not_bypass_other_scan_refusals(tmp_path, reason):
+    ws = workspace(tmp_path)
+    path = "outputs/annotation/a.json"
+    put(ws, path)
+    rows, _ = scan(ws)
+    rows[0].update(sha256=None, skipped=reason)
+    result = collect(ws, records=rows)
+    assert not result.outputs and result.excluded[path] == reason
 
 
 def test_total_budget_includes_existing_outputs_and_duplicates_are_not_counted_twice(tmp_path):
@@ -261,14 +285,15 @@ async def test_runner_collects_unlisted_annotation_and_stages_it_for_consumer(tm
     assert len(payload) > 2 * 1024 * 1024
     paths = ["outputs/annotation/search-page.json", "outputs/annotation_queries.jsonl"]
     seen = {}
-    if scan_note:
-        original_scan = TaskWorkspace.scan_output_records
+    scanned = []
+    original_scan = TaskWorkspace.scan_output_records
 
-        def noted_scan(self, *args, **kwargs):
-            records, note = original_scan(self, *args, **kwargs)
-            return records, note or "fixture: bounded scan incomplete"
+    def noted_scan(self, *args, **kwargs):
+        records, note = original_scan(self, *args, **kwargs)
+        scanned.extend(records)
+        return records, note or ("fixture: bounded scan incomplete" if scan_note else None)
 
-        monkeypatch.setattr(TaskWorkspace, "scan_output_records", noted_scan)
+    monkeypatch.setattr(TaskWorkspace, "scan_output_records", noted_scan)
 
     class Adapter:
         async def run(self, ctx):
@@ -281,7 +306,7 @@ async def test_runner_collects_unlisted_annotation_and_stages_it_for_consumer(tm
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(content)
                 (ctx.workdir / "outputs/annotation/auth.json").write_bytes(b"synthetic secret")
-                (ctx.workdir / "outputs/unrelated.json").write_bytes(b"not collected")
+                (ctx.workdir / "outputs/unrelated.json").write_bytes(b"x" * 2048)
             return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, outputs=[])
 
     monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: Adapter())
@@ -289,6 +314,8 @@ async def test_runner_collects_unlisted_annotation_and_stages_it_for_consumer(tm
                                        meta={"kind": "step", "step_id": "search"}))
     assert result.ok, result.error
     assert set(result.outputs) == set(paths)
+    unrelated = next(row for row in scanned if row["path"] == "outputs/unrelated.json")
+    assert unrelated.get("sha256") is None and unrelated.get("reason") == "output_hash_max_bytes 상한 초과 (1024)"
     assert any("bounded scan incomplete" in warning for warning in result.step_warnings) == scan_note
     assert any("outputs/annotation/auth.json" in warning and "protected" in warning
                for warning in result.step_warnings)
