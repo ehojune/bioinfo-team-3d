@@ -33,11 +33,13 @@ const {engineCostLabel} = context.LabHQState;
 const engines = {claude_code: {actual_usd: 1, estimated_usd: 0, unknown_count: 0}};
 assert.equal(engineCostLabel({by_engine: engines, warnings: ['model_tier_mismatch:lit_scout:fast:claude-opus-5-5',
   'model_tier_mismatch:qc_reviewer:balanced:claude-opus-5-5']}),
-  'claude_code 확인 $1.00; 선언 등급과 다른 모델: lit_scout(fast) → claude-opus-5-5, qc_reviewer(balanced) → claude-opus-5-5');
+  'Claude Code 확인 $1.00; 선언 등급과 다른 모델: lit_scout(fast) → claude-opus-5-5, qc_reviewer(balanced) → claude-opus-5-5');
 assert.equal(engineCostLabel({by_engine: engines, warnings: ['model_tier_mismatch:a:fast:vendor:model-1']}),
-  'claude_code 확인 $1.00; 선언 등급과 다른 모델: a(fast) → vendor:model-1', 'a model name that holds ":" stays whole');
-assert.equal(engineCostLabel({by_engine: engines, warnings: ['price_stale:codex:x']}), 'claude_code 확인 $1.00');
-assert.equal(engineCostLabel({by_engine: engines}), 'claude_code 확인 $1.00', 'an older summary without warnings adds nothing');
+  'Claude Code 확인 $1.00; 선언 등급과 다른 모델: a(fast) → vendor:model-1', 'a model name that holds ":" stays whole');
+assert.equal(engineCostLabel({by_engine: engines, warnings: ['price_stale:codex:x']}), 'Claude Code 확인 $1.00');
+assert.equal(engineCostLabel({by_engine: engines}), 'Claude Code 확인 $1.00', 'an older summary without warnings adds nothing');
+assert.match(engineCostLabel({by_engine: engines, prices: [{engine:'claude_code', model:'sonnet', checked_on:'2026-01-01', stale:true}]}), /Claude Code sonnet/);
+assert.match(engineCostLabel({by_engine: {future_engine: {actual_usd: 1}}}), /^기타 엔진/);
 const page = fs.readFileSync(path.join(root, 'labhq/web/index.html'), 'utf8');
 assert.match(page, /LabHQState\.deadlineLabel\(q, Date\.now\(\) \/ 1000\)/, 'the request panel shows the time limit');
 assert.match(page, /JSON\.stringify\(\[S\.requests\.size, staffNames, statusText, deadlineText,/, 'the countdown is in the render key, so the 15 s timer redraws it');

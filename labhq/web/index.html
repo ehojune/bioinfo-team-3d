@@ -455,7 +455,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 <script type="module">
 import {officeSVG, officeHead, officeCharacter, officeStatus} from './ui/office-art.js';
 import {bindShutdown} from './ui/shutdown.js';
-import {answerRequired, decisionChoice, decisionNote, storageChoice, modelRefusalChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, storageChoice, modelRefusalChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText, approvalSummaryText, createApprovalSummaryLoader} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncPaperLiterature} from './ui/literature.js';
 import {syncTaskBoard, syncStepFlow} from './ui/tasks.js';
@@ -780,6 +780,10 @@ ${q.status === 'interrupted' ? '<button type="button" class="btn" data-outcome-n
 <button type="button" class="btn" data-outcome-next="request">새 요청으로 다시 시작</button>
 ${FOLLOWUP_STATUSES.includes(q.status) && api?.followup ? '<button type="button" class="btn" data-outcome-next="followup">남은 결과에 이어 묻기</button>' : ''}</section>`;
 let reqKey = '';
+let summaryRequest = null;
+const approvalSummary = createApprovalSummaryLoader(
+  id => api?.approvalSummary ? api.approvalSummary(id) : Promise.reject(new Error('unavailable')),
+  () => S.current, () => { reqKey = ''; schedule(); });
 let reportImageUrls = [];
 function loadReportImages(el, rid) {
   if (!api?.reportAsset) return;
@@ -796,6 +800,9 @@ function loadReportImages(el, rid) {
 }
 function renderRequest() {
   const el = $('#request'), q = S.requests.get(S.current);
+  if (summaryRequest !== (q?.id || null)) { summaryRequest = q?.id || null; approvalSummary.refresh(); }
+  const grantSummary = approvalSummary.get();
+  const grantText = approvalSummaryText(q, grantSummary);
   const details = q ? [...q.plan.map(s => S.stepDetails.get(`${q.id}:${s.id}`)), S.stepDetails.get(`${q.id}:direct`)] : [];
   // The per-agent cost line names staff through the roster, so a rename or late roster redraws it (#415 review).
   const staffNames = q && q.costSummary && q.costSummary.by_agent ? Object.keys(q.costSummary.by_agent).map(nick) : [];
@@ -805,7 +812,7 @@ function renderRequest() {
   const deadlineText = q ? LabHQState.deadlineLabel(q, Date.now() / 1000) : '';
   const all = LabHQState.sortRequests(S.requests.values());
   const requestDigest = all.map(r => [r.id, r.status, r.text, r.pi_review_pending, r.pi_reviewed_at, Math.round(r.cost * 100), r.costKnown]);
-  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, deadlineText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, q.stepJobs, details, q.github.length, q.pipelinePr, q.report, q.reportPackage, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
+  const key = q ? JSON.stringify([S.requests.size, staffNames, statusText, deadlineText, grantText, requestDigest, q.id, q.phase, q.status, q.error, q.steps, q.stepJobs, details, q.github.length, q.pipelinePr, q.report, q.reportPackage, q.report_appendix, q.execution_record, q.bundlePath, q.bundleStatus, q.bundleGrade, q.bundleGradeReasons, q.bundleWarning, q.review && q.review.revision, Math.round(q.cost * 100), q.costSummary, q.costKnown, q.references, q.followups, q.piNotes, q.processing]) : snapshotLoaded ? `none:${JSON.stringify(requestDigest)}` : `loading:${S.conn}`;
   if (key === reqKey) return;
   reqKey = key;
   reportImageUrls.forEach(url => URL.revokeObjectURL(url)); reportImageUrls = [];
@@ -819,7 +826,7 @@ function renderRequest() {
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${{pending: '대기', awaiting_approval: '승인 대기', declined: '미기여'}[q.pipelinePr.status] || '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
-  el.innerHTML = `${pick}${outcomeHTML(q)}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
+  el.innerHTML = `${pick}${outcomeHTML(q)}${MODE === 'live' ? `<p class="req-meta">${esc(grantText)}</p>` : ''}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${deadlineText ? `<span>${esc(deadlineText)}</span>` : ''}${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${hasOutcome(q) ? '' : reportHTML(q)}${reportPdfHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${followupHTML(q)}`;
@@ -1043,8 +1050,10 @@ $('#approvals').addEventListener('click', async e => {
       const approval = S.approvals.get(li.dataset.id), missing = revisionNoteMissing(approval, act, note);
       if (missing) { toast(missing); ans.focus(); btn.disabled = false; return; }
       // CP2 evidence review sends its approve/revise/deny choice; the note never decides it (#90).
-      await api.approve(li.dataset.id, act === 'approve', note, decisionChoice(approval || { kind: li.dataset.kind }, act), storageChoice(li), modelRefusalChoice(li));
-      toast(act === 'approve' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : act === 'revise' ? revisedToast(approval) : '거절했어요');
+      if (act === 'grant') await api.approve(li.dataset.id, true, note, null, null, null, true);
+      else await api.approve(li.dataset.id, act === 'approve', note, decisionChoice(approval || { kind: li.dataset.kind }, act), storageChoice(li), modelRefusalChoice(li));
+      approvalSummary.refresh();
+      toast(act === 'approve' || act === 'grant' ? (li.dataset.kind === 'clarify' ? '답을 보냈어요' : '승인했어요') : act === 'revise' ? revisedToast(approval) : '거절했어요');
     }
     else {
       const s = S.suggestions.find(x => x.id === li.dataset.sug);
@@ -1285,7 +1294,7 @@ $('#sheet').addEventListener('click', async e => {
   memo.addEventListener('pointerup', end);
   memo.addEventListener('pointercancel', () => { if (ghost) { ghost.remove(); ghost = null; } if (over) { over.classList.remove('drop'); over = null; } });
 })();
-setInterval(schedule, 15000);  // keeps "n분 전" labels and contract countdowns fresh
+setInterval(() => { schedule(); if (MODE === 'live') approvalSummary.refresh(); }, 15000);  // refresh labels and request approval totals
 /* ---------------- live: gateway WebSocket + REST ---------------- */
 function startLive() {
   let token = QS.get('token') || store.get('labhq_token') || '';
@@ -1333,6 +1342,7 @@ function startLive() {
     note: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/notes`, { text }),
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
+    approvalSummary: rid => get(`/api/requests/${encodeURIComponent(rid)}/approval-summary`),
     reportAsset: (rid, path) => getBlob(`/api/requests/${encodeURIComponent(rid)}/report-asset?path=${encodeURIComponent(path)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
     reportPdf: async rid => {
@@ -1344,8 +1354,9 @@ function startLive() {
       return { blob: await r.blob(), kind: r.headers.get('X-Labhq-Report-Kind') === 'pdf' ? 'pdf' : 'html',
                reason: decodeURIComponent(r.headers.get('X-Labhq-Reason') || '') };
     },
-    approve: async (id, ok, note = '', choice = null, storage = null, model_refusal = null) => {
+    approve: async (id, ok, note = '', choice = null, storage = null, model_refusal = null, grant_for_request = false) => {
       const decision = choice ? { approved: ok, note, choice } : { approved: ok, note };
+      if (grant_for_request) decision.grant_for_request = true;
       if (storage) decision.storage = storage;
       if (model_refusal) decision.model_refusal = model_refusal;
       await post(`/api/approvals/${encodeURIComponent(id)}`, decision);
@@ -1374,7 +1385,7 @@ function startLive() {
     bar.classList.remove('show');
     if (ws) { ws.onclose = null; ws.onmessage = null; ws.close(); }  // one socket at a time (#1170)
     ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/client?token=${encodeURIComponent(token)}${lastSeq ? `&since=${lastSeq}` : ''}`);
-    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); schedule(); };
+    ws.onopen = () => { S.conn = 'live'; backoff = 1000; refreshHistory(); approvalSummary.refresh(); schedule(); };
     ws.onmessage = e => { try {
       const ev = JSON.parse(e.data);
       if (ev.type === 'snapshot' && !ev.replay_gap && Number.isFinite(ev.seq) && ev.seq < lastSeq) return;

@@ -33,3 +33,58 @@ test('PI detail toggles hide internal truncation captions', async () => {
   assert.ok(!texts(parent).includes('서버에서'));
   assert.ok(texts(parent).includes('uv run script.py'));
 });
+
+test('approval totals discard stale results and do not invent zero on failure', async () => {
+  const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
+  const {createApprovalSummaryLoader,grantCategoryLabel}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  let current='one'; const pending=[];
+  const loader=createApprovalSummaryLoader(id=>new Promise((resolve,reject)=>pending.push({id,resolve,reject})),()=>current,()=>{});
+  const first=loader.refresh(); current='two'; const second=loader.refresh();
+  pending[1].resolve({request_id:'two',automatic_approved_count:203,granted_categories:['workspace'],active_grant_categories:[]});
+  await second;
+  pending[0].resolve({request_id:'one',automatic_approved_count:1,granted_categories:[],active_grant_categories:[]});
+  await first;
+  assert.equal(loader.get().automatic_approved_count,203);
+  assert.equal(grantCategoryLabel('workspace'),'작업 폴더');
+  assert.equal(grantCategoryLabel('future_internal_key'),'알 수 없는 부류');
+  const third=loader.refresh(); pending[2].reject(new Error('offline')); await third;
+  assert.equal(loader.get(),null);
+  const fourth=loader.refresh(); pending[3].resolve({request_id:'two',automatic_approved_count:0}); await fourth;
+  assert.equal(loader.get(),null);
+});
+
+test('slow approval summary polls are serialized and a queued refresh catches up', async () => {
+  const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
+  const {createApprovalSummaryLoader}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const pending=[];
+  const loader=createApprovalSummaryLoader(id=>new Promise(resolve=>pending.push({id,resolve})),()=> 'one',()=>{});
+  const first=loader.refresh();
+  await loader.refresh(); await loader.refresh();
+  assert.equal(pending.length,1);
+  pending[0].resolve({request_id:'one',automatic_approved_count:1,granted_categories:[],active_grant_categories:[]});
+  await first;
+  assert.equal(loader.get().automatic_approved_count,1);
+  assert.equal(pending.length,2);
+  pending[1].resolve({request_id:'one',automatic_approved_count:2,granted_categories:[],active_grant_categories:[]});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(loader.get().automatic_approved_count,2);
+});
+
+test('approval summary tolerates no request or a stale response', async () => {
+  const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
+  const {approvalSummaryText}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const summary={request_id:'r1',automatic_approved_count:3,granted_categories:['workspace'],active_grant_categories:[]};
+  assert.equal(approvalSummaryText(null,null),'집계 확인 불가');
+  assert.equal(approvalSummaryText({id:'other'},summary),'집계 확인 불가');
+  assert.match(approvalSummaryText({id:'r1'},summary),/자동 승인 3건 · 허용한 부류: 작업 폴더 · 현재 유효: 없음/);
+});
+
+test('only recognized server grant categories on tool cards expose eligibility', async () => {
+  const source=fs.readFileSync(path.join(root, 'ui/decide.js'),'utf8');
+  const {grantCategory}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const card={kind:'tool_permission',request_id:'r',detail:{grant_category:'workspace'}};
+  assert.equal(grantCategory(card),'workspace');
+  assert.equal(grantCategory({...card,request_id:null}),null);
+  assert.equal(grantCategory({...card,kind:'budget'}),null);
+  assert.equal(grantCategory({...card,detail:{grant_category:'unknown'}}),null);
+});

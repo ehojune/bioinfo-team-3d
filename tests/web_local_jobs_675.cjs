@@ -109,7 +109,7 @@ test('2.5D task card cache changes on job-only updates and step flow switches re
   const render = html.slice(html.indexOf('function renderRequest()'));
   const cache = render.slice(render.indexOf('  const key ='), render.indexOf('  if (key === reqKey)')) + '\nkey;';
   // The free variables of renderRequest's cache key: a new one there must be given here too (#877 deadlineText).
-  const cacheContext = vm.createContext({q, S:o.S, staffNames:[], statusText:'', deadlineText:'', requestDigest:[], details:[], snapshotLoaded:true});
+  const cacheContext = vm.createContext({q, S:o.S, staffNames:[], statusText:'', deadlineText:'', grantText:'', requestDigest:[], details:[], snapshotLoaded:true});
   emit('job.submitted', {job_id:'local-one', name:'GSEA'});
   const before = vm.runInContext(cache, vm.createContext({...cacheContext}));
   emit('job.state', {job_id:'local-one', state:'held'});
