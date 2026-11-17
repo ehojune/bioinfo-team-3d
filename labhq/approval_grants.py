@@ -100,7 +100,7 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         return excluded("unresolved_directory_change")
     changes = list(re.finditer(r"\b(?:cd|chdir|pushd|set-location|sl|push-location)\b", command, re.I))
     changed_dir = bool(changes)
-    bases = shell_cd_bases(command, workdir) if changed_dir else []
+    bases = shell_cd_bases(command, workdir, environ=environ) if changed_dir else []
     # A shell can branch, change folders repeatedly, or compute the destination.
     # Check every known base; unknown bases remain a separate grant category.
     unknown_write = changed_dir and (bases is None or len(bases) != len(changes)

@@ -510,6 +510,21 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     assert not ps_change.detail.get("grant_category")
     assert hub.store.get("approval_decision", ps_change.id) is None
     assert ps_change.id in hub.approvals
+    monkeypatch.setenv("DEST", str(tmp_path))
+    runner.tool_contexts["t1"].env["DEST"] = str(outside)
+    adapter.staff_env(runner.tool_contexts["t1"])
+    staff_cd = card("unsafe-staff-cd")
+    staff_cd.detail["tool_input"]["command"] = f'cd "$DEST" && cat "{internal.as_posix()}/a" > result.txt'
+    trace = []
+    assert classify("Bash", staff_cd.detail["tool_input"], runner.s.policy,
+                    workdir=tmp_path.as_posix(), trace=trace,
+                    environ=runner.tool_contexts["t1"]._approval_grant_env) is None
+    assert trace == ["outside_write_target"]
+    await runner._on_approval(staff_cd)
+    assert not staff_cd.detail.get("grant_category")
+    assert hub.store.get("approval_decision", staff_cd.id) is None
+    assert staff_cd.id in hub.approvals
+    runner.tool_contexts["t1"].env.clear()
     runner.tool_contexts["t1"].env["CDPATH"] = str(tmp_path / "other")
     adapter.staff_env(runner.tool_contexts["t1"])
     unsafe_cd = card("unsafe-cdpath")
