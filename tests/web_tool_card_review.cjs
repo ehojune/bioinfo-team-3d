@@ -104,6 +104,8 @@ test('tool reasons are deterministic and grant categories do not inherit high ri
   const destructive={kind:'tool_permission',detail:{grant_category:'unresolved_path',tool_input:{command:'cd outputs && rm -r data'},policy_reason:'Bash read scope is ambiguous (policy.private_paths)'},pi_reason:'위험 등급: 높음 · 삭제'};
   assert.match(toolCardReason(destructive),/삭제/);
   assert.ok(decisionFacts(destructive).some(([label,value])=>label==='위험 등급' && value==='높음'));
+  const mixed={...destructive,detail:{...destructive.detail,policy_reason:'Bash reaches a closed or credential path'}};
+  assert.match(toolCardReason(mixed),/닫힌 경로/); assert.match(toolCardReason(mixed),/삭제/);
   const quoted={...destructive,detail:{...destructive.detail,tool_input:{command:"printf 'rm -r data'"}}};
   assert.match(toolCardReason(quoted),/경로를 미리 확인하지 못했습니다/);
   assert.ok(!decisionFacts(quoted).some(([label])=>label==='위험 등급'));

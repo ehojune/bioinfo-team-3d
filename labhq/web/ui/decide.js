@@ -463,16 +463,17 @@ function explicitToolAction(value) {
 export function toolCardReason(value) {
   const d = value.detail || {}, policy = String(d.policy_reason || '').toLowerCase();
   const category = d.grant_category;
-  if (d.internal_row_output === true) return '내부 자료 원본 행이 노출될 수 있어 확인이 필요합니다.';
   const action = explicitToolAction(value);
-  if (action === 'delete') return '파일이나 폴더 삭제가 포함되어 확인이 필요합니다.';
-  if (action === 'network') return '네트워크 통신이 포함되어 확인이 필요합니다.';
-  if (action === 'scheduler') return '스케줄러 작업을 실행하기 전에 확인이 필요합니다.';
+  const actionText = {delete:'파일이나 폴더 삭제가 포함되어 확인이 필요합니다.', network:'네트워크 통신이 포함되어 확인이 필요합니다.', scheduler:'스케줄러 작업을 실행하기 전에 확인이 필요합니다.'}[action];
+  const withAction = text => actionText ? `${text} ${actionText}` : text;
+  if (d.internal_row_output === true) return withAction('내부 자료 원본 행이 노출될 수 있어 확인이 필요합니다.');
+  if (/restricted|data_zones|통제|closed|credential/.test(policy)) return withAction('닫힌 경로나 자격 증명 경로가 포함되어 확인이 필요합니다.');
+  if ((/personal path/.test(policy) || (!category && /private_paths/.test(policy))) && !/ambiguous/.test(policy)) return withAction('다른 개인 경로에 접근할 수 있어 확인이 필요합니다.');
+  if (/outside/.test(policy) && /write/.test(policy)) return withAction('작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.');
+  if (actionText) return category === 'unresolved_path' ? withAction('경로를 미리 확인하지 못했습니다.') : actionText;
   if (category === 'internal_read' || /internal data zone/.test(policy)) return '내부 자료를 읽으려 합니다. 출력 범위를 확인해 주세요.';
   if (category === 'workspace') return '작업 폴더에서 도구를 실행하려 합니다.';
   if (category === 'unresolved_path') return '경로를 미리 확인하지 못했습니다.';
-  if (/restricted|data_zones|통제|closed|credential/.test(policy)) return '닫힌 경로나 자격 증명 경로가 포함되어 확인이 필요합니다.';
-  if (/private_paths|personal path/.test(policy) && !/ambiguous/.test(policy)) return '다른 개인 경로에 접근할 수 있어 확인이 필요합니다.';
   if (/recursive|delete|삭제|\b(?:rm|rmdir|unlink|remove-item)\b/.test(policy)) return '파일이나 폴더 삭제가 포함되어 확인이 필요합니다.';
   if (/network|네트워크|\b(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)\b/.test(policy)) return '네트워크 통신이 포함되어 확인이 필요합니다.';
   if (/outside|write/.test(policy)) return '작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.';
