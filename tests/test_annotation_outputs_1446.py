@@ -184,6 +184,34 @@ def test_same_size_change_with_restored_mtime_is_excluded_without_poisoning_othe
     assert "content changed" in result.excluded[changed]
 
 
+def test_failed_verification_reads_consume_the_cumulative_budget(tmp_path, monkeypatch):
+    from labhq.adapters.held_dir import HeldDir
+
+    ws = workspace(tmp_path)
+    paths = [f"outputs/annotation/{name}.json" for name in ("a", "b", "c")]
+    for path in paths:
+        put(ws, path, b"original")
+    rows, _ = scan(ws)
+    for path in paths:
+        target = ws.dir / path
+        before = target.stat()
+        target.write_bytes(b"modified")
+        os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    opened = []
+    original_open = HeldDir.open_read_file
+
+    def track_open(self, name, *args, **kwargs):
+        opened.append(name)
+        return original_open(self, name, *args, **kwargs)
+
+    monkeypatch.setattr(HeldDir, "open_read_file", track_open)
+    result = collect(ws, records=rows, max_file=8, max_total=8)
+    assert not result.outputs and not result.hashes
+    assert opened == ["a.json"]
+    assert "content changed" in result.excluded[paths[0]]
+    assert all("verification byte budget" in result.excluded[path] for path in paths[1:])
+
+
 @pytest.mark.skipif(os.name != "nt", reason="native Windows junction")
 def test_windows_junction_is_reported_and_never_followed(tmp_path):
     ws = workspace(tmp_path)

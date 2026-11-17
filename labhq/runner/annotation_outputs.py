@@ -43,6 +43,7 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
     sizes = {path: row.get("size") for path, row in by_path.items()}
     excluded = {}
     baseline = staging_problem(kept, kept_hashes, sizes, max_file, max_total)
+    verification_left = max(0, max_total - sum(int(sizes.get(path) or 0) for path in kept))
 
     for path in sorted(candidates, key=lambda p: (p != "outputs/annotation_queries.jsonl", p)):
         if path == "outputs/annotation":
@@ -68,6 +69,9 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
         if credential_path(path):
             excluded[path] = "protected artifact path"
             continue
+        if int(row.get("size") or 0) > verification_left:
+            excluded[path] = "annotation verification byte budget exhausted"
+            continue
         try:
             parts = path.split("/")  # staging_problem already checked portable, traversal-free names
             with _folder(workdir, parts[:-1]) as parent:
@@ -81,8 +85,9 @@ def collect_annotation_outputs(workdir: Path, records: list[dict], outputs: list
                            for key in ("dev", "ino")):
                         raise ValueError("file replaced since the output scan")
                     actual, read = hashlib.sha256(), 0
-                    while chunk := source.read(min(1024 * 1024, max_file + 1 - read)):
+                    while chunk := source.read(min(1024 * 1024, max_file + 1 - read, verification_left)):
                         read += len(chunk)
+                        verification_left -= len(chunk)  # failed checks consume the budget too
                         actual.update(chunk)
                         if read > max_file:
                             raise ValueError("file grew beyond the per-file input limit")
