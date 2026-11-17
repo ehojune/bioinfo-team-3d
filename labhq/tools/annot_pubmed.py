@@ -1,7 +1,7 @@
 """Bounded PubMed bibliography/abstract collection; no paper bodies or shell payloads.
 
 API contract: https://www.ncbi.nlm.nih.gov/books/NBK25499/ (2026-11-17).
-One ESearch snapshots up to 10,000 IDs; EFetch retrieves those exact IDs in batches.
+One ESearch snapshots up to 9,999 IDs; EFetch retrieves those exact IDs in batches.
 Pages share bounded owned JSONL bundles, with byte ranges and page hashes. A run-specific manifest survives partial
 failure/cancellation and is collected by the normal annotation-output boundary.
 """
@@ -23,7 +23,7 @@ from ..runner.step_inputs import MAX_FILES
 from .annot import Annotator, EUTILS, LookupFailed, QUERY_LOG, RESULT_DIR, ResponseTooLarge, _now, _sha256
 
 DEFAULT_MAX_RECORDS = 1000
-MAX_RECORDS = 10000  # PubMed ESearch cannot enumerate beyond this; never claim completeness there.
+MAX_RECORDS = 9999  # Conservative client cap below PubMed's documented 10,000-record search window.
 PAGE_SIZE = 100
 PAGE_BYTES = 8 * 1024 * 1024
 BUNDLE_BYTES = 8 * 1024 * 1024  # Below the default request export's 50 MiB per-file cap.

@@ -63,10 +63,10 @@ async def test_two_maximum_searches_reach_next_step_without_losing_pages(tmp_pat
     upstream = workspace(tmp_path)
     results = []
     for _ in range(2):
-        collection, client, _ = make(upstream.dir, Provider(10000, "short"), 10000)
+        collection, client, _ = make(upstream.dir, Provider(9999, "short"), 9999)
         async with client:
             results.append(await collection.run())
-    assert all(r["complete"] and r["fetched_count"] == 10000 for r in results)
+    assert all(r["complete"] and r["fetched_count"] == 9999 for r in results)
     captured = collect(upstream)
     assert not captured.excluded
     assert len(captured.outputs) == 5
@@ -89,7 +89,7 @@ async def test_two_maximum_searches_reach_next_step_without_losing_pages(tmp_pat
                 data = source.read(page["bytes"])
             assert hashlib.sha256(data).hexdigest() == page["sha256"]
             count += len(json.loads(data)["records"])
-        assert count == saved["unique_count"] == 10000
+        assert count == saved["unique_count"] == 9999
 
 
 async def test_631_large_korean_pages_reach_next_step_with_exact_hashes(tmp_path):
@@ -140,7 +140,7 @@ async def test_631_large_korean_pages_reach_next_step_with_exact_hashes(tmp_path
 
 @pytest.mark.parametrize("count,limit,fetched,reason", [
     (0, 1000, 0, "exhausted"), (631, 150, 150, "record_limit"),
-    (10001, 10000, 10000, "record_limit"), (200, 200, 200, "exhausted")])
+    (10000, 9999, 9999, "record_limit"), (9999, 9999, 9999, "exhausted"), (200, 200, 200, "exhausted")])
 async def test_count_and_record_caps(tmp_path, count, limit, fetched, reason):
     provider = Provider(count, "short")
     collection, client, _ = make(tmp_path, provider, limit)
@@ -344,7 +344,7 @@ async def test_book_and_metadata_records_do_not_become_full_text(tmp_path):
 
 
 @pytest.mark.parametrize("query,limit", [("", 1000), ("a\nb", 1000), ("x" * 4001, 1000),
-    ("x", 0), ("x", 10001), ("x", True), ("x", 1.5)])
+    ("x", 0), ("x", 10000), ("x", 10001), ("x", True), ("x", 1.5)])
 def test_invalid_arguments_do_not_send(tmp_path, query, limit):
     with pytest.raises(ValueError):
         pubmed.PubmedCollection(annot.Annotator(None, tmp_path, None), query, limit)
