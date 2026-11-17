@@ -1,10 +1,10 @@
 pr: null
 rows:
-- sha: dad93abd
+- sha: dad93ab
   at: 2026-11-17 16:45
   text: 요청이나 집계가 아직 없는 초기 화면도 오류 없이 표시한다.
   summary: 요청 정보를 기다리는 동안에도 웹 화면이 멈추지 않도록 고쳤습니다.
-- sha: 0e576bc2
+- sha: 0e576bc
   at: 2026-11-17 16:42
   text: Antigravity 비용과 오래된 가격표 경고의 엔진 이름을 유지한다.
   summary: Antigravity 비용이 다른 엔진과 구분되도록 표시합니다.
