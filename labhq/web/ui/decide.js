@@ -481,6 +481,17 @@ export function toolCardReason(value) {
   if (/ambiguous/.test(policy)) return '경로를 미리 확인하지 못했습니다.';
   return '자동 허용 범위 밖이어서 실행 전 확인이 필요합니다.';
 }
+export function toolCardExplanation(value) {
+  const supplied = String(value.pi_reason || '').trim();
+  const lines = supplied.split(/\n+/), first = lines[0] || '';
+  // The producer puts task purpose and step on the first line. Rules and grades
+  // can be stale after classification, so render those from current evidence.
+  const structured = /^(?:작업 목적|논문 ‘)/.test(first);
+  const safeLegacy = lines.length === 1 && /[가-힣]/.test(first) && !/[A-Za-z_]/.test(first)
+    && !/높음|개인 경로|자격 증명|통제|닫힌 경로/.test(first);
+  const context = structured || safeLegacy ? plainPiText(first) : '';
+  return [context, toolCardReason(value)].filter(Boolean).join('\n');
+}
 export function approvalSummaryText(request, summary) {
   if (!request || !summary || summary.request_id !== request.id) return '집계 확인 불가';
   return `이 요청에서 자동 승인 ${summary.automatic_approved_count}건 · 허용한 부류: ${summary.granted_categories.map(grantCategoryLabel).join(', ') || '없음'} · 현재 유효: ${summary.active_grant_categories.map(grantCategoryLabel).join(', ') || '없음'}`;
@@ -552,7 +563,7 @@ export function renderDetail(container, kind, detail, approval = null) {
     if (container._detailSignature === signature) return;
     container._detailSignature = signature;
     container.replaceChildren(); container.hidden = false;
-    piText(add(container, 'p'), kind === 'tool_permission' ? toolCardReason(approval || {detail}) : approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
+    piText(add(container, 'p'), kind === 'tool_permission' ? toolCardExplanation(approval || {detail}) : approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
     piText(add(container, 'p'), approval?.pi_outcome || '승인하면 제안된 작업을 진행합니다.');
     const fold = expandableText(container, '', {fold: true, summary: '자세히', truncated: detail?.input_truncated});
     // The existing field labels and exact received strings remain accessible inside one closed fold.
@@ -755,7 +766,7 @@ function updateJournalCard(p, value, suggestion) {
       const cell = add(p.facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
     }
   }
-  syncExpandableText(p.reason, kind === 'tool_permission' ? toolCardReason(value) : value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
+  syncExpandableText(p.reason, kind === 'tool_permission' ? toolCardExplanation(value) : value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
   syncExpandableText(p.outcome, value.pi_outcome || '', {pi: true});
   p.reason.hidden = !p.reason.textContent; p.outcome.hidden = !p.outcome.textContent;
   // These legacy renderers already fold their raw fields. Reuse that content inside the
