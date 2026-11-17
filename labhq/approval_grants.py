@@ -167,6 +167,28 @@ _POWERSHELL_FILE_COMMANDS = {"new-item", "ni", "set-content", "add-content", "ou
 _REDIRECTS = {">", ">>", "<", "2>", "2>>", "&>", "1>"}
 
 
+def _plain_sed(args: list[str]) -> bool:
+    """A sed call whose script is one substitution with safe flags or a line print: no e, r, w or other file names.
+
+    The first non-option word, or each `-e` value, is the script; the rest are input files."""
+    scripts, files, expect = [], [], False
+    for word in args:
+        if expect:
+            scripts.append(word)
+            expect = False
+        elif word in {"-e", "--expression"}:
+            expect = True
+        elif word.startswith("-") and len(word) > 1:
+            continue
+        else:
+            files.append(word)
+    if not scripts and files:
+        scripts.append(files.pop(0))
+    substitution = r"s([^\w\s\\])(?:(?!\1)[^\\]|\\.)*\1(?:(?!\1)[^\\]|\\.)*\1[gIp0-9]*"
+    return bool(scripts) and all(re.fullmatch(substitution, script) or re.fullmatch(r"[0-9]+(?:,[0-9]+)?p", script)
+                                 for script in scripts)
+
+
 def _task_local(command: str, parts: list[list[str]] | None, bases: list[str], workdir: str,
                 powershell: bool = False) -> bool:
     """Whether a plain file command only names paths that really resolve inside the task folder."""
@@ -179,6 +201,8 @@ def _task_local(command: str, parts: list[list[str]] | None, bases: list[str], w
         for word in words[1:]:
             if word in _REDIRECTS:
                 continue
+            if powershell and re.search(r"[,@()]", word):
+                return False  # a PowerShell array, splat or subexpression can name more paths
             if not (word.startswith("-") and len(word) > 1):
                 operands.append(word)
             elif not powershell and word.startswith("--"):
@@ -188,6 +212,8 @@ def _task_local(command: str, parts: list[list[str]] | None, bases: list[str], w
                 return False  # an attached value (`-o/tmp/out`, `-i.bak`) is not read here
             elif words[0] == "sed" and "f" in word[1:]:
                 return False  # a sed script file can write anywhere (`w FILE`)
+        if words[0] == "sed" and not _plain_sed(words[1:]):
+            return False
     for word in operands:
         for base in bases:
             path = word if _absolute(word) else posixpath.join(_norm(base), word)

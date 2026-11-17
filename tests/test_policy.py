@@ -250,6 +250,12 @@ def test_request_grant_dynamic_quote_and_unresolved_write(tmp_path, command, cat
     ("Bash", "sort --files0-from=outputs/list -o outputs/out outputs/a.txt", "unresolved_path", None),
     ("Bash", "sed -f outputs/edit.sed outputs/a.txt > outputs/b.txt", "unresolved_path", None),
     ("Bash", "sort -o outputs/b.txt outputs/a.txt", "workspace", None),
+    ("Bash", "sed -i s/x/y/g outputs/a.txt", "workspace", None),
+    ("Bash", "sed 'e sh outputs/run.sh' outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("Bash", "sed 'r outputs/c.txt' outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("Bash", "sed 's/x/y/w outputs/c.txt' outputs/a.txt > outputs/b.txt", "unresolved_path", None),
+    ("PowerShell", "Set-Content outputs/a,outputs/b x", "unresolved_path", None),
+    ("PowerShell", "Set-Content @args x", "unresolved_path", None),
     # A script's runtime paths are not visible: still unresolved.
     ("Bash", "python outputs/run.py", "unresolved_path", None),
 ])
