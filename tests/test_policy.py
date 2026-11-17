@@ -479,6 +479,8 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         f'LD_PRELOAD+=/work/evil.so cat "{internal.as_posix()}/a"',
         f'GCONV_PATH+=/work/mod cat "{internal.as_posix()}/a"',
         f'CDPATH+=/work cat "{internal.as_posix()}/a"',
+        f'env L\\D_PRELOAD=/work/evil.so cat "{internal.as_posix()}/a"',
+        f'env L\'D_PRE\'LOAD=/work/evil.so cat "{internal.as_posix()}/a"',
         f'git -C "{tmp_path.as_posix()}" clean -fd "{internal.as_posix()}"',
         f'find "{internal.as_posix()}" -delete',
     ]):
