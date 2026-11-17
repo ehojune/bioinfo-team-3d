@@ -440,8 +440,13 @@ class _Handle:
             _kernel()[0].CloseHandle(self._raw)
             self._raw = None
 
+    def exited(self) -> bool | None:
+        """Check the pinned process itself; an unreadable wait is not an exit."""
+        result = _kernel()[0].WaitForSingleObject(self._raw, 0)
+        return True if result == 0 else False if result == 0x102 else None
 
-def _open(pid: int, *, terminate: bool = True) -> _Handle | None:
+
+def _open(pid: int, *, terminate: bool = True, synchronize: bool = False) -> _Handle | None:
     """Pin `pid`: a handle that can query and end it (query only with `terminate=False`, which is all that holding a
     PID needs and works on more processes). None when there is no such process; OSError when it cannot be opened or
     its creation time cannot be read (then it cannot be checked, so it is not touched)."""
@@ -451,6 +456,8 @@ def _open(pid: int, *, terminate: bool = True) -> _Handle | None:
 
     kernel, file_time, _entry = _kernel()
     rights = _PROCESS_QUERY_LIMITED_INFORMATION
+    if synchronize:
+        rights |= _SYNCHRONIZE
     if terminate:
         rights |= _PROCESS_TERMINATE | _SYNCHRONIZE
     raw = kernel.OpenProcess(rights, False, pid)
@@ -464,3 +471,30 @@ def _open(pid: int, *, terminate: bool = True) -> _Handle | None:
         kernel.CloseHandle(raw)
         raise OSError(f"PID {pid}의 생성 시각을 읽을 수 없어 확인하지 못함")
     return _Handle(pid, created, raw, _image_path(kernel, raw))
+
+
+def pin_direct_child(parent_pid: int, parent_created: int | None, child_pid: int) -> _Handle | None:
+    """Pin a direct child only when both snapshots and both process generations agree."""
+    if not parent_created or parent_pid == child_pid:
+        return None
+    parent = child = None
+    try:
+        first = _table()
+        if first is None or dict(first).get(child_pid) != parent_pid:
+            return None
+        parent = _open(parent_pid, terminate=False)
+        child = _open(child_pid, terminate=False, synchronize=True)
+        if parent is None or child is None or parent.created != parent_created or child.created < parent.created:
+            return None
+        second = _table()
+        if second is None or dict(second).get(child_pid) != parent_pid:
+            return None
+        result, child = child, None
+        return result
+    except (OSError, ValueError, AttributeError):
+        return None
+    finally:
+        if parent is not None:
+            parent.close()
+        if child is not None:
+            child.close()
