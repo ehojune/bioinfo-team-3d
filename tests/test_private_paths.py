@@ -169,6 +169,13 @@ def test_unknown_read_keeps_lexical_evidence_past_resolution_cap(tmp_path, monke
     ('cd {plugin} && exit; wc -l ../notes.txt', False),
     ('cd {plugin} & wc -l ../notes.txt', False),
     ('command cd {plugin}; wc -l ../notes.txt', True),
+    ('(cd {plugin}; wc -l ../notes.txt)', True),
+    ('{ cd {plugin}; wc -l ../notes.txt; }', True),
+    ('(cd {plugin}); wc -l ../notes.txt', False),
+    ('{ cd {plugin}; }; wc -l ../notes.txt', True),
+    ('pushd {plugin}; popd; wc -l ../notes.txt', False),
+    ('cd {plugin}; cd -; wc -l ../notes.txt', False),
+    ('cd {plugin}; cd -; cd -; wc -l ../notes.txt', True),
 ])
 def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequence, closed):
     from tests.test_tool_card_explain import _system_commands
@@ -178,7 +185,7 @@ def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequ
     plugin = config / 'plugins' / 'skill'
     plugin.mkdir(parents=True)
     task.mkdir()
-    command = sequence.format(plugin='"' + plugin.as_posix() + '"')
+    command = sequence.replace('{plugin}', '"' + plugin.as_posix() + '"')
     decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
                              allowed_roots=[str(task)], workdir=str(task), private_enabled=True,
                              private_paths=[str(config)], private_open_reads=[str(task), str(plugin)])

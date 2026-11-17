@@ -54,3 +54,5 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - 다음 리뷰의 OR guard·위치 builtin P1 2건도 수리했다. 앞선 폴더 이동에서 도달 가능한 위치만 다음 명령으로 넘기고 `shell_cd_bases`의 위치 표기를 재사용한다. guard·pushd·builtin·`--` 5건 추가, 표적 47건 통과.
 - guard 실행 분기 4건과 background·command wrapper 2건도 추가했다. 종료한 분기와 건너뛴 분기를 구별하고 background 위치 이동을 다음 명령에 적용하지 않는다.
 - 관련 4개 파일 729 passed, 10 skipped. 분기·wrapper 최종 보완 뒤 표적 53 passed이며 background의 기존 `deny`도 유지했다.
+- 그룹·subshell·디렉터리 복원 P1 2건도 수리했다. 상태에 OLDPWD·directory stack을 보존하고 subshell이 끝나면 바깥 상태로 돌아간다. 양방향 7건 추가, 표적 60건 통과.
+- 최종 관련 4개 파일: 742 passed, 10 skipped.
