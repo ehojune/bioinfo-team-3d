@@ -11,6 +11,16 @@
 - 영문판 `docs/reference/eval-suite.en.md`를 새로 만들었습니다.
 - 채점표 내용, 현장 정보, 로컬 경로는 넣지 않았습니다. 첫 갈래 HPC 단계 시각과 9번 labhq 카드 수는 기록에 없어 비워 두었습니다.
 
+# #1445 — 요청 단위 묶음 허용
+
+- 승인 API에서 명시적으로 선택한 요청과 부류만 허용한다. 이후 자동 승인에 근거 카드 ID를 남기고 요청 종료·취소 때 지운다.
+- runner가 자신의 작업 context로 부류를 판정한다. 명령에 드러난 보호 경로·credential·scheduler·네트워크·범위 밖 쓰기·삭제는 개별 확인 또는 거부한다. 코드 실행 중 동작은 검사할 수 없다.
+- internal 경로가 보이는 명령은 전체가 지원되는 리터럴 읽기일 때만 internal 읽기 grant로 분류한다. 확인되지 않은 쓰기·복합 명령은 개별 확인하며 작업 폴더 분석 코드 묶음은 유지한다.
+- 기록 재생은 PC 126→48(개별 46·첫 부류 2), 시험 79→15(개별 13·첫 부류 2)이다. PC의 기존 internal 읽기 18장이 개별 확인으로 바뀌었다. 보존 설정과 현재 파일 상태를 쓴 추정이며 실제 요청 결과나 안전성 검증이 아니다.
+- 관련 회귀 555 passed, 6 skipped. 저장된 각 grant가 있어도 드러난 internal 쓰기가 자동 승인되지 않는지 runner→gateway fixture로 확인했다.
+- 리뷰 지적의 `gh`, `git`, `openssl`, `smtplib`, `telnetlib`, `http.server` 표기를 묶음 허용에서 제외했다. 저장된 grant가 있는 fixture에서 개별 카드로 남는지 확인했다.
+- Claude 실행에 OS 격리를 추가하지 않았다. 웹 버튼은 후속 작업이며 실제 요청·HPC·배포·인스턴스 재시작은 하지 않았다.
+
 # #1446 PR2 — PubMed 페이지 수집
 
 - `pubmed_search`가 서지·초록을 100건씩 조회해 검색별 8MiB 이하 JSONL과 manifest에 저장한다. 직원에는 경로·건수·상태만 반환한다. 검색식·페이지 byte 범위와 SHA·전체 bundle SHA·found/fetched/unique·완료 상태를 남긴다.
