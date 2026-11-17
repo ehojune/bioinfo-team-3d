@@ -242,3 +242,68 @@ def test_consumer_rejects_changed_hash_and_clears_partial_snapshot(tmp_path):
     staged, refused = stage_inputs(consumer, {"search": artifact}, tmp_path, [], [], 100, 1000)
     assert not staged and "search" in refused
     assert not (consumer.dir / "inputs/search/annotation/a.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("baseline", [False, True])
+@pytest.mark.parametrize("scan_note", [False, True])
+async def test_runner_collects_unlisted_annotation_and_stages_it_for_consumer(tmp_path, monkeypatch, baseline, scan_note):
+    from labhq.models import TaskResult
+    from tests.test_private_paths import _capture_runner, _runner_settings
+    from tests.test_tool_card_explain import _system_commands
+
+    settings = _runner_settings(tmp_path, None)
+    _system_commands(monkeypatch)
+    runner, _ = _capture_runner(settings, monkeypatch)
+    payload = json.dumps({"results": [{"id": i, "abstract": "가상 문헌 초록 " * 300}
+                                      for i in range(631)]}, ensure_ascii=False).encode("utf-8")
+    assert len(payload) > 2 * 1024 * 1024
+    paths = ["outputs/annotation/search-page.json", "outputs/annotation_queries.jsonl"]
+    seen = {}
+    if scan_note:
+        original_scan = TaskWorkspace.scan_output_records
+
+        def noted_scan(self, *args, **kwargs):
+            records, note = original_scan(self, *args, **kwargs)
+            return records, note or "fixture: bounded scan incomplete"
+
+        monkeypatch.setattr(TaskWorkspace, "scan_output_records", noted_scan)
+
+    class Adapter:
+        async def run(self, ctx):
+            if baseline:
+                assert ctx.before_spawn() is None
+            seen[ctx.task.id] = ctx
+            if ctx.task.id == "search":
+                for path, content in zip(paths, [payload, b'{"fixture":true}\n']):
+                    target = ctx.workdir / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content)
+                (ctx.workdir / "outputs/annotation/auth.json").write_bytes(b"synthetic secret")
+                (ctx.workdir / "outputs/unrelated.json").write_bytes(b"not collected")
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, outputs=[])
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: Adapter())
+    result = await runner.run_task(Task(id="search", agent_id="worker", request_id="r", prompt="fixture",
+                                       meta={"kind": "step", "step_id": "search"}))
+    assert result.ok, result.error
+    assert set(result.outputs) == set(paths)
+    assert any("bounded scan incomplete" in warning for warning in result.step_warnings) == scan_note
+    assert any("outputs/annotation/auth.json" in warning and "protected" in warning
+               for warning in result.step_warnings)
+    assert any(event["type"] == "agent.log" and "outputs/annotation/auth.json" in event["data"].get("text", "")
+               for event in runner.store.pending())
+    upstream = seen["search"].workdir
+    artifact = {"task_id": "search", "workdir": str(upstream), "outputs": result.outputs,
+                "output_sha256": result.output_sha256}
+    consumer = await runner.run_task(Task(id="consumer", agent_id="worker", request_id="r", prompt="fixture",
+        meta={"kind": "step", "step_id": "synthesis", "upstream_steps": {"search": str(upstream)},
+              "upstream_dirs": [str(upstream)], "upstream_artifacts": {"search": artifact}}))
+    assert consumer.ok, consumer.error
+    for path in paths:
+        target = seen["consumer"].workdir / "inputs/search" / path.removeprefix("outputs/")
+        assert hashlib.sha256(target.read_bytes()).hexdigest() == result.output_sha256[path]
+    copied = seen["consumer"].workdir / "inputs/search/annotation/search-page.json"
+    assert len(json.loads(copied.read_bytes())["results"]) == 631
+    assert not (copied.parent / "auth.json").exists()
+    assert not (copied.parents[1] / "unrelated.json").exists()
