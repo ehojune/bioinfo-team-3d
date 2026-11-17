@@ -2963,7 +2963,7 @@ class Runner:
             output_scan_notes: list[str] = []
             output_shape_before = None
             # A declared step artifact is a future ancestor input. Hash through the same admission cap;
-            # Steps without declared artifacts retain their configured observation/output cap.
+            # unlisted annotations are verified separately without raising the cap for unrelated outputs.
             artifact_hash_limit = self.s.runner.output_hash_max_bytes
             if (task.meta.get('kind') == 'step' and task.meta.get('outputs')) or task.meta.get('kind') == 'result_correction':
                 artifact_hash_limit = max(artifact_hash_limit, min(
@@ -2996,17 +2996,14 @@ class Runner:
                 step's final write (`stage_run`, #1137); a step that is being cut short writes it now."""
                 nonlocal output_records, observed_outputs
                 record = ws.stage_run if stage else ws.aupdate_run
-                if output_before is None:
-                    records, _note = await asyncio.to_thread(
-                        ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
-                        self.s.runner.reference_scan_max_depth, artifact_hash_limit)
-                    await _maybe_await(record(task.id, environment_record=environment_record(records)))
-                    return
                 output_records, note = await asyncio.to_thread(
                     ws.scan_output_records, zones, self.s.runner.reference_scan_max_entries,
                     self.s.runner.reference_scan_max_depth, artifact_hash_limit)
                 if note:
                     output_scan_notes.append(note)
+                if output_before is None:
+                    await _maybe_await(record(task.id, environment_record=environment_record(output_records)))
+                    return
                 observed_at_ns = time.time_ns()
                 tool_uses = ws.run_tool_uses(task.id) if agent.engine == Engine.claude_code else []
                 observed_outputs = [
@@ -3347,6 +3344,17 @@ class Runner:
         hashed = {row["path"]: row["sha256"] for row in output_records
                   if isinstance(row.get("sha256"), str) and row["path"] in result.outputs}
         result.output_sha256 = hashed
+        from .annotation_outputs import collect_annotation_outputs
+        annotation = await asyncio.to_thread(
+            collect_annotation_outputs, ws.dir, output_records, result.outputs, result.output_sha256,
+            max_file=self.s.runner.input_hash_max_file_bytes,
+            max_total=self.s.runner.input_hash_max_total_bytes, scan_notes=output_scan_notes)
+        result.outputs, result.output_sha256 = annotation.outputs, annotation.hashes
+        hashed = result.output_sha256
+        for path, reason in annotation.excluded.items():
+            warning = f"Annotation output excluded: {path}: {reason}"
+            result.step_warnings = list(dict.fromkeys([*result.step_warnings, warning]))
+            await emit("agent.log", {"level": "warn", "text": warning})
         if task.meta.get("kind") == "result_correction" and not whole_hpc and result.ok:
             from .step_inputs import repair_outputs
             try:

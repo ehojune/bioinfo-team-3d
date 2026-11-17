@@ -18,6 +18,7 @@
     "tests/test_annot_literature.py",
     "tests/test_annot_regulatory.py",
     "tests/test_annot_structure.py",
+    "tests/test_annotation_outputs_1446.py",
     "tests/test_approval_closed_grammar.py",
     "tests/test_approval_durable_606.py",
     "tests/test_approval_fatigue.py",
@@ -437,6 +438,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_annotation_outputs_1446.py": "Annotation artifact capture, native links, UTF-8 hashes and bounded ancestor-input staging; synthetic records only.",
     "tests/test_access_deny_1413.py": "Windows Codex ancestor-input refusal and non-blocked protection paths; mock adapters only.",
     "tests/test_wiki_audit_transport_1037.py": "Runner filesystem and exact-byte audit transport, wire validation and CP2 refusal; synthetic fixtures only.",
     "tests/test_vm_provision_666.py": "Windows PowerShell 5.1 VM fixture provisioning, ACL, destructive removal confirmation and offline lifecycle contracts; OS/network/Hyper-V effects are mocked.",
