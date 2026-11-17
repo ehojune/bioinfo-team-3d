@@ -14,6 +14,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:30 | [`e5ff114`](https://github.com/ehojune/bioinfo-team-3d/commit/e5ff114) | **HPC 도구 환경 폴더를 빠진 결과로 잘못 알리지 않습니다.**<br>원격 산출 판정과 같이 의도적으로 생략된 environment folder를 경고에서 제외한다. Refs |
+| 12:25 | [`a17764a`](https://github.com/ehojune/bioinfo-team-3d/commit/a17764a) | **HPC 미수신 알림을 해당 작업의 피드에 표시합니다.**<br>현재 task·agent·request 신원으로 알림을 보내고 재시작 회귀를 확인했다. Refs |
+| 12:20 | [`c4314fb`](https://github.com/ehojune/bioinfo-team-3d/commit/c4314fb) | **HPC 산출을 PC로 받지 못한 경우 파일과 이유를 알려 줍니다.**<br>선언된 원격 산출의 수신 상태를 단계 결과와 알림에 표시한다. 원격 단계 성공과 후속 HPC 전달은 유지하며 실제 HPC는 미검증이다. Refs |
 | 09:50 | [`577fc7a`](https://github.com/ehojune/bioinfo-team-3d/commit/577fc7a) | **Windows 가상환경에서도 직원 종료를 확인한 뒤 재시도할 수 있게 고쳤습니다.**<br>launcher의 Job 자식 신원과 종료를 확인하고 확인하지 못하면 재시도를 막는다 (#1413). |
 
 ## 2026-11-16
