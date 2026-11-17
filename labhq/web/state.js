@@ -272,7 +272,7 @@ function costLabel(q) {
 }
 function engineCostLabel(summary) {
   if (!summary || !summary.by_engine) return '';
-  const engineName = name => ({claude_code: 'Claude Code', codex: 'Codex', gemini: 'Gemini', cli: 'CLI'})[name] || '기타 엔진';
+  const engineName = name => ({claude_code: 'Claude Code', codex: 'Codex', gemini: 'Gemini', antigravity: 'Antigravity', cli: 'CLI'})[name] || '기타 엔진';
   const engines = Object.entries(summary.by_engine).map(([name, e]) => `${engineName(name)} ${summaryParts(e)}`).join(' · ');
   const stale = (summary.prices || []).filter(p => p && p.stale).map(p => `${engineName(p.engine)} ${p.model} (${p.checked_on} 확인)`);
   // `model_tier_mismatch:<staff>:<tier>:<model that ran>` (#625); a model name may hold ':' itself.
