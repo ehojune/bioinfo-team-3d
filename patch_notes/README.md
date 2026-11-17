@@ -14,9 +14,16 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 13:16 | [`72b0bcf`](https://github.com/ehojune/bioinfo-team-3d/pull/1448/commits/72b0bcf) | **받아 둔 주석 파일을 HPC 검증에서도 인식합니다.**<br>리뷰 P1의 오래된 hash 사본을 수집 결과로 갱신한다. mock remote manifest와 receipt로 정상 수신 허용·receipt 누락 거부를 검증하며 실제 HPC 접속은 없다 (#1446). |
+| 13:10 | [`b859a2f`](https://github.com/ehojune/bioinfo-team-3d/pull/1448/commits/b859a2f) | **검증에 실패한 파일도 읽기 예산에서 차감합니다.**<br>재리뷰 P2의 누적 검증 byte 예산을 추가한다. 같은 크기·복원 mtime 변조 파일 세 개의 회귀로 예산 소진 뒤 다른 후보를 열지 않음을 확인한다 (#1446). |
+| 13:05 | [`37fc296`](https://github.com/ehojune/bioinfo-team-3d/pull/1448/commits/37fc296) | **큰 파일 검증은 전달할 주석 파일에만 적용합니다.**<br>재리뷰 P2에 따라 일반 산출의 관찰 hash 상한을 유지한다. 상한 때문에 hash가 없는 annotation만 입력 제한·descriptor 신원 검사 뒤 읽으며 회귀 87 passed·3 skipped (#1446). |
+| 12:57 | [`2ec5c13`](https://github.com/ehojune/bioinfo-team-3d/pull/1448/commits/2ec5c13) | **산출 목록이 비어도 큰 주석 파일을 전달합니다.**<br>리뷰 P2의 1KB 관찰 hash 상한 회귀 4건을 재현했다. 빈 outputs 단계에도 입력용 hash 상한을 적용해 허용 크기의 annotation이 수집되도록 한다 (#1446). |
+| 12:50 | [`fa0c9fc`](https://github.com/ehojune/bioinfo-team-3d/pull/1448/commits/fa0c9fc) | **직원이 빠뜨린 주석 파일도 다음 단계에 전달합니다.**<br>runner에 수집 호출점을 연결하고 baseline 없는 분기의 scan·경고를 보존한다. mock adapter의 빈 산출 목록에서도 631건·SHA가 다음 단계 입력에 유지되는 회귀와 한영 매뉴얼을 추가한다 (#1446). |
 | 12:30 | [`e5ff114`](https://github.com/ehojune/bioinfo-team-3d/commit/e5ff114) | **HPC 도구 환경 폴더를 빠진 결과로 잘못 알리지 않습니다.**<br>원격 산출 판정과 같이 의도적으로 생략된 environment folder를 경고에서 제외한다. Refs |
 | 12:25 | [`a17764a`](https://github.com/ehojune/bioinfo-team-3d/commit/a17764a) | **HPC 미수신 알림을 해당 작업의 피드에 표시합니다.**<br>현재 task·agent·request 신원으로 알림을 보내고 재시작 회귀를 확인했다. Refs |
 | 12:20 | [`c4314fb`](https://github.com/ehojune/bioinfo-team-3d/commit/c4314fb) | **HPC 산출을 PC로 받지 못한 경우 파일과 이유를 알려 줍니다.**<br>선언된 원격 산출의 수신 상태를 단계 결과와 알림에 표시한다. 원격 단계 성공과 후속 HPC 전달은 유지하며 실제 HPC는 미검증이다. Refs |
+| 12:12 | [`e2709fc`](https://github.com/ehojune/bioinfo-team-3d/pull/1448/commits/e2709fc) | **내용이 바뀐 주석 파일은 수집 목록에서 제외합니다.**<br>리뷰 P2에 따라 재개방 descriptor에서 상한 안의 SHA를 다시 계산한다. 같은 크기·복원 mtime 변조 회귀 포함 배포 venv 16 passed·2 skipped (#1446). |
+| 12:07 | [`8431884`](https://github.com/ehojune/bioinfo-team-3d/pull/1448/commits/8431884) | **저장된 주석 파일을 다음 단계에 넘길 수집 함수를 준비했습니다.**<br>annotation 응답·조회 로그를 SHA·링크·200파일·용량 검사로 합치고 제외 사유를 반환한다. 배포 venv 회귀 127 passed·2 skipped. runner 연결은 후속 배정으로 남기며 통합 전 hold (#1446). |
 | 09:50 | [`577fc7a`](https://github.com/ehojune/bioinfo-team-3d/commit/577fc7a) | **Windows 가상환경에서도 직원 종료를 확인한 뒤 재시도할 수 있게 고쳤습니다.**<br>launcher의 Job 자식 신원과 종료를 확인하고 확인하지 못하면 재시도를 막는다 (#1413). |
 
 ## 2026-11-16
