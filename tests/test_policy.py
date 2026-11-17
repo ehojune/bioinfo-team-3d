@@ -496,6 +496,7 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         assert hub.store.get("approval_decision", script.id)["automatic"] is True
     for i, command in enumerate(["gh gist create output.txt",
                                  "python -c 'import smtplib; smtplib.SMTP(\"example.test\")'",
+                                 "python -c 'import telnetlib; telnetlib.Telnet(\"example.test\", 25)'",
                                  "python -m http.server",
                                  f'git -C "{tmp_path.as_posix()}" push https://example.test/repo HEAD',
                                  f'git -C "{tmp_path.as_posix()}" reset --hard HEAD',
