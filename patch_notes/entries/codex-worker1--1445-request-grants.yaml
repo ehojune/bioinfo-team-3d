@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: eda7eb8
+    at: '2026-11-17 19:08'
+    summary: Git 명령은 묶음 허용에서 따로 확인합니다.
+    text: 원격 전송과 작업 내용 폐기를 막기 위해 Git 명령을 개별 승인으로 남긴다. Refs #1445.
   - sha: befb21a
     at: '2026-11-17 19:00'
     summary: GitHub와 메일 발송 명령은 따로 확인합니다.
