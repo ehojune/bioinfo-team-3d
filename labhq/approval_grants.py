@@ -65,8 +65,8 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     command = tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
         return excluded("missing_command")
-    if "$'" in command:
-        return excluded("ansi_c_quote")
+    if "$'" in command or '$"' in command:
+        return excluded("dynamic_shell_quote")
     # Collapse shell quote/escape characters for detection; this intentionally
     # overmatches text when a protected assignment could be executed.
     assignment_text = re.sub(r"[\\\"'`]", "", command)
