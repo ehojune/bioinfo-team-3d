@@ -106,6 +106,8 @@ test('tool reasons are deterministic and grant categories do not inherit high ri
   assert.ok(decisionFacts(destructive).some(([label,value])=>label==='위험 등급' && value==='높음'));
   const mixed={...destructive,detail:{...destructive.detail,policy_reason:'Bash reaches a closed or credential path'}};
   assert.match(toolCardReason(mixed),/닫힌 경로/); assert.match(toolCardReason(mixed),/삭제/);
+  const compound={...destructive,detail:{...destructive.detail,tool_input:{command:'curl https://example.com && rm -r data; sbatch job.sh'}}};
+  for (const reason of ['삭제','네트워크','스케줄러']) assert.ok(toolCardReason(compound).includes(reason));
   const quoted={...destructive,detail:{...destructive.detail,tool_input:{command:"printf 'rm -r data'"}}};
   assert.match(toolCardReason(quoted),/경로를 미리 확인하지 못했습니다/);
   assert.ok(!decisionFacts(quoted).some(([label])=>label==='위험 등급'));

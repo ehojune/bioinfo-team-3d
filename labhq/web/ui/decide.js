@@ -455,16 +455,18 @@ function explicitToolAction(value) {
   }
   segments.push(segment);
   const begins = pattern => segments.some(part => pattern.test(part));
-  if (begins(/^\s*(?:sudo\s+)?(?:rm|rmdir|unlink|remove-item|del|erase)\b/i)) return 'delete';
-  if (begins(/^\s*(?:sudo\s+)?(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)\b/i)) return 'network';
-  if (begins(/^\s*(?:qsub|sbatch)\b/i)) return 'scheduler';
-  return null;
+  return [
+    [ /^\s*(?:sudo\s+)?(?:rm|rmdir|unlink|remove-item|del|erase)\b/i, 'delete' ],
+    [ /^\s*(?:sudo\s+)?(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)\b/i, 'network' ],
+    [ /^\s*(?:qsub|sbatch)\b/i, 'scheduler' ],
+  ].filter(([pattern]) => begins(pattern)).map(([,name]) => name);
 }
 export function toolCardReason(value) {
   const d = value.detail || {}, policy = String(d.policy_reason || '').toLowerCase();
   const category = d.grant_category;
   const action = explicitToolAction(value);
-  const actionText = {delete:'파일이나 폴더 삭제가 포함되어 확인이 필요합니다.', network:'네트워크 통신이 포함되어 확인이 필요합니다.', scheduler:'스케줄러 작업을 실행하기 전에 확인이 필요합니다.'}[action];
+  const labels = {delete:'파일이나 폴더 삭제가 포함되어 확인이 필요합니다.', network:'네트워크 통신이 포함되어 확인이 필요합니다.', scheduler:'스케줄러 작업을 실행하기 전에 확인이 필요합니다.'};
+  const actionText = action.map(name => labels[name]).join(' ');
   const withAction = text => actionText ? `${text} ${actionText}` : text;
   if (d.internal_row_output === true) return withAction('내부 자료 원본 행이 노출될 수 있어 확인이 필요합니다.');
   if (/restricted|data_zones|통제|closed|credential/.test(policy)) return withAction('닫힌 경로나 자격 증명 경로가 포함되어 확인이 필요합니다.');
