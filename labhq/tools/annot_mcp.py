@@ -490,7 +490,7 @@ async def preprints(query: str, limit: int = 25) -> str:
 @offered()
 async def pubmed_search(query: str, max_records: int = annot_pubmed.DEFAULT_MAX_RECORDS) -> str:
     """Collect PubMed bibliography and abstracts to page files, never paper bodies. For searches over a few dozen
-    records use this tool instead of copying inline results. Pages share one JSONL bundle per search, with a
+    records use this tool instead of copying inline results. Pages share JSONL bundles of at most 8 MiB, with a
     manifest of byte_offset/bytes and page SHA256s. max_records defaults to 1000 (1..10000); pages have
     100 records, at most 8 MiB each and 64 MiB total. Returns only manifest path, counts and completion status.
     Read the bundle's JSON lines or the manifest's byte ranges; complete=false means an incomplete review corpus.

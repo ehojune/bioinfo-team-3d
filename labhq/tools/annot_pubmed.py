@@ -2,7 +2,7 @@
 
 API contract: https://www.ncbi.nlm.nih.gov/books/NBK25499/ (2026-11-17).
 One ESearch snapshots up to 10,000 IDs; EFetch retrieves those exact IDs in batches.
-Pages share an owned JSONL bundle, with byte ranges and page hashes. A run-specific manifest survives partial
+Pages share bounded owned JSONL bundles, with byte ranges and page hashes. A run-specific manifest survives partial
 failure/cancellation and is collected by the normal annotation-output boundary.
 """
 from __future__ import annotations
@@ -25,6 +25,7 @@ DEFAULT_MAX_RECORDS = 1000
 MAX_RECORDS = 10000  # PubMed ESearch cannot enumerate beyond this; never claim completeness there.
 PAGE_SIZE = 100
 PAGE_BYTES = 8 * 1024 * 1024
+BUNDLE_BYTES = 8 * 1024 * 1024  # Below the default request export's 50 MiB per-file cap.
 TOTAL_BYTES = 64 * 1024 * 1024
 
 
@@ -67,7 +68,9 @@ class PubmedCollection:
         self.annotator, self.root = annotator, annotator.workdir
         self.run_id = uuid.uuid4().hex
         self.path = f"{RESULT_DIR}/pubmed-{self.run_id}.json"
-        self.bundle = f"{RESULT_DIR}/pubmed-{self.run_id}-pages.jsonl"
+        self.bundle_part = 0
+        self.bundle = f"{RESULT_DIR}/pubmed-{self.run_id}-pages-000.jsonl"
+        self.bundle_bytes = 0
         self.bundle_identity = None
         self.bundle_hash = hashlib.sha256()
         self.seen: set[str] = set()
@@ -79,8 +82,14 @@ class PubmedCollection:
                       "found_count": None, "fetched_count": 0, "unique_count": 0,
                       "complete": False, "stop_reason": "in_progress", "pages": []}
 
-    def append_page(self, data: bytes) -> None:
+    def append_page(self, data: bytes) -> tuple[str, int]:
         """Append exact bytes through a held parent; committed pages remain a readable prefix."""
+        if self.bundle_bytes + len(data) > BUNDLE_BYTES:
+            self.bundle_part += 1
+            self.bundle = f"{RESULT_DIR}/pubmed-{self.run_id}-pages-{self.bundle_part:03d}.jsonl"
+            self.bundle_bytes, self.bundle_identity = 0, None
+            self.bundle_hash = hashlib.sha256()
+        byte_offset = self.bundle_bytes
         relative = PurePath(self.bundle)
         flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
         if self.bundle_identity is None:
@@ -89,7 +98,7 @@ class PubmedCollection:
             with os.fdopen(parent.open_file(relative.name, flags), "ab") as target:
                 info = os.fstat(target.fileno())
                 identity = (info.st_dev, info.st_ino)
-                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != self.bytes
+                if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size != self.bundle_bytes
                         or self.bundle_identity is not None and identity != self.bundle_identity):
                     raise OwnedPathError("PubMed page bundle was linked, replaced or resized")
                 target.write(data)
@@ -97,8 +106,15 @@ class PubmedCollection:
                 os.fsync(target.fileno())
                 self.bundle_identity = identity
         self.bundle_hash.update(data)
-        self.state["bundle"] = {"path": self.bundle, "bytes": self.bytes + len(data),
-                                "sha256": self.bundle_hash.hexdigest(), "format": "jsonl-pages"}
+        self.bundle_bytes += len(data)
+        bundles = self.state.setdefault("bundles", [])
+        info = {"path": self.bundle, "bytes": self.bundle_bytes,
+                "sha256": self.bundle_hash.hexdigest(), "format": "jsonl-pages"}
+        if bundles and bundles[-1]["path"] == self.bundle:
+            bundles[-1] = info
+        else:
+            bundles.append(info)
+        return self.bundle, byte_offset
 
     def checkpoint(self, reason: str) -> dict:
         self.state["stop_reason"] = reason
@@ -147,14 +163,13 @@ class PubmedCollection:
                                    "requested_pmids": batch, "records": rows}, ensure_ascii=False) + "\n"
                 data = text.encode("utf-8")
                 size = len(data)
-                if size > PAGE_BYTES or self.bytes + size > TOTAL_BYTES:
+                if size > min(PAGE_BYTES, BUNDLE_BYTES) or self.bytes + size > TOTAL_BYTES:
                     return self.finish("byte_limit")
                 digest = hashlib.sha256(data).hexdigest()
-                self.append_page(data)
+                path, byte_offset = self.append_page(data)
                 pmids = [row["pmid"] for row in rows]
-                byte_offset = self.bytes
                 self.bytes += size
-                self.state["pages"].append({"path": self.bundle, "sha256": digest, "bytes": size,
+                self.state["pages"].append({"path": path, "sha256": digest, "bytes": size,
                                             "byte_offset": byte_offset,
                                             "offset": start, "record_count": len(rows)})
                 self.state["fetched_count"] += len(rows)

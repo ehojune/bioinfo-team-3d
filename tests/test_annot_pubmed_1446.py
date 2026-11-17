@@ -103,9 +103,10 @@ async def test_631_large_korean_pages_reach_next_step_with_exact_hashes(tmp_path
                       "complete": True, "stop_reason": "exhausted"}
     assert len(json.dumps(result, ensure_ascii=False)) < 600
     saved = manifest(upstream.dir, result)
-    bundle = (upstream.dir / saved["bundle"]["path"]).read_bytes()
-    assert len(bundle) == saved["bundle"]["bytes"]
-    assert hashlib.sha256(bundle).hexdigest() == saved["bundle"]["sha256"]
+    for info in saved["bundles"]:
+        bundle = (upstream.dir / info["path"]).read_bytes()
+        assert len(bundle) == info["bytes"]
+        assert hashlib.sha256(bundle).hexdigest() == info["sha256"]
     assert len(saved["pages"]) == 7
     assert sum(p["bytes"] for p in saved["pages"]) > 2 * 1024 * 1024
     assert len(provider.calls) == 8
@@ -150,6 +151,39 @@ async def test_count_and_record_caps(tmp_path, count, limit, fetched, reason):
     assert result["stop_reason"] == reason
     assert result["complete"] == (reason == "exhausted")
     assert len(manifest(tmp_path, result)["pages"]) <= 100
+
+
+@pytest.mark.parametrize("fail_page", [None, 3])
+async def test_bundles_rotate_below_export_cap_and_keep_partial_ranges(tmp_path, monkeypatch, fail_page):
+    assert pubmed.BUNDLE_BYTES <= 50 * 1024 * 1024
+    monkeypatch.setattr(pubmed, "BUNDLE_BYTES", 80000)
+    upstream = workspace(tmp_path)
+    provider = Provider(300, "short")
+    provider.fail_page = fail_page
+    collection, client, _ = make(upstream.dir, provider)
+    async with client:
+        result = await collection.run()
+    saved = manifest(upstream.dir, result)
+    assert result["complete"] == (fail_page is None)
+    assert len(saved["bundles"]) == (3 if fail_page is None else 2)
+    assert saved["fetched_count"] == (300 if fail_page is None else 200)
+    for info in saved["bundles"]:
+        data = (upstream.dir / info["path"]).read_bytes()
+        assert len(data) == info["bytes"] <= pubmed.BUNDLE_BYTES
+        assert hashlib.sha256(data).hexdigest() == info["sha256"]
+    captured = collect(upstream)
+    assert not captured.excluded
+    upstream.update_run("source", ok=True)
+    downstream = workspace(tmp_path, "consumer", "synthesis")
+    staged, refused = stage_inputs(downstream, {"search": {
+        "task_id": "source", "workdir": str(upstream.dir), "outputs": captured.outputs,
+        "output_sha256": captured.hashes}}, tmp_path, [], [], 16 * 1024 * 1024, 32 * 1024 * 1024)
+    assert staged and not refused
+    for page in saved["pages"]:
+        copied = downstream.dir / "inputs/search" / page["path"].removeprefix("outputs/")
+        data = copied.read_bytes()[page["byte_offset"]:][:page["bytes"]]
+        assert hashlib.sha256(data).hexdigest() == page["sha256"]
+        assert len(json.loads(data)["records"]) == page["record_count"]
 
 
 async def test_middle_failure_preserves_first_page_and_original_count(tmp_path):
