@@ -180,6 +180,9 @@ def test_unknown_read_keeps_lexical_evidence_past_resolution_cap(tmp_path, monke
     ('echo $(cd {plugin}; wc -l ../notes.txt)', True),
     ('pushd {plugin}; popd -n; wc -l ../notes.txt', True),
     ('pushd -n {plugin}; wc -l ../notes.txt', False),
+    ('cat <(cd {plugin}); wc -l ../notes.txt', False),
+    ('cat <(cd {plugin}; wc -l ../notes.txt)', True),
+    ('pushd {plugin}; pushd {task}; popd -n +2; popd; wc -l ../notes.txt', True),
 ])
 def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequence, closed):
     from tests.test_tool_card_explain import _system_commands
@@ -189,7 +192,7 @@ def test_unknown_read_uses_directory_at_each_operand(tmp_path, monkeypatch, sequ
     plugin = config / 'plugins' / 'skill'
     plugin.mkdir(parents=True)
     task.mkdir()
-    command = sequence.replace('{plugin}', '"' + plugin.as_posix() + '"')
+    command = sequence.replace('{plugin}', '"' + plugin.as_posix() + '"').replace('{task}', '"' + task.as_posix() + '"')
     decision = evaluate_tool('Bash', {'command': command}, PolicySettings(),
                              allowed_roots=[str(task)], workdir=str(task), private_enabled=True,
                              private_paths=[str(config)], private_open_reads=[str(task), str(plugin)])

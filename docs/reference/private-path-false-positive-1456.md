@@ -58,3 +58,5 @@ cd "D:/lab/runs/day/task_bio"; ls -la inputs/precedent; wc -l inputs/precedent/*
 - 최종 관련 4개 파일: 742 passed, 10 skipped.
 - command substitution·popd -n의 P1 2건도 수리했다. substitution 종료 시 바깥 폴더로 복원하고 pushd·popd의 `-n`은 stack만 바꾼다. 양방향 4건 추가, 표적 64건 통과.
 - 해당 수리 뒤 관련 4개 파일: 746 passed, 10 skipped.
+- process substitution·indexed popd의 P1 2건도 수리했다. substitution 안팎과 선택한 stack 항목을 구별한다. 격리 Bash fixture·help와 대조했고 회귀 3건 추가, 표적 67건 통과.
+- 해당 수리 뒤 관련 4개 파일: 749 passed, 10 skipped.
