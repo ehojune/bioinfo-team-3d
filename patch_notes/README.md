@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 22:45 | [`e41ed66`](https://github.com/ehojune/bioinfo-team-3d/pull/1458/commits/e41ed66) | **경로 검사가 상한에서 멈춘 명령은 요청 단위로 자동 승인하지 않고 개별로 묻습니다.**<br>수정: #1445 후보 상한에서 멈춘 개인 경로 검사는 요청 단위 허용에서 빼고 개별 카드로 남긴다 |
+| 22:28 | [`d84925d`](https://github.com/ehojune/bioinfo-team-3d/pull/1458/commits/d84925d) | **경로를 확인하지 못한 명령을 요청마다 한 번 허용할 수 있게 바뀐 규칙에 맞춰 시험을 고쳤습니다.**<br>시험: #1445 읽기 범위 불명 명령은 경로 미확정 부류로만 묶인다는 총괄 결정에 맞춰 단정을 바꾼다 |
+| 22:08 | [`02d8594`](https://github.com/ehojune/bioinfo-team-3d/pull/1458/commits/02d8594) | **직원 환경 변수가 가리키는 개인 경로도 개별 확인합니다.**<br>묶음 판정에 직원 환경을 전달하고 승인 뒤 개인 경로 회귀를 추가했다. |
+| 22:01 | [`539d553`](https://github.com/ehojune/bioinfo-team-3d/pull/1458/commits/539d553) | **읽기 범위를 확인하지 못한 명령의 요청 단위 승인을 복구했습니다.**<br>명시적 개인 경로 근거는 개별 확인을 유지하고 미확인 판정과 구분한다. |
 | 21:28 | [`4598949`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/4598949) | **읽기 범위가 불명확한 명령은 개별 승인을 받고 개인 경로 접근을 단정하지 않습니다.**<br>#1456 r4: 경고를 명시 경로와 단순 순차 읽기로 좁히고 미지원 셸은 범위 미확인으로 표시한다. 남은 P1 세 재현·직접 근거 대조·batch 분류 제외를 포함해 관련 회귀 771 passed, 9 skipped와 승인 회귀 115 passed, 12 skipped를 확인했다. |
 | 21:07 | [`03306b6`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/03306b6) | **옵션이 끝난 뒤 폴더명과 함수의 실행·복귀 경계를 구별해 경고를 표시합니다.**<br>#1456: pushd --, reserved word 뒤 선언, 함수 return을 반영하고 재귀 확장을 제한했다. 관련 회귀 759개와 상한 직접 판정 2건을 확인했다. |
 | 20:59 | [`009b11e`](https://github.com/ehojune/bioinfo-team-3d/pull/1457/commits/009b11e) | **폴더 stack 회전과 함수 선언·호출을 구별해 승인 경고를 표시합니다.**<br>#1456: indexed pushd 회전과 직접 호출한 함수 본문만 반영한다. 관련 회귀 754개를 확인했다. |
