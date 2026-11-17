@@ -1,5 +1,9 @@
 pr: 1457
 rows:
+- sha: 84ee8af
+  at: 2026-11-17 20:48
+  summary: 별도 프로세스의 폴더 이동과 지정한 stack 항목 제거를 승인 경고에 반영합니다.
+  text: '#1456: process substitution 경계를 격리하고 indexed popd가 선택한 항목을 제거한다. 관련 회귀 749개를 확인했다.'
 - sha: 9ca1af4
   at: 2026-11-17 20:40
   summary: 명령 안의 별도 셸과 폴더를 바꾸지 않는 옵션을 승인 경고에 반영합니다.
