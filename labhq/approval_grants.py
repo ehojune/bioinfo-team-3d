@@ -21,7 +21,7 @@ _EXCLUDED_COMMAND = re.compile(
     r"\b(?:curl|wget|ssh|scp|sftp|rsync|ftp|nc|ncat|netcat|"
     r"invoke-webrequest|invoke-restmethod|irm|iwr|requests|urllib|socket|httpx|aiohttp|"
     r"ftplib|paramiko|http\.client|"
-    r"rm|rmdir|remove|unlink|rmtree|shred|del|erase|remove-item|rd|"
+    r"rm|rmdir|remove|removedirs|unlink|rmtree|shred|del|delete|clean|truncate|erase|remove-item|rd|"
     r"os\.remove|os\.unlink|shutil\.rmtree|path\.unlink)\b", re.I)
 
 
