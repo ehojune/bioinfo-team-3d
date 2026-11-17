@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: 659531c
+    at: '2026-11-17 18:47'
+    summary: 내부 읽기 보호 시험을 Windows에서도 확인합니다.
+    text: 변경된 정책 시험의 Windows inventory hash를 갱신한다. Refs #1445.
   - sha: 458c280
     at: '2026-11-17 18:40'
     summary: 내부 자료를 읽는 명령만 읽기 묶음으로 확인합니다.
