@@ -131,6 +131,15 @@ test('tool card retains server purpose, step, reason and risk',async()=>{
   assert.match(row._decisionParts.facts.textContent,/위험 등급높음 · 개인 정보/);
 });
 
+test('3D tool card shows the server reason and risk',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const card={id:'tool-3d',kind:'tool_permission',pi_reason:'작업 목적: 비교 분석.\n작업 폴더 안에서 파일을 만들거나 고칩니다.\n위험 등급: 중간 · 작업 폴더 안 쓰기.',
+    detail:{tool_name:'Bash',grant_category:'workspace',policy_reason:'PI personal path'}};
+  const [row]=decide.syncDecisionCards(container,[card],[]);
+  assert.match(row._decisionParts.detail.textContent,/작업 폴더 안에서 파일을 만들거나 고칩니다/);
+  assert.match(row._decisionParts.detail.textContent,/위험 등급: 중간 · 작업 폴더 안 쓰기/);
+});
+
 test('other approvals keep two buttons and send no choice',async()=>{
   const decide=await modulePromise,container=new Element(),sent=[];
   const [row]=decide.syncDecisionCards(container,[{id:'t',kind:'tool_permission',summary:'Bash',detail:{tool_name:'Bash'}}],[],

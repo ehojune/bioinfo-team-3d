@@ -528,13 +528,14 @@ export function toolCardReason(value) {
   if (/ambiguous/.test(policy)) return '경로를 미리 확인하지 못했습니다.';
   return '자동 허용 범위 밖이어서 실행 전 확인이 필요합니다.';
 }
-export function toolCardExplanation(value) {
+export function toolCardExplanation(value, includeRisk = false) {
   const supplied = String(value.pi_reason || '').trim();
   const lines = supplied.split(/\n+/), first = lines[0] || '';
   // The server provides the purpose, rule and risk on separate lines.
   const structured = /^(?:작업 목적|논문 ‘)/.test(first);
   const context = structured ? plainPiText(first) : '';
-  return [context, toolCardReason(value)].filter(Boolean).join('\n');
+  const risk = includeRisk ? lines.find(line => /^위험 등급:/.test(line.trim())) : '';
+  return [context, toolCardReason(value), risk].filter(Boolean).join('\n');
 }
 export function approvalSummaryText(request, summary) {
   if (!request || !summary || summary.request_id !== request.id) return '집계 확인 불가';
@@ -607,7 +608,7 @@ export function renderDetail(container, kind, detail, approval = null) {
     if (container._detailSignature === signature) return;
     container._detailSignature = signature;
     container.replaceChildren(); container.hidden = false;
-    piText(add(container, 'p'), kind === 'tool_permission' ? toolCardExplanation(approval || {detail}) : approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
+    piText(add(container, 'p'), kind === 'tool_permission' ? toolCardExplanation(approval || {detail}, true) : approval?.pi_reason || '실행 전에 PI의 확인이 필요합니다.');
     piText(add(container, 'p'), approval?.pi_outcome || '승인하면 제안된 작업을 진행합니다.');
     const fold = expandableText(container, '', {fold: true, summary: '자세히', truncated: detail?.input_truncated});
     // The existing field labels and exact received strings remain accessible inside one closed fold.
