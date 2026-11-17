@@ -458,14 +458,14 @@ function explicitToolAction(value) {
       if (quote) { if (char === quote) quote = ''; else word += char; started = true; continue; }
       if (char === "'" || char === '"') { quote = char; started = true; continue; }
       if (char === '#' && !started) { comment = true; continue; }
-      if (';|&\n'.includes(char)) { endSegment(); continue; }
+      if (';|&\n()'.includes(char)) { endSegment(); continue; }
       if (/\s/.test(char)) { endWord(); continue; }
       word += char; started = true;
     }
     endSegment();
     for (const parts of segments) {
       let i = 0;
-      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i] || '')) i++;
+      while (/^(?:if|then|else|elif|while|until|do|!|\{|time)$/.test(parts[i] || '') || /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i] || '')) i++;
       while (i < parts.length) {
         const exe = parts[i++].split(/[\\/]/).pop().toLowerCase();
         if (exe === 'sudo' || exe === 'env') {
