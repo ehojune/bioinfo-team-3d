@@ -6,11 +6,16 @@ advisory until the gateway records a person's explicit grant for the request.
 
 from __future__ import annotations
 
+import copy
 import os
+import asyncio
+from weakref import WeakValueDictionary
 import re
 import posixpath
 from typing import Any
 
+from .models import RunnerUnavailable
+from .request_status import is_active_request
 from .policy import (SHELL_TOOLS, Unresolved, _absolute, _candidate_paths, _evaluate_tool,
                      _blank_non_syntax, _inside, _norm, _private_decision, _real, _word_value, _zone_hit, evaluate_tool,
                      _shell_write_targets, git_bash_command, restricted_paths, shell_segments, touches,
@@ -473,3 +478,111 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
             or re.search(r"\$|`|\*|\?|\b(?:for|while)\b", command, re.I)):
         return "unresolved_path"
     return "workspace"
+
+
+# Gateway grant state and durable delivery. Classification above is unchanged.
+def automatic_audit(decision: dict, store) -> dict:
+    """Reuse only the card already visible to the requester, including its command and reason."""
+    if decision.get("automatic") is not True:
+        return {}
+    card = copy.deepcopy(decision.get("approval") or {})
+    task = store.get("task", card.get("task_id")) or {}
+    return {"approval": card, "step_id": task.get("step_id")}
+
+
+def _grant_lock(self, rid: str):
+    if not hasattr(self, "_grant_locks"):
+        self._grant_locks = WeakValueDictionary()
+    return self._grant_locks.setdefault(rid, asyncio.Lock())
+
+def _grant_category(self, entry: dict) -> str | None:
+    card = entry.get("approval") or {}
+    detail = card.get("detail") or {}
+    rid, tid, origin = card.get("request_id"), card.get("task_id"), entry.get("origin")
+    category = detail.get("grant_category")
+    request = self.requests.get(rid) or {}
+    task = self.store.get("task", tid) if tid else None
+    process = self.runner_processes.get(origin)
+    if (card.get("kind") != "tool_permission" or category not in {"workspace", "unresolved_path", "internal_read"}
+            or not origin or not process or detail.get("grant_process") != process
+            or entry.get("origin_process") != process
+            or self.runner_capabilities.get(origin, {}).get("approval_grants") != 1
+            or not is_active_request(request.get("status")) or request.get("cancelling")
+            or not task or task.get("request_id") != rid or task.get("runner_id") != origin
+            or (task.get("payload") or {}).get("agent_id") != card.get("agent_id")
+            or task.get("completed") or task.get("abandoned") or self.store.get("task_cancel", tid)):
+        return None
+    return category
+
+def _grant_ready(self, rid: str, category: str) -> bool:
+    return self._grant_key(rid, category) is not None
+
+def _grant_key(self, rid: str, category: str) -> str | None:
+    """The confirmed grant that covers `category`: its own, or for a proven task-folder write the broader
+    unresolved-path grant (#1445). A task-folder grant never covers an unresolved path."""
+    grants = self.store.get("approval_grants", rid) or {}
+    for key in ((category, "unresolved_path") if category == "workspace" else (category,)):
+        decision = self.store.get("approval_decision", grants[key]) if grants.get(key) else None
+        if decision and decision.get("approved") and not decision.get("grant_pending"):
+            return key
+    return None
+
+def approval_summary(self, rid: str) -> dict:
+    decisions = self.store.all("approval_decision")
+    confirmed = {aid: d for aid, d in decisions.items()
+                 if (d.get("approval") or {}).get("request_id") == rid
+                 and d.get("approved") is True and not d.get("grant_pending")}
+    granted = {d["grant_category"] for aid, d in confirmed.items()
+               if d.get("automatic") is False and d.get("grant_source") == aid
+               and isinstance(d.get("grant_category"), str)}
+    request = self.store.get("request", rid) or {}
+    active = []
+    if is_active_request(request.get("status")) and not request.get("cancelling"):
+        for category, source in (self.store.get("approval_grants", rid) or {}).items():
+            decision = confirmed.get(source) or {}
+            if (category in granted and decision.get("grant_category") == category
+                    and decision.get("automatic") is False and decision.get("grant_source") == source):
+                active.append(category)
+    return {"request_id": rid,
+            "automatic_approved_count": sum(d.get("automatic") is True for d in confirmed.values()),
+            "granted_categories": sorted(granted), "active_grant_categories": sorted(active)}
+
+
+
+async def commit_grant(self, approval_id, entry, category, decision, delivery, chosen,
+                       grant_for_request, grant_auto, approved, note):
+    rid = entry["approval"]["request_id"]
+    async with self._grant_lock(rid):
+        if self._grant_category(entry) != category:
+            raise ValueError("request or runner is no longer eligible")
+        key = category if grant_for_request else (self._grant_key(rid, category) or category)
+        source = await self.store.acommit_grant_approval(
+            approval_id, decision, delivery, rid, key, create=grant_for_request)
+        chosen.update(grant_category=key, grant_source=source, automatic=grant_auto)
+        eligible = self._grant_category(entry) == category
+        if eligible:
+            try:
+                await self.store.afinalize_grant_approval(approval_id, rid)
+            except ValueError:
+                eligible = False
+        if not eligible or self._grant_category(entry) != category:
+            # Cancel may have marked the request while the durable writer was busy.
+            # Do not release the just-recorded yes to its runner.
+            approved, note = False, "request ended"
+            await self.store.areject_grant_approval(approval_id,
+                {**decision, **chosen, "approved": False, "note": note},
+                {**delivery, "approved": False, "note": note},
+                rid, category, revoke=grant_for_request)
+        self.approvals.pop(approval_id, None)
+        if entry["origin"] in self.runners:
+            try:
+                sent_approved = await self._send_decision(entry["origin"], approval_id)
+                if approved and sent_approved is False:
+                    approved, note = False, "request ended"
+                    await self.store.areject_grant_approval(approval_id,
+                        {**decision, **chosen, "approved": False, "note": note},
+                        {**delivery, "approved": False, "note": note},
+                        rid, category, revoke=grant_for_request)
+            except RunnerUnavailable:
+                pass
+    return approved, note
