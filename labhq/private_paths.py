@@ -442,7 +442,10 @@ def scoped_open_reads(settings: Settings, candidates: Iterable[str], cwd=None,
 
 def managed_shell_read(command: str, private_paths: Iterable[str], open_reads: Iterable[str],
                        workdir: str | None) -> bool | None:
-    """Prove a literal read sequence stays outside closed paths; never relax other policy decisions."""
+    """Prove a literal read sequence stays outside closed paths; never relax other policy decisions.
+
+    False identifies a closed/credential operand. None means unproven syntax or scope, not a private-path hit.
+    """
     from .tool_command import read_commands
 
     parts = read_commands(command)
@@ -492,6 +495,101 @@ def _managed_operand(value: str, base: str, private: list[str], reads: list[str]
                 if not open_read_allowed(target, eligible):
                     return False
     return True
+
+
+def shell_closed_operand(command: str, private_paths: list[str], open_reads: list[str],
+                         workdir: str, home: str | None,
+                         environ: Mapping[str, str] | None) -> bool:
+    """Warning evidence only: literal absolute paths and small, sequential read commands.
+
+    Unsupported control flow never supplies a cwd. Scan direct absolute evidence independently,
+    including after parsing/depth/resolution limits; absence of evidence never grants approval.
+    """
+    import shlex
+    from .policy import MAX_RESOLVED_CANDIDATES, _scan_path_text
+    from .tool_command import read_commands
+
+    home = home or host_home()
+    environ = os.environ if environ is None else environ
+    resolved = 0
+
+    def closed(value: str, base: str | None) -> bool:
+        nonlocal resolved
+        expanded = _expand_dir(value, home, environ)
+        if expanded is None:
+            return False
+        absolute = bool(ntpath.isabs(expanded) or posixpath.isabs(expanded))
+        if not absolute and base is None:
+            return False
+        spelled = path_field_text(expanded, None if absolute else base)
+        # Lexical evidence is independent of the bounded filesystem work.
+        for root in private_paths:
+            eligible = [r for r in open_reads if inside_any(r, [root]) and not inside_any(root, [r])]
+            if inside_any(spelled, [root]) and (credential_path(spelled) or not inside_any(spelled, eligible)):
+                return True
+        if credential_path(spelled):
+            return True
+        if resolved >= MAX_RESOLVED_CANDIDATES:
+            return False
+        resolved += 1
+        raw = expanded if absolute else os.path.join(base, expanded)
+        try:
+            real = resolved_read_path(raw)
+        except (OSError, ValueError, RuntimeError):
+            return False
+        if inside_any(spelled, open_reads) and not open_read_allowed(real, open_reads):
+            return True
+        return not _managed_operand(real, base or workdir, private_paths, open_reads)
+
+    # No recursive parsing or function/branch execution. Splitting is lexical evidence only.
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|(){}<>')
+    lexer.whitespace_split = True
+    lexer.commenters = ''
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        tokens = [command]
+    for token in tokens:
+        for value in dict.fromkeys([token, *_scan_path_text(token).candidates]):
+            if closed(value, None):
+                return True
+
+    # Warning grammar: semicolon-separated literal reads plus cd. Everything else is unverified.
+    if re.search(r'[$`{}()<>*?\[\]#\n\r&|]', command):
+        return False
+    parts, words = [], []
+    for token in [*tokens, ';']:
+        if token == ';':
+            if not words:
+                return False
+            expanded = [_expand_dir(word, home, environ) for word in words]
+            if any(word is None for word in expanded):
+                return False
+            name, args = expanded[0], expanded[1:]
+            if name == 'wc':
+                if any(a.startswith('-') and not re.fullmatch(r'-[lwcmL]+', a) for a in args):
+                    return False
+                expanded = ['cat', *[a for a in args if not a.startswith('-')]]
+            parsed = read_commands(shlex.join(expanded))
+            if parsed is None:
+                return False
+            parts.extend(parsed)
+            words = []
+        else:
+            words.append(token)
+    if len(parts) > MAX_CD_BASES:
+        return False
+    bases = [workdir]
+    for name, operands in parts:
+        for value in operands:
+            if any(closed(value, base) for base in bases):
+                return True
+        if name == 'cd':
+            # A failed cd keeps the old cwd; never assert that a path was actually accessed.
+            bases = list(dict.fromkeys([*bases, *[path_field_text(operands[0], b) for b in bases]]))
+            if len(bases) > MAX_CD_BASES:
+                return False
+    return False
 
 
 def holds_open_read(private: str, open_reads: Iterable[str]) -> bool:

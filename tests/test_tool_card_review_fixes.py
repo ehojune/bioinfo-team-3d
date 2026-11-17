@@ -13,6 +13,36 @@ from labhq.tool_command import commands
 from labhq.tool_explanation import explain
 from tests.test_private_paths import _link_dir
 from tests.test_tool_card_explain import gate, layout
+from tests.test_private_paths import request_gate_1456, request_paths_1456
+
+
+@pytest.mark.parametrize('command', ['wc -l inputs/precedent/*', 'cat "unterminated'])
+def test_unproven_read_card_does_not_claim_personal_access(request_paths_1456, command):
+    command = f'cd "{request_paths_1456[0].as_posix()}"; {command}'
+    decision = request_gate_1456(request_paths_1456, 'Bash', {'command': command})
+    assert decision.action == 'ask'
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': {
+        'tool_name': 'Bash', 'policy_reason': decision.reason, 'tool_input': {'command': command}}})
+    assert '읽기 범위 미확인 — 개인 파일 접근 여부를 판단하지 못했습니다. 명령을 확인해 주세요.' in card['pi_reason']
+    assert '개인 경로 접근 여부와 실행 범위 미확인' in card['pi_reason']
+    assert '위험 등급: 낮음' not in card['pi_reason']
+    assert '위험 등급: 높음' not in card['pi_reason']
+    assert '접근을 감지했습니다' not in card['pi_reason']
+
+
+def test_unproven_read_card_preserves_restricted_warning():
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': {
+        'tool_name': 'Bash', 'policy_reason': 'Bash read scope is ambiguous (policy.private_paths)',
+        'tool_input': {'command': 'wc -l *.txt'}, 'internal_row_output': True}})
+    assert '위험 등급: 높음' in card['pi_reason']
+    assert '내부 자료 원행 노출' in card['pi_reason']
+
+
+def test_unproven_read_card_preserves_known_destructive_risk():
+    card = with_approval_copy({'kind': 'tool_permission', 'detail': {
+        'tool_name': 'Bash', 'policy_reason': 'Bash read scope is ambiguous (policy.private_paths)',
+        'tool_input': {'command': 'rm -r outputs'}}})
+    assert '위험 등급: 높음' in card['pi_reason']
 
 
 @pytest.mark.parametrize('operand', [r'/runs/Private\ Data/diary.txt',
