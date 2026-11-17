@@ -258,6 +258,12 @@ def test_request_grant_own_session_tool_results(tmp_path, monkeypatch):
     # the category an ordinary write in the task folder gets there too.
     assert (granted, trace) == (_grant_category(work, "echo x > a.txt", **kw), [])
     assert category(old / "tool-results" / "out.txt")[0] is None
+    # A longer path sharing the accepted file's text as a prefix is judged as written.
+    results = (own / "tool-results").as_posix()
+    trace = []
+    assert _grant_category(work, f'python read.py "{results}/out.txt" "{results}/out.txt/../../../../settings.json"',
+                           trace, **kw) is None
+    assert trace and trace[0] != "unproven_literal_read"
     assert category(project / "own-session.jsonl")[0] is None
     assert category(staff / "settings.json")[0] is None
 

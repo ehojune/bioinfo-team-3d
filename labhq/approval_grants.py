@@ -175,7 +175,9 @@ def _mask_own_results(command: str, own: list[str]) -> str:
         resolved = _real(token)
         if not resolved or not real_own[index] or posixpath.dirname(resolved) != real_own[index]:
             continue
-        command = command.replace(token, "tool-results-" + posixpath.basename(norm))
+        # Whole operands only: a longer path that merely starts with this text keeps its own spelling.
+        command = re.sub(r"(?<![^\s\"'=;|&<>()])" + re.escape(token) + r"(?![^\s\"';|&<>()])",
+                         lambda _: "tool-results-" + posixpath.basename(norm), command)
     return command
 
 
