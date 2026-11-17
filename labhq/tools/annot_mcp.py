@@ -14,6 +14,7 @@ the runner-owned Atlas endpoint; the staff CLI and this MCP process never receiv
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from itertools import groupby
 import json
 import os
 import time
@@ -24,10 +25,11 @@ import httpx
 
 from ..runner.lookup_admission import BREAKER_ANY, ENV as LOOKUP_ADMISSION_ENV, breaker_wait
 from ..settings import Settings
-from . import annot, annot_keys, annot_literature, annot_regulatory, annot_structure
+from . import annot, annot_keys, annot_literature, annot_pubmed, annot_regulatory, annot_structure
 from ..runner.annot_broker import ENABLED_ENV as ATLAS_ENABLED_ENV
 from ._mcpcompat import make_server, tool_failure
 from .external_wait import LookupTimeout, _step_slot, exclude_human_wait, run_lookup
+from ..adapters.owned import OwnedPathError
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 WORKDIR = Path(os.environ["LABHQ_WORKDIR"]).resolve() if os.environ.get("LABHQ_WORKDIR") else None
@@ -64,6 +66,7 @@ server = make_server(
         "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract), "
         "key_fulltext (for conclusion-critical papers: permitted OA, opt-in institution session, then one PI PDF card), "
         "citation_chase (references and citing papers for one paper), preprints (bioRxiv/medRxiv search; 심사 전), "
+        "pubmed_search (save every bibliography/abstract page to files; return paths and counts only), "
         "openalex_works (broad works search without OA pre-filtering), crossref_doi (version/license/update/retraction "
         "metadata), unpaywall (legal OA locations; explicitly disabled when annot.unpaywall_email is empty)"
         + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
@@ -192,7 +195,7 @@ async def _finish(sends: list[list], outcome: str) -> None:
 
 
 @asynccontextmanager
-async def _admitted(tool: str):
+async def _admitted(tool: str, *, completion: dict | None = None):
     """Client options that admit every outbound request of one tool call before httpx sends it.
 
     httpx awaits ``request`` hooks right before each send, also for every redirect hop it follows; annot's
@@ -241,8 +244,16 @@ async def _admitted(tool: str):
         outcome = "timeout" if isinstance(exc.__cause__, LookupTimeout) else "failed"
         raise
     finally:
-        if sends:
-            await _finish([[seq, status] for seq, status in sorted(sends.items())], outcome)
+        # A backend may return a partial result after catching a transport error.
+        # No HTTP response is still a failed probe, even when the tool returns normally.
+        def settled_outcome(row):
+            if tool == "pubmed_search" and row[1] is not None and row[1] >= 400:
+                return "failed"
+            if row[1] is None and outcome == "ok":
+                return "timeout" if completion and completion.get("outcome") == "timeout" else "failed"
+            return outcome
+        for settled, rows in groupby(sorted(sends.items()), key=settled_outcome):
+            await _finish([[seq, status] for seq, status in rows], settled)
 
 
 async def _run(method: str, *args: object, **kwargs: object) -> str:
@@ -282,16 +293,36 @@ async def _run_structure(method: str, *args: object) -> str:
 
 
 async def _run_literature(method: str, *args: object) -> str:
-    async with _admitted(method) as hooks, httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
-                                                             follow_redirects=True,
+    completion = {}
+    async with _admitted(method, completion=completion) as hooks, httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=20.0),
+                                                             follow_redirects=method != "pubmed_search",
                                                              headers={"User-Agent": annot.USER_AGENT},
                                                              **hooks) as client:
         annotator = annot_literature.LiteratureAnnotator(
             client, WORKDIR, CACHE_DIR, pace=PACE, unpaywall_email=S.annot.unpaywall_email)
+        collection = None
         try:
-            result = await run_lookup(lambda: getattr(annotator, method)(*args),
-                                      tool=method, workdir=WORKDIR, notify=_lookup_progress)
-        except (annot.LookupFailed, LookupTimeout, ValueError) as exc:
+            if method == "pubmed_search":
+                collection = annot_pubmed.PubmedCollection(annotator, *args)
+                collection.checkpoint("in_progress")
+            async def operation():
+                result = await collection.run() if collection else await getattr(annotator, method)(*args)
+                if collection and result["stop_reason"] not in {"exhausted", "record_limit", "byte_limit"}:
+                    raise annot.LookupFailed(f"PubMed lookup incomplete: {result['stop_reason']}")
+                return result
+            try:
+                result = await run_lookup(operation, tool=method, workdir=WORKDIR, notify=_lookup_progress)
+            except annot.LookupFailed:
+                if collection is None:
+                    raise
+                # run_lookup records failure; the caller still receives the saved partial manifest.
+                result = collection.checkpoint(collection.state["stop_reason"])
+            except LookupTimeout:
+                if collection is None:
+                    raise
+                result = collection.finish("timeout")
+                completion["outcome"] = "timeout"
+        except (annot.LookupFailed, LookupTimeout, ValueError, OSError, OwnedPathError) as exc:
             raise tool_failure(str(exc)) from exc
     return json.dumps(result, ensure_ascii=False)
 
@@ -470,6 +501,18 @@ async def preprints(query: str, limit: int = 25) -> str:
     """Search bioRxiv and medRxiv through Europe PMC SRC:PPR. Returns up to `limit` candidates (1..100), all marked
     `심사 전`; do not treat them as peer-reviewed evidence."""
     return await _run_literature("preprints", query, limit)
+
+
+@offered()
+async def pubmed_search(query: str, max_records: int = annot_pubmed.DEFAULT_MAX_RECORDS) -> str:
+    """Collect PubMed bibliography and abstracts to page files, never paper bodies. For searches over a few dozen
+    records use this tool instead of copying inline results. Pages share JSONL bundles of at most 8 MiB, with a
+    manifest of byte_offset/bytes and page SHA256s. max_records defaults to 1000 (1..9999); pages have
+    100 records, at most 8 MiB each and 64 MiB total. Returns only manifest path, counts and completion status.
+    Read the bundle's JSON lines or the manifest's byte ranges; complete=false means an incomplete review corpus.
+    The step-wide 200-output-file budget is shared across searches; file_limit keeps partial pages, while a full
+    budget refuses a new manifest before HTTP. The step-wide 20-minute deadline and outbound admission apply."""
+    return await _run_literature("pubmed_search", query, max_records)
 
 
 @offered()
