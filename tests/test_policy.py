@@ -89,6 +89,10 @@ def test_managed_read_uncertainty_has_typed_evidence(tmp_path):
         assert classify("Bash", {"command": command}, PolicySettings(), workdir=str(work),
                         private_paths=tuple(private), private_enabled=True,
                         private_open_reads=tuple(reads), environ={}) is None
+    env = {"XDG_CONFIG_HOME": (tmp_path / "secret").as_posix()}
+    assert classify("Bash", {"command": 'python script.py "$XDG_CONFIG_HOME"/notes'},
+                    PolicySettings(), workdir=str(work), private_paths=(env["XDG_CONFIG_HOME"],),
+                    private_enabled=True, private_open_reads=tuple(reads), environ=env) is None
 
 
 def test_request_grant_cd_write_scope(tmp_path):
@@ -528,6 +532,17 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         assert "grant_category" not in protected.detail
         assert hub.store.get("approval_decision", protected.id) is None
         assert protected.id in hub.approvals
+    ctx = runner.tool_contexts["t1"]
+    ctx.private_paths = [(tmp_path.parent / "secret").as_posix()]
+    ctx._approval_grant_env["XDG_CONFIG_HOME"] = ctx.private_paths[0]
+    protected = card("environment-private-after-grant")
+    protected.detail["tool_input"]["command"] = 'python script.py "$XDG_CONFIG_HOME"/notes'
+    await runner._on_approval(protected)
+    assert "grant_category" not in protected.detail
+    assert hub.store.get("approval_decision", protected.id) is None
+    assert protected.id in hub.approvals
+    ctx.private_paths = [str(tmp_path.parent)]
+    ctx._approval_grant_env.pop("XDG_CONFIG_HOME")
     modules = ("socket", "urllib", "http.client", "requests", "httpx", "ftplib",
                "smtplib", "imaplib", "poplib", "telnetlib", "paramiko")
     shell_network = ("curl", "wget", "ssh", "scp", "nc")
