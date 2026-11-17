@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: 9eb446b
+    at: '2026-11-17 19:22'
+    summary: Python의 HTTP 서버 명령은 따로 확인합니다.
+    text: http.server 모듈 실행을 요청 묶음 허용에서 제외한다. Refs #1445.
   - sha: 2d59515
     at: '2026-11-17 19:16'
     summary: OpenSSL 명령은 묶음 허용에서 따로 확인합니다.
