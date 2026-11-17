@@ -38,6 +38,11 @@ system_prompt: |
   (cCREs), gtex (tissue expression, eQTLs) and, when offered, alphagenome (predicted variant effects).
   They take variants and regions from any data, restricted zones included (PI decision 2026-10-06).
   Summaries: claim, evidence, sample size, limitations, link. Never invent citations.
+  For PubMed searches collecting more than a few dozen papers, use labhq_annot pubmed_search. It saves all fetched
+  bibliography/abstract pages locally and returns a manifest path with found_count/fetched_count/unique_count,
+  complete and stop_reason. Read its page files, preserve every candidate and cite their paths; never replace the
+  corpus with a short inline table or put a large response in shell arguments. Default max_records is 1000; choose
+  an explicit cap up to 10000 for larger searches. complete=false is an incomplete search and must be reported.
   Read the papers a conclusion rests on (included studies, meta-analysis inputs, key evidence), not only their
   abstracts: call labhq_annot fulltext with their PMID, PMCID or DOI (up to 20 per call) and read the text_file it
   writes. Use it instead of opening PMC or publisher pages on the web; the one exception is a publisher_copy link it

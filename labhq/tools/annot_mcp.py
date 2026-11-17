@@ -24,10 +24,11 @@ import httpx
 
 from ..runner.lookup_admission import BREAKER_ANY, ENV as LOOKUP_ADMISSION_ENV, breaker_wait
 from ..settings import Settings
-from . import annot, annot_keys, annot_literature, annot_regulatory, annot_structure
+from . import annot, annot_keys, annot_literature, annot_pubmed, annot_regulatory, annot_structure
 from ..runner.annot_broker import ENABLED_ENV as ATLAS_ENABLED_ENV
 from ._mcpcompat import make_server, tool_failure
 from .external_wait import LookupTimeout, _step_slot, exclude_human_wait, run_lookup
+from ..adapters.owned import OwnedPathError
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
 WORKDIR = Path(os.environ["LABHQ_WORKDIR"]).resolve() if os.environ.get("LABHQ_WORKDIR") else None
@@ -64,6 +65,7 @@ server = make_server(
         "fulltext (the body of a paper by PMID, PMCID or DOI: Europe PMC open-access full text, else the abstract), "
         "key_fulltext (for conclusion-critical papers: permitted OA, opt-in institution session, then one PI PDF card), "
         "citation_chase (references and citing papers for one paper), preprints (bioRxiv/medRxiv search; 심사 전), "
+        "pubmed_search (save every bibliography/abstract page to files; return paths and counts only), "
         "openalex_works (broad works search without OA pre-filtering), crossref_doi (version/license/update/retraction "
         "metadata), unpaywall (legal OA locations; explicitly disabled when annot.unpaywall_email is empty)"
         + ("; alphagenome_variant (recommended variant effect scores, GRCh38), "
@@ -470,6 +472,28 @@ async def preprints(query: str, limit: int = 25) -> str:
     """Search bioRxiv and medRxiv through Europe PMC SRC:PPR. Returns up to `limit` candidates (1..100), all marked
     `심사 전`; do not treat them as peer-reviewed evidence."""
     return await _run_literature("preprints", query, limit)
+
+
+@offered()
+async def pubmed_search(query: str, max_records: int = annot_pubmed.DEFAULT_MAX_RECORDS) -> str:
+    """Collect PubMed bibliography and abstracts to page files, never paper bodies. For searches over a few dozen
+    records use this tool instead of copying inline results. max_records defaults to 1000 (1..10000); pages have
+    100 records, at most 8 MiB each and 64 MiB total. Returns only manifest path, counts and completion status.
+    Read the manifest's pages and SHA256s; complete=false means missing records, never a complete review corpus.
+    The normal step-wide 20-minute lookup deadline and outbound request admission apply."""
+    async with _admitted("pubmed_search") as hooks, httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=20.0), headers={"User-Agent": annot.USER_AGENT}, **hooks) as client:
+        try:
+            collection = annot_pubmed.PubmedCollection(
+                annot.Annotator(client, WORKDIR, CACHE_DIR, pace=PACE), query, max_records)
+            collection.checkpoint("in_progress")
+            try:
+                result = await run_lookup(collection.run, tool="pubmed_search", workdir=WORKDIR, notify=_lookup_progress)
+            except LookupTimeout:
+                result = collection.finish("timeout")
+        except (annot.LookupFailed, ValueError, OSError, OwnedPathError) as exc:
+            raise tool_failure(str(exc)) from exc
+    return json.dumps(result, ensure_ascii=False)
 
 
 @offered()
