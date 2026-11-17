@@ -107,12 +107,13 @@ test('journal keeps the tool risk grade visible even when the reason is summariz
 
 test('failed tool translation stays hidden and raw policy reason stays in details',async()=>{
   const decide=await modulePromise,container=new Element();
-  const card={id:'tool-failed',kind:'tool_permission',request_id:'r',summary:'English source',pi_display:{status:'failed'},
+  const card={id:'tool-failed',kind:'tool_permission',request_id:'r',summary:'English source',pi_summary:'현재 작업 폴더: 파일 목록 보기.',pi_display:{status:'failed'},
     pi_reason:'위험 등급: 높음 · 개인 경로',detail:{tool_name:'Bash',grant_category:'unresolved_path',policy_reason:'Bash read scope is ambiguous (policy.private_paths)'}};
   const [row]=decide.syncDecisionCards(container,[card],[],{presentation:'journal'});
   const p=row._decisionParts;
   assert.match(p.reason.textContent,/경로를 미리 확인하지 못했습니다/);
   assert.doesNotMatch(p.summary.textContent,/번역 못 함|English source/);
+  assert.match(p.summary.textContent,/파일 목록 보기/);
   assert.doesNotMatch(p.facts.textContent,/위험 등급/);
   assert.match(p.detail.textContent,/Bash read scope is ambiguous/);
   decide.syncDecisionCards(container,[{...card,pi_display:{status:'translated',text:'분석 코드를 실행하려 합니다.'}}],[],{presentation:'journal'});

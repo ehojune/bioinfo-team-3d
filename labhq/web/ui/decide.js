@@ -904,7 +904,7 @@ function updateCard(row, item, options) {
   syncExpandableText(p.request, request?.text ? `요청: ${request.text}` : '', {limit: 90});
   p.request.hidden = !p.request.textContent;
   syncExpandableText(p.summary, item.type === 'suggestion' ? '필요한 일을 맡길 직원을 추가하려 합니다.' :
-    value.kind === 'tool_permission' ? (value.pi_display?.status === 'translated' ? value.pi_display.text : '직원이 도구를 실행하려 합니다. 작업 내용은 자세히에서 확인해 주세요.') : displaySummary(value) || value.id,
+    value.kind === 'tool_permission' ? (value.pi_display?.status === 'translated' ? value.pi_display.text : value.pi_summary ? plainPiText(value.pi_summary) : '직원이 도구를 실행하려 합니다. 작업 내용은 자세히에서 확인해 주세요.') : displaySummary(value) || value.id,
       {pi: true, attribution: value.kind === 'tool_permission' ? (value.pi_display?.status === 'translated' ? '펭귄 비서실장 설명' : '') : value.pi_display?.status === 'failed' ? '번역 못 함' : value.pi_explainer || value.pi_display ? '펭귄 비서실장 설명' : '',
         ...(value.pi_summary || value.kind === 'tool_permission' ? {} : {original: value.summary})});
   renderDetail(p.detail, item.type === 'suggestion' ? 'recruit' : value.kind,
