@@ -101,6 +101,9 @@ test('tool reasons are deterministic and grant categories do not inherit high ri
     assert.ok(toolCardReason({detail:{policy_reason:reason}}).includes(text),reason);
   assert.ok(decisionFacts({kind:'tool_permission',detail:{policy_reason:'restricted zone'},pi_reason:'위험 등급: 높음 · 확인'}).some(([label,value])=>label==='위험 등급' && value==='높음'));
   assert.ok(!decisionFacts({kind:'tool_permission',detail:{},pi_reason:'위험 등급: 높음 · 확인'}).some(([label])=>label==='위험 등급'));
+  const registry={kind:'tool_permission',detail:{policy_reason:'registry access requires approval',tool_input:{command:'reg query HKCU\\Environment'}},pi_reason:'위험 등급: 높음 · 계정 정보'};
+  assert.match(toolCardReason(registry),/레지스트리/);
+  assert.ok(decisionFacts(registry).some(([label,value])=>label==='위험 등급' && value==='높음'));
   const destructive={kind:'tool_permission',detail:{grant_category:'unresolved_path',tool_input:{command:'cd outputs && rm -r data'},policy_reason:'Bash read scope is ambiguous (policy.private_paths)'},pi_reason:'위험 등급: 높음 · 삭제'};
   assert.match(toolCardReason(destructive),/삭제/);
   assert.ok(decisionFacts(destructive).some(([label,value])=>label==='위험 등급' && value==='높음'));

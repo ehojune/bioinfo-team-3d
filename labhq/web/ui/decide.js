@@ -510,6 +510,7 @@ export function toolCardReason(value) {
   const actionText = action.map(name => labels[name]).join(' ');
   const withAction = text => actionText ? `${text} ${actionText}` : text;
   if (d.internal_row_output === true) return withAction('내부 자료 원본 행이 노출될 수 있어 확인이 필요합니다.');
+  if (/registry|레지스트리/.test(policy)) return withAction('레지스트리의 계정 정보에 접근할 수 있어 확인이 필요합니다.');
   if (/restricted|data_zones|통제|closed|credential/.test(policy)) return withAction('닫힌 경로나 자격 증명 경로가 포함되어 확인이 필요합니다.');
   if ((/personal path/.test(policy) || (!category && /private_paths/.test(policy))) && !/ambiguous/.test(policy)) return withAction('다른 개인 경로에 접근할 수 있어 확인이 필요합니다.');
   if (/outside/.test(policy) && /write/.test(policy)) return withAction('작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.');
@@ -787,7 +788,7 @@ export function decisionFacts(value, who = '') {
     case 'resume': return [['남은 단계', Array.isArray(d.steps) ? d.steps.join(', ') || (d.has_plan === false ? '요청 전체' : '없음') : missing], ['접수', receivedAt(d.created_at) || missing]];
     case 'tool_permission': {
       const reason = toolCardReason(value);
-      const evidence = /닫힌 경로|다른 개인 경로|삭제|네트워크|작업 폴더 밖|스케줄러|원본 행/.test(reason);
+      const evidence = /닫힌 경로|다른 개인 경로|삭제|네트워크|작업 폴더 밖|스케줄러|원본 행|레지스트리/.test(reason);
       let grade = String(value.pi_reason || '').match(/(?:^|\n)위험 등급:\s*(높음|중간|낮음|미확인)(?=\s|·|\.|$)/)?.[1];
       if (grade === '높음' && !evidence) grade = null;
       return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing], ...(grade ? [['위험 등급', grade]] : [])];
