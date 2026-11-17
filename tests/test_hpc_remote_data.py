@@ -387,10 +387,12 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             runner.store.close()
             runner = Runner(settings)
             monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
-            notices = []
-            async def capture_notice(kind, message):
-                notices.append((kind, message))
-            monkeypatch.setattr(runner, '_emit_hpc_notice', capture_notice)
+            events = []
+            original_emit = runner.emit
+            async def capture_event(event):
+                events.append(event)
+                await original_emit(event)
+            monkeypatch.setattr(runner, 'emit', capture_event)
             result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                                resume_session_id='session-' + step))
             if step == 's1' and layout in {'local_conflict', 'changed_copy'}:
@@ -420,8 +422,9 @@ async def test_runner_accepts_remote_required_output_and_passes_it_to_next_step_
             if required_remote:
                 assert '로컬에 받지 못한 선언 산출' in result.text
                 assert 'outputs/' + collected_output in result.text
-                assert any(kind == 'transfer' and '로컬에 받지 못한 선언 산출' in text
-                           for kind, text in notices)
+                assert any(e.type == 'agent.log' and e.task_id == result.task_id and e.agent_id == agent.id
+                           and e.request_id == 'r' and e.data.get('level') == 'alert'
+                           and '로컬에 받지 못한 선언 산출' in e.data.get('text', '') for e in events)
             assert ('outputs/' + output in result.output_sha256) is fetched_copy
             assert (Path(result.workdir) / 'outputs' / output).exists() is fetched_copy
             expected_bytes = 6 if fetched_copy else 6000000 if step == 's1' and layout == 'many_files' else 20000000
@@ -730,10 +733,12 @@ async def test_remote_or_absent_output_after_restart(site, monkeypatch, case):
         runner.store.close()
         runner = Runner(settings)
         monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
-        notices = []
-        async def capture_notice(kind, text):
-            notices.append((kind, text))
-        monkeypatch.setattr(runner, '_emit_hpc_notice', capture_notice)
+        events = []
+        original_emit = runner.emit
+        async def capture_event(event):
+            events.append(event)
+            await original_emit(event)
+        monkeypatch.setattr(runner, 'emit', capture_event)
         result = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='wake', meta=meta,
                                             resume_session_id='session'))
         if case != 'absent':
@@ -741,8 +746,10 @@ async def test_remote_or_absent_output_after_restart(site, monkeypatch, case):
             assert not result.missing_outputs
             assert 'outputs/peak.bed' in result.text and '로컬에 받지 못한 선언 산출 1개' in result.text
             assert '2000 bytes' in result.text and 'fetch size limit' in result.text
-            assert any(kind == 'transfer' and 'outputs/peak.bed' in text and 'fetch size limit' in text
-                       for kind, text in notices)
+            assert any(e.type == 'agent.log' and e.task_id == result.task_id and e.agent_id == agent.id
+                       and e.request_id == 'r' and e.data.get('level') == 'alert'
+                       and 'outputs/peak.bed' in e.data.get('text', '')
+                       and 'fetch size limit' in e.data.get('text', '') for e in events)
         else:
             assert not result.ok
             assert result.missing_outputs == ['outputs/peak.bed']

@@ -3410,8 +3410,9 @@ class Runner:
                     notice = f"로컬에 받지 못한 선언 산출 {len(missing_received)}개:\n{details}"
                     result.text += "\n\n" + self._hide_text(notice)
                     preview = "\n".join(details.splitlines()[:8])
-                    await self._emit_hpc_notice("transfer", self._hide_text(
-                        f"로컬에 받지 못한 선언 산출 {len(missing_received)}개:\n{preview}"))
+                    await emit("agent.log", {"level": "alert", "hpc_session": {"kind": "transfer"},
+                                             "text": self._hide_text(
+                                                 f"로컬에 받지 못한 선언 산출 {len(missing_received)}개:\n{preview}")})
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
