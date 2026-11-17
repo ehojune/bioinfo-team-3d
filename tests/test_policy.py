@@ -494,8 +494,15 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         await runner._on_approval(script)
         assert script.detail["grant_category"] in {"workspace", "unresolved_path"}
         assert hub.store.get("approval_decision", script.id)["automatic"] is True
-    for i, command in enumerate(["gh gist create output.txt",
+    modules = ("socket", "urllib", "http.client", "requests", "httpx", "ftplib",
+               "smtplib", "imaplib", "poplib", "telnetlib", "paramiko")
+    shell_network = ("curl", "wget", "ssh", "scp", "nc")
+    network_commands = ([f"python -c 'import {module}'" for module in modules]
+                        + [f"{name} example.test" for name in shell_network])
+    for i, command in enumerate(network_commands + ["gh gist create output.txt",
                                  "python -c 'import smtplib; smtplib.SMTP(\"example.test\")'",
+                                 "python -c 'import imaplib; imaplib.IMAP4(\"example.test\")'",
+                                 "python -c 'import poplib; poplib.POP3(\"example.test\")'",
                                  "python -c 'import telnetlib; telnetlib.Telnet(\"example.test\", 25)'",
                                  "python -m http.server",
                                  f'git -C "{tmp_path.as_posix()}" push https://example.test/repo HEAD',
