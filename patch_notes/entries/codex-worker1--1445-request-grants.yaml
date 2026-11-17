@@ -1,5 +1,9 @@
 pr: 1452
 rows:
+  - sha: ceeafb04
+    at: '2026-11-17 18:40'
+    summary: 내부 자료를 읽는 명령만 읽기 묶음으로 확인합니다.
+    text: 명시된 internal 경로에서 지원되지 않는 쓰기와 복합 명령은 개별 승인으로 남긴다. Refs #1445.
   - sha: 4dbecd9
     at: '2026-11-17 18:25'
     summary: locale 인용이 든 명령도 따로 확인합니다.
