@@ -45,10 +45,17 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 17:27 | [`6249224`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/6249224) | **명령에 드러난 네트워크 호출은 따로 확인합니다.**<br>Python 네트워크 API가 보이는 명령을 요청 묶음 허용에서 제외한다. Refs |
 | 17:23 | [`3ca0edc`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/3ca0edc) | **이동할 폴더를 알 수 없는 명령은 따로 확인합니다.**<br>이전 작업 폴더를 참조하는 cd 등은 요청 묶음 허용에서 제외한다. Refs |
 | 17:16 | [`2d258d5`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/2d258d5) | **분석 코드도 요청 안에서 묶어 허용하고 승인 건수를 보여 줍니다.**<br>실행 중 동작은 명령만으로 확인하지 못하며 요청별 확정 승인과 허용 부류를 집계한다. Refs |
+| 17:10 | [`bfe3684`](https://github.com/ehojune/bioinfo-team-3d/commit/bfe3684) | **집계 응답이 느려도 승인 내역을 표시합니다.**<br>같은 요청의 집계 조회를 순서대로 처리하고 밀린 갱신을 이어서 수행한다. |
+| 17:07 | [`0695169`](https://github.com/ehojune/bioinfo-team-3d/commit/0695169) | **요청 화면의 기존 회귀 검사를 유지합니다.**<br>요청 화면 시험의 집계 변수와 loader fixture를 실제 호출 환경에 맞춘다. |
+| 17:01 | [`d5f0ea1`](https://github.com/ehojune/bioinfo-team-3d/commit/d5f0ea1) | **기존 승인 카드와 데모 화면의 동작을 유지합니다.**<br>묶음 허용 문구를 지원하는 카드에만 붙이고 데모에서는 집계 자리를 표시하지 않는다. |
 | 17:00 | [`35b4299`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/35b4299) | **변환 모듈 경로가 지정된 환경은 따로 확인합니다.**<br>GCONV_PATH와 LOCPATH가 설정된 경우 묶음 허용을 사용하지 않는다. Refs |
 | 16:53 | [`720b23d`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/720b23d) | **실행 파일에 코드를 주입할 수 있는 환경은 따로 확인합니다.**<br>동적 로더 설정이 있으면 묶음 허용을 사용하지 않는다. Refs |
+| 16:50 | [`46a2fbf`](https://github.com/ehojune/bioinfo-team-3d/commit/46a2fbf) | **도구 승인 전에 위험 등급을 볼 수 있도록 고쳤습니다.**<br>도구 승인 카드에 전달된 위험 등급을 요약과 별도로 표시한다. |
 | 16:48 | [`4d5c29f`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/4d5c29f) | **환경 정보가 없는 실행기도 중단 없이 동작합니다.**<br>환경 snapshot을 만들 수 없는 실행기는 묶음 허용 없이 기존대로 실행한다. Refs |
+| 16:45 | [`dad93ab`](https://github.com/ehojune/bioinfo-team-3d/commit/dad93ab) | **요청 정보를 기다리는 동안에도 웹 화면이 멈추지 않도록 고쳤습니다.**<br>요청이나 집계가 아직 없는 초기 화면도 오류 없이 표시한다. |
+| 16:42 | [`0e576bc`](https://github.com/ehojune/bioinfo-team-3d/commit/0e576bc) | **Antigravity 비용이 다른 엔진과 구분되도록 표시합니다.**<br>Antigravity 비용과 오래된 가격표 경고의 엔진 이름을 유지한다. |
 | 16:36 | [`e689f3b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/e689f3b) | **종료된 요청의 승인 재전송 기록을 일치시킵니다.**<br>거절을 재전송할 때 전달 기록과 감사 기록을 함께 수정한다. Refs |
+| 16:36 | [`fc0a5d6`](https://github.com/ehojune/bioinfo-team-3d/commit/fc0a5d6) | **승인 범위와 요청별 자동 승인 내역을 웹에서 확인하도록 했습니다.**<br>승인 카드에 요청별 묶음 허용과 한계를 표시하고 자동 승인 집계·한국어 사유·엔진 이름을 정리한다. |
 | 16:30 | [`33fff39`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/33fff39) | **폴더 위치가 달라질 수 있는 셸 환경은 따로 확인합니다.**<br>CDPATH가 설정된 경우 묶음 허용을 사용하지 않는다. Refs |
 | 16:27 | [`f12f9ba`](https://github.com/ehojune/bioinfo-team-3d/pull/1454/commits/f12f9ba) | **평가 결과와 단일 모드·팀 모드를 고르는 기준을 평가 문서에 정리하고 영문판을 추가했습니다.**<br>문서: #1427 평가 결과(짝 비교 1~3·5·9, 어려운 과제 세 갈래)와 단일·팀 사용 기준, 영문판 |
 | 16:24 | [`68f018b`](https://github.com/ehojune/bioinfo-team-3d/pull/1452/commits/68f018b) | **직원이 실행할 명령의 경로를 다시 확인합니다.**<br>묶음 판정에 직원 실행 환경을 사용하고 확인할 수 없으면 개별 승인으로 남긴다. Refs |
