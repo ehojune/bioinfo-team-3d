@@ -589,7 +589,7 @@
       }
     },
     "tests/test_policy.py": {
-      "sha256": "c673a3038abeb5a8ca531adc40a97a70dde78e5ca7ff738ce83f67afa585451a",
+      "sha256": "694fee5505aa7b662f699e7dc491e9775289b60b6cd03c2a881e7dcb411773aa",
       "reason": "Only fake-clock budget assertions and numeric HPC threshold arithmetic are omitted; every path/security and actual scanner-cost node remains.",
       "nodes": {
         "test_a_command_writing_to_a_null_device_is_not_a_write": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
@@ -615,6 +615,7 @@
         "test_find_payloads_and_rm_options_the_gate_cannot_read_ask": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_find_start_paths_given_through_options_ask": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_git_rm_into_another_tree_and_unreadable_rm_operands_ask": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
+        "test_managed_read_uncertainty_has_typed_evidence": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_mentions_zone_stays_linear_on_long_separator_runs": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_native_delegation_tools_are_denied_even_if_configured_for_auto_allow": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",
         "test_non_recursive_rm_is_allowed": "Retained Windows/runtime/security boundary or unreviewed mixed-node behavior.",

@@ -155,8 +155,7 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
         return excluded("resolved_private_path")
     other = _private_decision(tool, checked, protected, workdir, None, None,
                               list(private_open_reads), closed)
-    if other and ("closed or credential" in other.reason or "names a PI personal" in other.reason
-                  or "registry" in other.reason):
+    if other and other.private_kind != "unresolved":
         return excluded("other_private_or_registry")
     # Check every known cd base as well: a relative operand after cd may name
     # an internal file even when it does not do so relative to the workdir.
@@ -172,8 +171,8 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     internal = next((hit for hit in internal_hits if isinstance(hit, Unresolved)), None)
     if (unknown_write or isinstance(internal, Unresolved) or isinstance(resolved_closed, Unresolved)
             or isinstance(resolved_private, Unresolved)
-            or "not all resolved" in decision.reason
-            or (other and "not all resolved" in other.reason)
+            or decision.private_kind in {"resolved_match", "unresolved"}
+            or (other and other.private_kind == "unresolved")
             or re.search(r"\$|`|\*|\?|\b(?:for|while)\b", command, re.I)):
         return "unresolved_path"
     return "workspace"

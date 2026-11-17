@@ -66,6 +66,31 @@ def test_request_grant_parent_private_path_preserves_exclusions(tmp_path, monkey
     assert category("python -c x") == "unresolved_path"
 
 
+def test_managed_read_uncertainty_has_typed_evidence(tmp_path):
+    from labhq.approval_grants import classify
+    from labhq.policy import _private_decision
+    from labhq.tool_explanation import reason
+
+    work = tmp_path / "work"
+    work.mkdir()
+    private = [tmp_path.as_posix()]
+    reads = [work.as_posix()]
+    unknown = {"command": "python script.py"}
+    verdict = _private_decision("Bash", unknown, private, str(work), None, {}, reads)
+    assert verdict.private_kind == "unresolved"
+    assert "경로 범위를 확인하지 못했습니다" in verdict.reason
+    assert "closed or credential" not in verdict.reason
+    assert "위험 등급: 높음" not in reason({}, verdict.reason, "미확인 · 실행 범위 확인 필요")
+    assert classify("Bash", unknown, PolicySettings(), workdir=str(work),
+                    private_paths=tuple(private), private_enabled=True,
+                    private_open_reads=tuple(reads), environ={}) == "unresolved_path"
+    for command in (f'python script.py "{(tmp_path / "secret").as_posix()}"',
+                    'python script.py .ssh/id_rsa'):
+        assert classify("Bash", {"command": command}, PolicySettings(), workdir=str(work),
+                        private_paths=tuple(private), private_enabled=True,
+                        private_open_reads=tuple(reads), environ={}) is None
+
+
 def test_request_grant_cd_write_scope(tmp_path):
     from labhq.approval_grants import classify
 
@@ -487,6 +512,7 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     runner.s.policy.data_zones = []
     runner.tool_contexts["t1"].private_paths = [str(tmp_path.parent)]
     runner.tool_contexts["t1"].private_enabled = True
+    runner.tool_contexts["t1"].private_open_reads = [str(tmp_path)]
     for i, command in enumerate(["python script.py", "python -c 'print(1)'",
                                  "python - <<'PY'\nprint(1)\nPY"]):
         script = card(f"workspace-analysis-{i}")
@@ -494,6 +520,14 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
         await runner._on_approval(script)
         assert script.detail["grant_category"] in {"workspace", "unresolved_path"}
         assert hub.store.get("approval_decision", script.id)["automatic"] is True
+    for i, command in enumerate([f'python script.py "{(tmp_path.parent / "secret").as_posix()}"',
+                                 'python script.py .ssh/id_rsa']):
+        protected = card(f"protected-after-grant-{i}")
+        protected.detail["tool_input"]["command"] = command
+        await runner._on_approval(protected)
+        assert "grant_category" not in protected.detail
+        assert hub.store.get("approval_decision", protected.id) is None
+        assert protected.id in hub.approvals
     modules = ("socket", "urllib", "http.client", "requests", "httpx", "ftplib",
                "smtplib", "imaplib", "poplib", "telnetlib", "paramiko")
     shell_network = ("curl", "wget", "ssh", "scp", "nc")

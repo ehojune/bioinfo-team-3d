@@ -1697,6 +1697,8 @@ class Decision:
     # The tool input the decision was made on, when it is not the input Claude sent (#219). The gate must answer
     # with it (updatedInput), so the file Claude writes is the one that was judged.
     updated_input: dict | None = None
+    # Private-path evidence is independent of the human-readable reason.
+    private_kind: str | None = None  # matched | resolved_match | unresolved
 
 
 def _windows_normpath(path: str) -> str:
@@ -2635,38 +2637,40 @@ def _private_decision(tool_name: str, tool_input: dict[str, Any], private_paths:
         if spelled:
             return Decision("ask", f"{tool_name} touches the registry (any registry access asks while private paths "
                                    f"are on; HKCU\\Environment holds the PI's tokens such as GITHUB_TOKEN; 레지스트리 "
-                                   f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`")
+                                   f"접근은 PI 승인 필요) via `{spelled[:80]}`: `{cmd[:200]}`", private_kind='matched')
         if tool_name == 'Bash' and open_reads:
             managed = managed_shell_read(cmd, private_paths, open_reads, workdir)
             if managed is True:
                 return None
             if managed is False:
-                return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)' + input_hint)
+                return Decision('ask', 'Bash reaches a closed or credential path (policy.private_paths)' + input_hint,
+                                private_kind='matched')
             # Unknown syntax still asks. A managed parent match alone does not prove access to PI files.
             # Keep explicit closed-path and registry evidence; do not remove the parent from the actual guards.
             from .private_paths import shell_closed_operand
 
             if workdir and shell_closed_operand(cmd, private_paths, open_reads, workdir, home, environ):
                 return Decision('ask', 'Bash names a PI personal path (policy.private_paths); '
-                                      'explicit closed or credential path evidence; read scope unverified' + input_hint)
-            # approval_grants rejects private decisions naming "closed or credential" paths.
-            # Unknown evidence must retain that exclusion, even when no concrete hit was found.
+                                      'explicit closed or credential path evidence; read scope unverified' + input_hint,
+                                private_kind='matched')
             return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); '
-                                  'closed or credential path access is unverified; individual confirmation required'
-                                  + input_hint)
+                                  '경로 범위를 확인하지 못했습니다' + input_hint, private_kind='unresolved')
         if private_paths and mentioned_private_path(cmd, private_paths, home, environ):
             return Decision("ask", f"{tool_name} names a PI personal path (policy.private_paths): `{cmd[:200]}`"
-                            + input_hint)
+                            + input_hint, private_kind='matched')
         # A link in the workspace (`alias -> ~/.ssh`) names no private path; its real path does.
         hit = private_paths and touches_resolved({"command": cmd}, private_paths, workdir=workdir)
         if hit:
             return Decision("ask", f"{tool_name} reaches a PI personal path (policy.private_paths) through a link, or "
-                                   f"its paths were not all resolved: `{cmd[:200]}`" + input_hint)
+                                   f"its paths were not all resolved: `{cmd[:200]}`" + input_hint,
+                            private_kind='unresolved' if isinstance(hit, Unresolved) else 'resolved_match')
         if private_paths and _cd_reaches_private(cmd, private_paths, workdir, home, environ):
             return Decision("ask", f"{tool_name} changes into a folder from which it names a PI personal path "
-                                   f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`")
+                                   f"(policy.private_paths), or changes folder too often to judge: `{cmd[:200]}`",
+                            private_kind='matched')
         if tool_name == 'Bash' and open_reads:
-            return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); confirmation required')
+            return Decision('ask', 'Bash read scope is ambiguous (policy.private_paths); 경로 범위를 확인하지 못했습니다',
+                            private_kind='unresolved')
     return None
 
 
