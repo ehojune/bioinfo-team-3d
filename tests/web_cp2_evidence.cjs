@@ -95,6 +95,16 @@ test('journal shows a scoped grant button only for eligible tool cards',async()=
   assert.equal(row._decisionParts.grant.hidden,true);
 });
 
+test('journal keeps the tool risk grade visible even when the reason is summarized',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const card={id:'tool-risk',kind:'tool_permission',request_id:'r1',detail:{policy_reason:'private_paths'},
+    pi_reason:'작업 목적: 분석.\n걸린 규칙: 개인 경로 보호.\n위험 등급: 높음 · 개인 정보 노출 확인 필요.'};
+  const [row]=decide.syncDecisionCards(container,[card],[],{presentation:'journal'});
+  assert.match(row._decisionParts.facts.textContent,/위험 등급높음/);
+  decide.syncDecisionCards(container,[{...card,pi_reason:''}],[],{presentation:'journal'});
+  assert.doesNotMatch(row._decisionParts.facts.textContent,/위험 등급/);
+});
+
 test('other approvals keep two buttons and send no choice',async()=>{
   const decide=await modulePromise,container=new Element(),sent=[];
   const [row]=decide.syncDecisionCards(container,[{id:'t',kind:'tool_permission',summary:'Bash',detail:{tool_name:'Bash'}}],[],

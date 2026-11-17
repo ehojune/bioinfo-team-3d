@@ -680,7 +680,10 @@ export function decisionFacts(value, who = '') {
     case 'research_evidence': return [['검토 단계', d.results ? `${Object.keys(d.results).length}개` : missing], ['근거를 잃은 주장', Array.isArray(d.unsupported_claims) ? `${d.unsupported_claims.length}개` : missing]];
     case 'research_continue': return [['이번 차수', text(d.round)], ['차수 상한', text(d.limit)]];
     case 'resume': return [['남은 단계', Array.isArray(d.steps) ? d.steps.join(', ') || (d.has_plan === false ? '요청 전체' : '없음') : missing], ['접수', receivedAt(d.created_at) || missing]];
-    case 'tool_permission': return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing]];
+    case 'tool_permission': {
+      const grade = String(value.pi_reason || '').match(/(?:^|\n)위험 등급:\s*(높음|중간|낮음|미확인)(?=\s|·|\.|$)/)?.[1];
+      return [['도구', text(d.tool_name)], ['요청 직원', d.requester_name || who || missing], ...(grade ? [['위험 등급', grade]] : [])];
+    }
     case 'recruit': return [['제안 직원', who || missing], ['출처', d.repo || value.repo ? '저장소 · 자세히' : '자세히에서 확인']];
     default: return [['요청 직원', who || missing], ['종류', (DECISION_QUESTIONS[value.kind] || '결정 요청').replace(/\?$/, '')]];
   }
