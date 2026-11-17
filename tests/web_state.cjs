@@ -227,8 +227,8 @@ assert.equal(failedCosts.req('failed').costKnown,false);
   assert.equal(view.req('unknown').costKnown, false);
   assert.equal(view.req('estimated').costKnown, true);
   const engines = engineCostLabel(view.req('mixed').costSummary);
-  assert.match(engines, /^claude_code 확인 \$1\.00 · codex 추정 \$0\.50 \+ 비용 모름 1건; 추정은 API 가격표 환산/);
-  assert.match(engines, /가격표 오래됨: codex gpt-6\.1-sol \(2026-10-02 확인\)/);
+  assert.match(engines, /^Claude Code 확인 \$1\.00 · Codex 추정 \$0\.50 \+ 비용 모름 1건; 추정은 API 가격표 환산/);
+  assert.match(engines, /가격표 오래됨: Codex gpt-6\.1-sol \(2026-10-02 확인\)/);
   assert.equal(totalCostLabel([...view.S.requests.values()], view.S.cost), '사용 비용 $2.10 (추정 $0.70 포함) + 비용 모름 3건 이상');
   view.apply({type:'request.followup_done', request_id:'unknown', data:{id:'f', ok:true, answer:'a', cost_usd:0.1,
     cost_known:true, cost_summary:{...estimated, estimated_usd:0.1, subtotal_usd:0.1}}});

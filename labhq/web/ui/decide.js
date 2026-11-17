@@ -433,6 +433,35 @@ function renderStorage(box, value) {
 const EVIDENCE_LABELS = { refused_rows: '계약에 맞지 않아 뺀 근거',
   refused_evidence: '거부된 evidence (승인 대상 아님)', unsupported_claims: '근거를 잃은 claim',
   results: '단계별 claim·evidence 원장' };
+const GRANT_CATEGORIES = {workspace: '작업 폴더', internal_read: '내부 자료 읽기', unresolved_path: '경로 확인 필요'};
+export function grantCategory(approval) {
+  return approval?.kind === 'tool_permission' && approval.request_id && Object.hasOwn(GRANT_CATEGORIES, approval.detail?.grant_category)
+    ? approval.detail.grant_category : null;
+}
+export function grantCategoryLabel(category) { return GRANT_CATEGORIES[category] || '알 수 없는 부류'; }
+export function createApprovalSummaryLoader(fetchSummary, selected, changed) {
+  let serial = 0, current = null, value = null;
+  return {
+    get: () => value,
+    async refresh() {
+      const id = selected(), sequence = ++serial;
+      if (id !== current) { current = id; value = null; changed(); }
+      if (!id) return;
+      try {
+        const result = await fetchSummary(id);
+        if (sequence !== serial || selected() !== id) return;
+        if (result?.request_id !== id || !Number.isSafeInteger(result.automatic_approved_count) || result.automatic_approved_count < 0 ||
+            !Array.isArray(result.granted_categories) || !Array.isArray(result.active_grant_categories) ||
+            ![...result.granted_categories, ...result.active_grant_categories].every(x => typeof x === 'string')) throw new Error('invalid summary');
+        value = result;
+      } catch {
+        if (sequence !== serial || selected() !== id) return;
+        value = null;
+      }
+      changed();
+    },
+  };
+}
 export function decisionChoice(approval, act) {
   // CP1 sends a choice only where 수정 요청 exists, so an older gateway reads approve/deny exactly as before.
   if (approval?.kind !== 'research_evidence' && !(approval?.kind === 'research_plan' && reviseContinues(approval))) return null;
@@ -535,6 +564,12 @@ export function renderDetail(container, kind, detail, approval = null) {
     else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))
       // No plan (a direct request, or a stop before planning) reruns the whole request; a card saved before has_plan reads 없음 (#521).
       detailEntry(list, labels[key], detail.steps.join(', ') || (detail.has_plan === false ? '요청 전체' : '없음'), {raw: true});
+    else if (kind === 'research_evidence' && ['refused_rows', 'refused_evidence'].includes(key) && Array.isArray(detail[key])) {
+      const missing = detail[key].filter(row => /cites artifact .* missing from artifact_refs/.test(String(row?.reason || '')));
+      if (missing.length) detailEntry(list, '근거 대조 경고', missing.map(row =>
+        `근거 ${row.evidence_id || row.row_id || ''}가 가리킨 산출 파일이 등록 목록에 없습니다.`).join('\n'), {raw: true});
+      detailEntry(list, labels[key], value, {raw: true, fold: missing.length > 0, summary: '원문 자세히'});
+    }
     else if (kind === 'research_evidence' && key === 'results') {
       renderEvidenceTable(list, detail);
       detailEntry(list, '원장 JSON 전체', value, {raw: true, fold: true,
@@ -583,11 +618,14 @@ function createCard(item, options) {
   const actions = add(body, 'div', '', 'acts');
   const approve = add(actions, 'button', '', 'btn go');
   approve.type = 'button';
+  const grant = add(actions, 'button', '이 요청에서 같은 부류 허용', 'btn');
+  grant.type = 'button'; grant.hidden = true; grant.dataset.act = 'grant';
+  const grantExplanation = add(body, 'p', '', 'decision-meta'); grantExplanation.hidden = true;
   const revise = add(actions, 'button', '', 'btn');  // CP2 evidence review only
   revise.type = 'button'; revise.hidden = true;
   const deny = add(actions, 'button', '', 'btn');
   deny.type = 'button';
-  row._decisionParts = { title, who, request, summary, detail, attachment, questions, storage, assumptions, refusal, timing, note, consequence, approve, revise, deny };
+  row._decisionParts = { title, who, request, summary, detail, attachment, questions, storage, assumptions, refusal, timing, note, consequence, approve, grant, grantExplanation, revise, deny };
   if (options.presentation === 'journal') {
     row.className += ' ui-card decision-card';
     const heading = doc().createElement('h3'); heading.className = 'decision-question';
@@ -604,7 +642,7 @@ function createCard(item, options) {
     approve.className += ' ui-button ui-button--primary decision-primary';
     deny.className += ' ui-button decision-secondary';
     revise.className += ' ui-button decision-secondary';
-    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, attachment, questions, storage, assumptions, refusal, timing, consequence, actions, memo, source);
+    body.replaceChildren(heading, facts, summary, explanation, status, kind, request, attachment, questions, storage, assumptions, refusal, timing, consequence, actions, grantExplanation, memo, source);
     Object.assign(row._decisionParts, {heading, facts, reason, outcome});
   }
   return row;
@@ -656,7 +694,17 @@ function updateJournalCard(p, value, suggestion) {
       const cell = add(p.facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
     }
   }
-  syncExpandableText(p.reason, value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
+  const policy = String(value.detail?.policy_reason || '').toLowerCase();
+  const toolReason = value.detail?.internal_row_output === true ? '내부 자료의 원본 행이 노출될 수 있어 확인이 필요합니다.' :
+    /restricted|data_zones|통제/.test(policy) ? '보호된 자료 경로에 접근할 수 있어 확인이 필요합니다.' :
+    /private_paths|credential/.test(policy) ? '개인 파일이나 자격 증명 경로를 확인해야 합니다.' :
+    /recursive|삭제/.test(policy) ? '파일이나 폴더 삭제가 포함되어 확인이 필요합니다.' :
+    /outside|write/.test(policy) ? '작업 폴더 밖에 쓸 수 있어 확인이 필요합니다.' :
+    '자동 허용 범위 밖이어서 실행 전 확인이 필요합니다.';
+  const suppliedReason = String(value.pi_reason || '');
+  const safeReason = /[가-힣]/.test(suppliedReason) && !/\b[a-z]+_[a-z_]+\b/i.test(suppliedReason)
+    ? suppliedReason.split(/\n+/).filter(Boolean).slice(0, 2).join(' ') : toolReason;
+  syncExpandableText(p.reason, kind === 'tool_permission' ? safeReason : value.pi_reason || value.detail?.reason || value.reason || '', {pi: true});
   syncExpandableText(p.outcome, value.pi_outcome || '', {pi: true});
   p.reason.hidden = !p.reason.textContent; p.outcome.hidden = !p.outcome.textContent;
   // These legacy renderers already fold their raw fields. Reuse that content inside the
@@ -850,6 +898,10 @@ function updateCard(row, item, options) {
   const disabled = options.disabled ? options.disabled(value, item.type) : false;
   const reviewPending = value.kind === 'result_publish' && request?.pi_review_pending === true && !request.pi_reviewed_at;
   p.approve.disabled = disabled || reviewPending; p.revise.disabled = disabled; p.deny.disabled = disabled;
+  const category = options.presentation === 'journal' && approval && grantCategory(value);
+  p.grant.hidden = !category; p.grant.disabled = disabled;
+  p.grantExplanation.hidden = !category;
+  p.grantExplanation.textContent = category ? `허용 부류: ${grantCategoryLabel(category)}. 묶음 허용은 이 요청의 직원이 작업 폴더 안에서 분석 코드를 실행하는 것을 포함합니다. 코드가 실행 중에 하는 일(파일 삭제 포함)은 명령만 보고는 확인되지 않습니다. 명령에 드러난 삭제·네트워크·보호 경로만 따로 묻습니다. Claude 직원의 코드 실행에는 OS 수준 격리가 없습니다.` : '';
   if (reviewPending) {
     p.consequence.textContent = '보고서 검토·확인을 완료하면 정리본을 올릴 수 있어요.';
     p.consequence.hidden = false;

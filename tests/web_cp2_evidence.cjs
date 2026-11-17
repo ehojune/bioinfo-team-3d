@@ -74,6 +74,27 @@ test('contract-refused rows and their reasons lead the CP2 card detail',async()=
   assert.doesNotMatch(row._decisionParts.detail.textContent,/choices/);
 });
 
+test('missing artifact reference warning is Korean and retains the original in details',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const item={...cp2,detail:{...cp2.detail,refused_evidence:[{evidence_id:'e1',reason:'evidence e1 cites artifact a1 missing from artifact_refs'}]}};
+  const [row]=decide.syncDecisionCards(container,[item]);
+  const detail=row._decisionParts.detail.textContent;
+  assert.match(detail,/근거 e1가 가리킨 산출 파일이 등록 목록에 없습니다/);
+  assert.match(detail,/missing from artifact_refs/);
+});
+
+test('journal shows a scoped grant button only for eligible tool cards',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const card={id:'tool',kind:'tool_permission',request_id:'r1',detail:{grant_category:'workspace',policy_reason:'private_paths'}};
+  const [row]=decide.syncDecisionCards(container,[card],[],{presentation:'journal'});
+  assert.equal(row._decisionParts.grant.hidden,false);
+  assert.equal(row._decisionParts.grant.dataset.act,'grant');
+  assert.match(row._decisionParts.grantExplanation.textContent,/코드가 실행 중에 하는 일/);
+  assert.doesNotMatch(row._decisionParts.reason.textContent,/private_paths/);
+  decide.syncDecisionCards(container,[{...card,detail:{}}],[],{presentation:'journal'});
+  assert.equal(row._decisionParts.grant.hidden,true);
+});
+
 test('other approvals keep two buttons and send no choice',async()=>{
   const decide=await modulePromise,container=new Element(),sent=[];
   const [row]=decide.syncDecisionCards(container,[{id:'t',kind:'tool_permission',summary:'Bash',detail:{tool_name:'Bash'}}],[],
