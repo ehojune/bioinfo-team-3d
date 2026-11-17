@@ -1,5 +1,9 @@
 pr: 1451
 rows:
+  - sha: "d2104ac"
+    at: "2026-11-17 15:32"
+    summary: "PubMed 결과 파일의 교체를 inode 재사용 때도 확인합니다."
+    text: "Linux CI의 교체 거부 실패 뒤 파일 신원에 ctime을 포함하고 append 후 값을 보존한다. assertion 유지, 배포 venv 관련 회귀 213 passed, 3 skipped (#1446)."
   - sha: "b5d01d5"
     at: "2026-11-17 15:22"
     summary: "반복 문헌 검색도 단계 전체 파일 한도 안에서 보존합니다."
