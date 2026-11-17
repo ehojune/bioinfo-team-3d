@@ -444,22 +444,50 @@ function explicitToolAction(value) {
   let input = d.tool_input ?? d.input ?? {};
   if (typeof input === 'string') { try { input = JSON.parse(input); } catch { input = {}; } }
   const command = typeof input?.command === 'string' ? input.command : '';
-  // Match executable positions, not words inside a quoted argument such as echo 'rm'.
-  const segments = []; let segment = '', quote = '', escaped = false;
-  for (const char of command) {
-    if (escaped) { segment += char; escaped = false; continue; }
-    if (char === '\\' && quote !== "'") { escaped = true; continue; }
-    if (quote) { if (char === quote) quote = ''; else segment += char; continue; }
-    if (char === "'" || char === '"' || char === '`') { quote = char; continue; }
-    if (';|&\n'.includes(char)) { segments.push(segment); segment = ''; } else segment += char;
+  // Parse only executable positions; quoted arguments to echo/printf are not commands.
+  const found = new Set();
+  function scan(text, depth = 0) {
+    if (depth > 4) return;
+    const segments = []; let words = [], word = '', quote = '', escaped = false, started = false;
+    const endWord = () => { if (started) words.push(word); word = ''; started = false; };
+    const endSegment = () => { endWord(); if (words.length) segments.push(words); words = []; };
+    for (const char of text) {
+      if (escaped) { word += char; started = true; escaped = false; continue; }
+      if (char === '\\' && quote !== "'") { escaped = true; started = true; continue; }
+      if (quote) { if (char === quote) quote = ''; else word += char; started = true; continue; }
+      if (char === "'" || char === '"') { quote = char; started = true; continue; }
+      if (';|&\n'.includes(char)) { endSegment(); continue; }
+      if (/\s/.test(char)) { endWord(); continue; }
+      word += char; started = true;
+    }
+    endSegment();
+    for (const parts of segments) {
+      let i = 0;
+      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i] || '')) i++;
+      while (i < parts.length) {
+        const exe = parts[i++].split(/[\\/]/).pop().toLowerCase();
+        if (exe === 'sudo' || exe === 'env') {
+          while (i < parts.length && (parts[i].startsWith('-') || (exe === 'env' && /^[A-Za-z_][A-Za-z0-9_]*=/.test(parts[i])))) {
+            const option = parts[i++];
+            if ((exe === 'sudo' && ['-u','-g','-h','-p','-C','-T','--user','--group','--host'].includes(option)) || (exe === 'env' && ['-u','--unset','-C','--chdir'].includes(option))) i++;
+          }
+          continue;
+        }
+        if (['bash','sh','zsh','dash'].includes(exe)) {
+          while (i < parts.length && parts[i].startsWith('-')) {
+            const flag = parts[i++];
+            if (/^-\w*c\w*$/.test(flag) && parts[i] != null) { scan(parts[i], depth + 1); break; }
+          }
+        }
+        if (/^(?:rm|rmdir|unlink|remove-item|del|erase)(?:\.exe)?$/.test(exe)) found.add('delete');
+        if (/^(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)(?:\.exe)?$/.test(exe)) found.add('network');
+        if (/^(?:qsub|sbatch)(?:\.exe)?$/.test(exe)) found.add('scheduler');
+        break;
+      }
+    }
   }
-  segments.push(segment);
-  const begins = pattern => segments.some(part => pattern.test(part));
-  return [
-    [ /^\s*(?:sudo\s+)?(?:rm|rmdir|unlink|remove-item|del|erase)\b/i, 'delete' ],
-    [ /^\s*(?:sudo\s+)?(?:curl|wget|ssh|scp|sftp|invoke-webrequest|invoke-restmethod)\b/i, 'network' ],
-    [ /^\s*(?:qsub|sbatch)\b/i, 'scheduler' ],
-  ].filter(([pattern]) => begins(pattern)).map(([,name]) => name);
+  scan(command);
+  return [...found];
 }
 export function toolCardReason(value) {
   const d = value.detail || {}, policy = String(d.policy_reason || '').toLowerCase();
