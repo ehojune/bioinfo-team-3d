@@ -299,9 +299,18 @@ async def _run_literature(method: str, *args: object) -> str:
             if method == "pubmed_search":
                 collection = annot_pubmed.PubmedCollection(annotator, *args)
                 collection.checkpoint("in_progress")
-            operation = collection.run if collection else lambda: getattr(annotator, method)(*args)
+            async def operation():
+                result = await collection.run() if collection else await getattr(annotator, method)(*args)
+                if collection and result["stop_reason"] not in {"exhausted", "record_limit", "byte_limit"}:
+                    raise annot.LookupFailed(f"PubMed lookup incomplete: {result['stop_reason']}")
+                return result
             try:
                 result = await run_lookup(operation, tool=method, workdir=WORKDIR, notify=_lookup_progress)
+            except annot.LookupFailed:
+                if collection is None:
+                    raise
+                # run_lookup records failure; the caller still receives the saved partial manifest.
+                result = collection.checkpoint(collection.state["stop_reason"])
             except LookupTimeout:
                 if collection is None:
                     raise

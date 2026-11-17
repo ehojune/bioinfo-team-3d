@@ -386,6 +386,8 @@ async def test_mcp_admission_refuses_fourth_send_and_keeps_partial_pages(tmp_pat
     assert not result["complete"] and result["stop_reason"] == "lookup_failed"
     assert len(provider.calls) == 3 and limited.admits == 4
     assert len(manifest(tmp_path, result)["pages"]) == 2
+    states = [json.loads(s) for s in (tmp_path / external_wait.STATUS_FILE).read_text(encoding="utf-8").splitlines()]
+    assert states[-1]["status"] == "failed"
 
 
 @pytest.mark.parametrize("search_failure", [False, True])
@@ -413,6 +415,24 @@ async def test_partial_transport_failure_keeps_failed_admission_receipts(
     assert "eutils.ncbi.nlm.nih.gov" in limited.ledger.paused_hosts("req-1")
     next_send = limited.ledger.admit("req-1", "later-task", "worker", "pubmed_search", "eutils.ncbi.nlm.nih.gov")
     assert not next_send["admitted"] and next_send["reason"] == "host_paused"
+    states = [json.loads(s) for s in (tmp_path / external_wait.STATUS_FILE).read_text(encoding="utf-8").splitlines()]
+    assert states[-1]["status"] == "failed"
+
+
+@pytest.mark.parametrize("mode,expected", [("http", "failed"), ("invalid", "failed"),
+                                          ("record_limit", "ok"), ("exhausted", "ok")])
+async def test_mcp_lookup_status_distinguishes_partial_failure_from_planned_cap(
+        tmp_path, monkeypatch, mcp_module, limited, mode, expected):
+    provider = Provider(200 if mode == "record_limit" else 100, "short")
+    limited.provider = (lambda r: httpx.Response(400)) if mode == "http" else (
+        (lambda r: httpx.Response(200, json={})) if mode == "invalid" else provider)
+    monkeypatch.setattr(annot.Http, "_pace", lambda *a: asyncio.sleep(0))
+    result = json.loads(await mcp_module.pubmed_search("fixture", 100))
+    assert result["complete"] == (mode == "exhausted")
+    assert result["stop_reason"] == {"http": "lookup_failed", "invalid": "invalid_response",
+                                     "record_limit": "record_limit", "exhausted": "exhausted"}[mode]
+    states = [json.loads(s) for s in (tmp_path / external_wait.STATUS_FILE).read_text(encoding="utf-8").splitlines()]
+    assert states[-1]["status"] == expected
 
 
 async def test_owned_parent_link_is_refused_without_touching_target(tmp_path):
