@@ -471,6 +471,9 @@ async def test_mcp_lookup_status_distinguishes_partial_failure_from_planned_cap(
                                      "record_limit": "record_limit", "exhausted": "exhausted"}[mode]
     states = [json.loads(s) for s in (tmp_path / external_wait.STATUS_FILE).read_text(encoding="utf-8").splitlines()]
     assert states[-1]["status"] == expected
+    if mode == "http":
+        rows = limited.ledger.sends("req-1")
+        assert len(rows) == 1 and rows[0]["http_status"] == 400 and rows[0]["outcome"] == "failed"
 
 
 async def test_owned_parent_link_is_refused_without_touching_target(tmp_path):
