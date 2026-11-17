@@ -420,6 +420,15 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     assert hub.store.get("approval_decision", unsafe_cd.id) is None
     assert unsafe_cd.id in hub.approvals
     runner.tool_contexts["t1"].env.clear()
+    for name in ("LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES"):
+        runner.tool_contexts["t1"].env[name] = str(tmp_path / "not-loaded")
+        adapter.staff_env(runner.tool_contexts["t1"])
+        loader_card = card("unsafe-" + name)
+        await runner._on_approval(loader_card)
+        assert not loader_card.detail.get("grant_category")
+        assert hub.store.get("approval_decision", loader_card.id) is None
+        assert loader_card.id in hub.approvals
+        runner.tool_contexts["t1"].env.clear()
 
     # A task-supplied PATH must reach both policy and executable verification;
     # a trusted runner PATH cannot validate a different staff executable.

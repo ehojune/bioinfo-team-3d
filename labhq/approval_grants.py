@@ -54,7 +54,10 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     if tool not in SHELL_TOOLS or not workdir or not isinstance(tool_input, dict):
         return excluded("unsupported")
     if environ and any((key.casefold() in {"bash_env", "env", "cdpath"} and value)
-                       or key.casefold().startswith("bash_func_") for key, value in environ.items()):
+                       or key.casefold().startswith("bash_func_")
+                       or (value and (key.casefold().startswith(("ld_", "dyld_"))
+                                      or key.casefold() in {"libpath", "shlib_path"}))
+                       for key, value in environ.items()):
         return excluded("shell_startup_environment")
     command = tool_input.get("command")
     if not isinstance(command, str) or not command.strip():
