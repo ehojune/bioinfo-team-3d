@@ -92,7 +92,7 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
                     read_roots=[*extra_dirs, *(z.path for z in policy.data_zones if z.level == "internal")],
                     forbidden=restricted_paths(policy), environ=environ)):
         return excluded("unproven_literal_read")
-    if _EXCLUDED_COMMAND.search(command):
+    if _EXCLUDED_COMMAND.search(assignment_text):
         return excluded("network_or_delete_mention")
     if registry_access(command):
         return excluded("registry")
