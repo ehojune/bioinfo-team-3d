@@ -387,6 +387,7 @@ def test_a_finished_job_brings_its_logs_and_small_results_home(site):
     assert {f["path"]: f["sha256"] for f in manifest["fetched"]} == {"result.txt": sha(b"answer"),
                                                                      "sub/table.tsv": sha(b"a\tb\n")}
     assert [s["path"] for s in manifest["skipped"] if s["path"] == "huge.bin"] == ["huge.bin"]
+    assert [s['path'] for s in job['fetch_skipped']] == ['huge.bin']  # missing job logs are not output files
     assert any("가져오지 않았습니다" in e.data["text"] for e in runner.events)  # the PI hears about the file left behind
 
 
@@ -883,3 +884,25 @@ def test_a_log_in_request_remote_data_comes_home_hidden_and_its_receipt_is_the_k
 ])
 def test_every_absolute_path_in_a_log_is_hidden_whatever_precedes_it(line, kept):
     assert ht.Transfer(lambda command: None, ROOT).hide_log(line) == kept
+
+@pytest.mark.parametrize(
+    ('file_cap', 'job_cap', 'expected'),
+    [(4, 20, {'a.bin', 'b.bin'}), (10, 6, {'a.bin'}), (10, 20, {'a.bin', 'b.bin', 'c.bin'})],
+)
+def test_saved_site_limits_control_fake_job_fetch(site, file_cap, job_cap, expected):
+    profile = hpc_site.load_profile('fake')
+    profile.fetch_max_bytes, profile.fetch_total_bytes = file_cap, job_cap
+    hpc_site.save_profile(profile)
+    result = submit(site, write_script(site))
+    work = site.remote(result['transfer']['work'])
+    contents = {'a.bin': b'aaaa', 'b.bin': b'bbb', 'c.bin': b'ccccc'}
+    for name, data in contents.items():
+        (work / name).write_bytes(data)
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    manifest = ht.fetch_results(transfer, result['transfer'], site.workdir / 'jobs' / 'logs',
+                                site.workdir / 'outputs', base=site.workdir)
+    assert {row['path'] for row in manifest['fetched']} == expected
+    assert {row['path'] for row in manifest['skipped'] if row['path'] in contents} == contents.keys() - expected
+    for name, data in contents.items():
+        path = site.workdir / 'outputs' / name
+        assert path.read_bytes() == data if name in expected else not path.exists()

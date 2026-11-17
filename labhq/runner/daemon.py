@@ -3364,6 +3364,10 @@ class Runner:
                 result.ok = False
                 result.error = "incomplete: remote outputs could not be verified: " + self._hide_text(str(exc))[:300]
             if remote_manifests:
+                from .hpc_fetch import missing_received_outputs
+                declared_rels = [rel for name in [*declared, *required_declared, *optional_declared]
+                                 if (rel := output_relpath(name))]
+                missing_received = missing_received_outputs(declared_rels, remote_manifests, hashed)
                 nested_candidates = [item for manifest in remote_manifests
                                      for item in manifest.pop("_nested_candidates", [])]
                 from ..hpc_transfer import local_copy_conflicts
@@ -3371,6 +3375,8 @@ class Runner:
                                 for manifest in remote_manifests for row in manifest["files"]]
                 receipts = {"outputs/" + path: digest for manifest in remote_manifests
                             for path, digest in manifest.pop("_local_copy_sha256", {}).items()}
+                for manifest in remote_manifests:
+                    manifest.pop("_fetch_skipped", None)
                 conflicts = await asyncio.to_thread(local_copy_conflicts, ws.dir, remote_paths, hashed, receipts)
                 if conflicts:
                     result.ok = False
@@ -3397,6 +3403,16 @@ class Runner:
                                       + ", ".join(remote_only[:8])
                                       + (" (more in the remote manifest)" if len(remote_only) > 8 else ""))
                 result.text += retained_text
+                if missing_received:
+                    details = "\n".join(
+                        f"- {row['path']} ({row['bytes'] if row['bytes'] is not None else '?'} bytes): {row['reason']}"
+                        for row in missing_received)
+                    notice = f"로컬에 받지 못한 선언 산출 {len(missing_received)}개:\n{details}"
+                    result.text += "\n\n" + self._hide_text(notice)
+                    preview = "\n".join(details.splitlines()[:8])
+                    await emit("agent.log", {"level": "alert", "hpc_session": {"kind": "transfer"},
+                                             "text": self._hide_text(
+                                                 f"로컬에 받지 못한 선언 산출 {len(missing_received)}개:\n{preview}")})
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
@@ -4591,6 +4607,8 @@ class Runner:
                 j["fetched_sha256"] = {row["path"]: row["sha256"] for row in manifest.get("fetched", [])
                                        if isinstance(row.get("sha256"), str)}
                 j["fetched_paths"] = [row["path"] for row in manifest.get("fetched", []) if isinstance(row.get("path"), str)]
+                j["fetch_skipped"] = [row for row in manifest.get("skipped", [])
+                                      if row.get("path") not in spec.get("logs", [])]
                 if j.get("workdir") and spec.get("fetch_to"):
                     try:
                         self._commit_fetch(j, Path(spec["fetch_to"]))  # no await since the release check
@@ -4706,6 +4724,7 @@ class Runner:
                 copied.update(job.get("fetched_sha256", {}))
                 manifest["_local_copy_sha256"] = {row["path"]: copied[row["path"]]
                                                   for row in files if row["path"] in copied}
+                manifest["_fetch_skipped"] = job.get("fetch_skipped", [])
                 manifest["_nested_candidates"] = pending_candidates
                 file_paths = {row["path"].casefold() for row in manifest["files"]}
                 current_dirs = {directory.casefold() for directory in manifest["directories"]}
