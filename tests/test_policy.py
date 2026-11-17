@@ -316,11 +316,17 @@ async def test_request_grant_pending_delivery_is_denied_after_end(request_grant_
     hub, _, sent = request_grant_hub
     await _receive_grant_card(hub, _grant_card("first"))
     await hub.resolve_approval("first", True, grant_for_request=True)
+    await _receive_grant_card(hub, _grant_card("automatic"))
+    assert hub.store.get("approval_decision", "automatic")["approved"] is True
     hub.requests["r1"]["status"] = "cancelled"
     hub.store.put("request", "r1", hub.requests["r1"])
-    await hub._send_decision("runner", "first")
-    assert sent[-1]["approved"] is False
-    assert hub.store.get("decision", "first")["approved"] is False
+    for aid in ("first", "automatic"):
+        await hub._send_decision("runner", aid)
+        assert sent[-1]["approved"] is False
+        assert hub.store.get("decision", aid)["approved"] is False
+        recorded = hub.store.get("approval_decision", aid)
+        assert recorded["approved"] is False and recorded["note"] == "request ended"
+    assert hub.store.get("approval_decision", "automatic")["grant_source"] == "first"
 
 
 async def test_request_grant_card_arriving_during_cancel_is_closed(request_grant_hub, monkeypatch):

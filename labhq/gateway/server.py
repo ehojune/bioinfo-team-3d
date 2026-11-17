@@ -2669,7 +2669,9 @@ class Hub:
             elif recorded.get("grant_category") and (not is_active_request(request.get("status"))
                                                        or request.get("cancelling")):
                 entry = {**entry, "approved": False, "note": "request ended"}
-                await self.store.aput("decision", aid, entry)
+                recorded = {**recorded, "approved": False, "note": entry["note"]}
+                await self.store.areject_grant_approval(aid, recorded, entry, rid, recorded["grant_category"],
+                                                         revoke=not recorded.get("automatic"))
             ws = self.runners.get(runner_id)
             try:
                 await asyncio.wait_for(self.send_runner(runner_id, {
