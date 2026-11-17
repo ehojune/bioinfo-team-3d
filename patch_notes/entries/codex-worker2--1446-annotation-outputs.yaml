@@ -1,5 +1,9 @@
 pr: 1448
 rows:
+  - sha: "37fc296"
+    at: "2026-11-17 13:05"
+    summary: "큰 파일 검증은 전달할 주석 파일에만 적용합니다."
+    text: "재리뷰 P2에 따라 일반 산출의 관찰 hash 상한을 유지한다. 상한 때문에 hash가 없는 annotation만 입력 제한·descriptor 신원 검사 뒤 읽으며 회귀 87 passed·3 skipped (#1446)."
   - sha: "2ec5c13"
     at: "2026-11-17 12:57"
     summary: "산출 목록이 비어도 큰 주석 파일을 전달합니다."
