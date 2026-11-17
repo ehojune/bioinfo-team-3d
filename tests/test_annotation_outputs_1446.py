@@ -363,3 +363,49 @@ async def test_runner_collects_unlisted_annotation_and_stages_it_for_consumer(tm
     assert len(json.loads(copied.read_bytes())["results"]) == 631
     assert not (copied.parent / "auth.json").exists()
     assert not (copied.parents[1] / "unrelated.json").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("receipt", [True, False])
+async def test_hpc_annotation_uses_collected_hash_and_still_requires_receipt(tmp_path, monkeypatch, receipt):
+    from types import SimpleNamespace
+    from labhq.models import TaskResult
+    from tests.test_private_paths import _capture_runner, _runner_settings
+    from tests.test_tool_card_explain import _system_commands
+
+    settings = _runner_settings(tmp_path, None)
+    settings.hpc.scheduler = "slurm"
+    _system_commands(monkeypatch)
+    runner, _ = _capture_runner(settings, monkeypatch)
+    agent = AgentSpec(id="worker", name="Worker", role="test", builtin_mcp=["hpc"])
+    monkeypatch.setattr(runner.registry, "get", lambda _: agent)
+    # All remote operations are stand-ins; only local conflict/receipt admission is real.
+    monkeypatch.setattr(runner.scheduler, "transfer", lambda: SimpleNamespace(path=lambda path: "/fixture/" + path))
+    payload = b'{"fixture":true}'
+    digest = hashlib.sha256(payload).hexdigest()
+    relative, path = "annotation/page.json", "outputs/annotation/page.json"
+
+    class Adapter:
+        async def run(self, ctx):
+            assert ctx.before_spawn() is None
+            target = ctx.workdir / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+            runner.workspaces[ctx.task.id].update_run(ctx.task.id, hpc_step_id="search",
+                                                      hpc_submitted=True, hpc_revision=0)
+            return TaskResult(task_id=ctx.task.id, agent_id=ctx.agent.id, ok=True, outputs=[])
+
+    monkeypatch.setattr("labhq.runner.daemon.get_adapter", lambda *_: Adapter())
+    monkeypatch.setattr(runner, "_remote_step_outputs", lambda ws: [{"request_id": "r", "data": "r/data",
+        "bytes": len(payload), "files": [{"path": relative, "bytes": len(payload), "sha256": digest}],
+        "_local_copy_sha256": {relative: digest} if receipt else {}}])
+    result = await runner.run_task(Task(id="search", request_id="r", agent_id="worker", prompt="fixture",
+        meta={"kind": "step", "step_id": "search", "outputs": [],
+              "execution_location": {"mode": "hpc", "runner_id": settings.runner.id}}))
+    assert result.ok is receipt, result.error
+    if receipt:
+        assert result.outputs == [path] and result.output_sha256[path] == digest
+        assert "conflict" not in (result.error or "")
+    else:
+        assert "local/remote output conflict" in result.error
+        assert path not in result.outputs and path not in result.output_sha256

@@ -3350,6 +3350,7 @@ class Runner:
             max_file=self.s.runner.input_hash_max_file_bytes,
             max_total=self.s.runner.input_hash_max_total_bytes, scan_notes=output_scan_notes)
         result.outputs, result.output_sha256 = annotation.outputs, annotation.hashes
+        hashed = result.output_sha256
         for path, reason in annotation.excluded.items():
             warning = f"Annotation output excluded: {path}: {reason}"
             result.step_warnings = list(dict.fromkeys([*result.step_warnings, warning]))
