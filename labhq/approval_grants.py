@@ -158,9 +158,18 @@ def classify(tool: str, tool_input: dict[str, Any], policy: Any, *, workdir: str
     if other and ("closed or credential" in other.reason or "names a PI personal" in other.reason
                   or "registry" in other.reason):
         return excluded("other_private_or_registry")
-    internal = _zone_hit(checked, policy, {"internal"}, workdir, own_workdir=True)
-    if internal and not isinstance(internal, Unresolved):
-        return "internal_read"
+    # Check every known cd base as well: a relative operand after cd may name
+    # an internal file even when it does not do so relative to the workdir.
+    internal_hits = [_zone_hit(checked, policy, {"internal"}, workdir, own_workdir=True)]
+    internal_hits.extend(_zone_hit(checked, policy, {"internal"}, base,
+                                   own_workdir=_inside(_norm(base), work))
+                         for base in (bases or []))
+    internal = next((hit for hit in internal_hits if hit and not isinstance(hit, Unresolved)), None)
+    if internal:
+        # Never infer a read from an empty list of known write targets. Require
+        # the complete command to pass the supported literal read proof above.
+        return "internal_read" if literal_read else excluded("unproven_internal_read")
+    internal = next((hit for hit in internal_hits if isinstance(hit, Unresolved)), None)
     if (unknown_write or isinstance(internal, Unresolved) or isinstance(resolved_closed, Unresolved)
             or isinstance(resolved_private, Unresolved)
             or "not all resolved" in decision.reason

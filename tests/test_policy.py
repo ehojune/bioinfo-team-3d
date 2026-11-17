@@ -457,15 +457,45 @@ async def test_request_grant_from_runner_to_gateway(request_grant_hub, tmp_path,
     assert hub.store.get("approval_decision", second.id)["grant_source"] == first.id
     assert sent[-1]["approved"] is True and events[-1]["data"]["automatic"] is True
 
+    # All grant categories are present: an unsupported internal command must
+    # not fall back to workspace or unresolved_path to bypass internal_read.
+    for category in ("workspace", "unresolved_path"):
+        source = _grant_card(category + "-source", category=category)
+        await _receive_grant_card(hub, source)
+        await hub.resolve_approval(source["id"], True, grant_for_request=True)
     for i, command in enumerate([
+        f'dd if=/dev/zero of="{internal.as_posix()}/a"',
+        f'touch "{internal.as_posix()}/a"',
+        f'install input "{internal.as_posix()}/a"',
+        f'sed -i s/a/b/ "{internal.as_posix()}/a"',
+        f'cat "{internal.as_posix()}/a"; touch output',
+        f'cat "{internal.as_posix()}/a" > output',
         f'python script.py "{internal.as_posix()}/a"',
         f'python -c "print(1)" "{internal.as_posix()}/a"',
         f'python - "{internal.as_posix()}/a" <<\'PY\'\nprint(1)\nPY',
+        f'cd "{internal.as_posix()}" && touch a',
     ]):
-        script = card(f"analysis-{i}")
+        unsafe_internal = card(f"internal-write-{i}")
+        unsafe_internal.detail["tool_input"]["command"] = command
+        await runner._on_approval(unsafe_internal)
+        assert "grant_category" not in unsafe_internal.detail
+        assert hub.store.get("approval_decision", unsafe_internal.id) is None
+        assert unsafe_internal.id in hub.approvals
+
+    # Workspace analysis scripts, including heredoc, retain their category.
+    runner.s.policy.data_zones = []
+    runner.tool_contexts["t1"].private_paths = [str(tmp_path.parent)]
+    runner.tool_contexts["t1"].private_enabled = True
+    for i, command in enumerate(["python script.py", "python -c 'print(1)'",
+                                 "python - <<'PY'\nprint(1)\nPY"]):
+        script = card(f"workspace-analysis-{i}")
         script.detail["tool_input"]["command"] = command
         await runner._on_approval(script)
-        assert hub.store.get("approval_decision", script.id)["grant_source"] == first.id
+        assert script.detail["grant_category"] in {"workspace", "unresolved_path"}
+        assert hub.store.get("approval_decision", script.id)["automatic"] is True
+    runner.s.policy.data_zones = [DataZone(path=internal.as_posix(), level="internal")]
+    runner.tool_contexts["t1"].private_paths = []
+    runner.tool_contexts["t1"].private_enabled = False
 
     for i, command in enumerate([
         f'python -c "import os; os.remove(\'a\')" "{internal.as_posix()}/a"',
