@@ -1,5 +1,9 @@
 pr: 1451
 rows:
+  - sha: "236c8dd"
+    at: "2026-11-17 14:09"
+    summary: "PubMed도 공통 문헌 조회 경로를 따릅니다."
+    text: "기존 구조 검사를 유지하고 공통 runner의 admission·20분 상한 아래에서 부분 manifest를 보존한다. structure·외부 대기·PubMed·문헌 회귀 243 passed, 1 skipped (#1446)."
   - sha: "b84deda"
     at: "2026-11-17 13:55"
     summary: "새 PubMed 도구에 맞춰 목록 회귀를 갱신합니다."
