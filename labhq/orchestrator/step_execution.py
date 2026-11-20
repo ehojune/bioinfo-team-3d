@@ -46,6 +46,15 @@ def placement_errors(steps, choice, agents):
     return errors
 
 
+def refresh_for_approval(plan, request, choice, agents):
+    """Refresh the server's runner assignments before any research step has run."""
+    refreshed = bind_draft(plan, choice, agents, refresh_runner=True)
+    changed = refreshed != plan
+    if changed and any(request.get(key) for key in ("results", "reuse_tools", "pending_revisions")):
+        raise ValueError("step runner changed after execution began; revise the plan to preserve the original evidence")
+    return refreshed, changed
+
+
 def require_approved_placement(plan, steps, contract):
     if plan.get("step_execution_version") is None:
         return

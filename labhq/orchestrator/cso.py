@@ -3675,7 +3675,11 @@ class Orchestrator:
         """``_prepare_runner_environments`` for one request: the runners and staff it sees are the request's (#1204)."""
         self._environment_rid = rid
         try:
-            return self._prepare_runner_environments(steps)
+            bound = self._prepare_runner_environments(steps)
+            request = self.hub.requests[rid]
+            return step_execution.bind_draft(
+                {**(request.get("plan") or {}), "steps": bound}, request.get("execution_location"),
+                hub_agents(self.hub, rid), refresh_runner=True)["steps"]
         finally:
             self._environment_rid = None
 
@@ -7617,7 +7621,13 @@ class Orchestrator:
                                                run_where="wsl" if req.get("wsl_pinned") else None,
                                                run_where_note=req.get("run_where_note"))
 
-            async def finish_research_plan(plan: dict[str, Any]) -> bool:
+            async def finish_research_plan() -> bool:
+                while True:
+                    ready = await approve_research_plan(req["plan"])
+                    if ready is not None:
+                        return ready
+
+            async def approve_research_plan(plan: dict[str, Any]) -> bool | None:
                 async def end_revised(new_rid: str, note: str) -> None:
                     # Not a failure: the PI asked for another plan, which the new request writes (CP1 수정 요청).
                     req["outcome"] = "plan_revision_requested"
@@ -7625,7 +7635,13 @@ class Orchestrator:
                                  f"새 요청 {new_rid}에서 계획을 다시 세우고 새 CP1을 받습니다."
                                  + (f"\nPI 메모: {note}" if note.strip() else ""), {}, ok=True))
 
-                execution_policy.validate_versioned_plan(plan, req.get("execution_location"), hub_agents(self.hub, rid))
+                choice, agents = req.get("execution_location"), hub_agents(self.hub, rid)
+                plan, placement_changed = step_execution.refresh_for_approval(plan, req, choice, agents)
+                execution_policy.validate_versioned_plan(plan, choice, agents)
+                if placement_changed:
+                    for step in plan["steps"]:
+                        step_execution.runner_pin(plan, step, environment_runner_pin(step))
+                    req["plan"] = plan
                 stored = req.get("research_contract") or {}
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
@@ -7656,6 +7672,8 @@ class Orchestrator:
                     "approval": approval,
                 }
                 await persist_request(self.hub, rid)
+                if placement_changed:
+                    await self._emit(rid, "request.plan", {**plan, "processing": req.get("route_decision")})
                 plan_hash = req["research_contract"]["plan_sha256"]
                 carried = req["research_contract"].get("continuation") or {}
                 # Every continuation CP1/resume uses the same sealed executable reuse contract (#797).
@@ -7837,6 +7855,10 @@ class Orchestrator:
                                 and not str(decision.get("note") or "").strip()):
                             break
                         decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
+                    # A positive reply is for the card's hash. Check again after waiting for the PI.
+                    if decision.get("approved") and step_execution.bind_draft(
+                            plan, choice, hub_agents(self.hub, rid), refresh_runner=True) != plan:
+                        return None
                     approval = freeze_plan(plan, decision)
                     if from_resume:
                         approval["via"] = "resume_card"
@@ -7986,7 +8008,7 @@ class Orchestrator:
                         if stored_problems:
                             raise ValueError("frozen research plan checklist invalid: " +
                                              "; ".join(stored_problems))
-                    if not await finish_research_plan(req["plan"]):
+                    if not await finish_research_plan():
                         return
                     steps = req["plan"]["steps"]
                     warnings = req["plan"].get("warnings") or []
@@ -8546,8 +8568,9 @@ class Orchestrator:
                     (await self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False))
                     return
                 if research_lane:
-                    if not await finish_research_plan(req["plan"]):
+                    if not await finish_research_plan():
                         return
+                    steps = req["plan"]["steps"]
                 elif req["mode"] == "plan_only":
                     req["outcome"] = "plan_only"
                     (await self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True))

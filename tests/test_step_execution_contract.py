@@ -6,7 +6,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from labhq.orchestrator.cso import Orchestrator
+from labhq.orchestrator.cso import ENV_LOCK_OUTPUT, Orchestrator
+from labhq.orchestrator.step_execution import refresh_for_approval
 from labhq.recruit import planning as recruit_planning
 from labhq.research import contract, continuation
 from labhq.settings import Settings
@@ -109,12 +110,100 @@ async def test_cp1_shows_and_hashes_resolved_step_placement(monkeypatch, recruit
 
     # A runner change during the pause cannot reuse either the old CP1 or a resume-card receipt for its hash.
     row["resume_cp1"] = row["research_contract"]["approval"]
-    row["plan"]["steps"][0]["runner_id"] = hub.agents[expected_agent]["runner_id"] = "replacement-runner"
+    hub.agents[expected_agent]["runner_id"] = "replacement-runner"
+    assert row["plan"]["steps"][0]["runner_id"] == expected_runner
     await Orchestrator(hub).run_request("r", resume=True)
     old, new = [approval["detail"] for approval in hub.approvals if approval["kind"] == "research_plan"]
     assert new["target_sha256"] != old["target_sha256"]
     assert new["단계 실행 위치 · runner"] == "s1 · local · replacement-runner"
     assert [task.meta["kind"] for task in hub.calls] == ["plan"]
+
+
+async def test_cp1_reopens_when_a_runner_changes_while_pi_is_deciding():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def dispatch(task):
+        assert task.meta["kind"] == "plan"
+        plan = valid_plan()
+        plan["step_execution_version"] = 1
+        return result(task, structured=plan)
+
+    class MovingRunnerHub(MiniHub):
+        async def request_approval(self, **kwargs):
+            receipt = await super().request_approval(**kwargs)
+            if kwargs["kind"] == "research_plan":
+                offered = kwargs["detail"]["단계 실행 위치 · runner"]
+                if offered == "s1 · local · first-runner":
+                    self.agents["worker"]["runner_id"] = "second-runner"
+                    return {**receipt, "approval_id": "old-cp1"}
+            return receipt
+
+    hub = MovingRunnerHub(settings, dispatch, mode="plan_only", work_kind="research", text="compare conditions")
+    hub.agents["worker"]["runner_id"] = "first-runner"
+    hub.requests["r"]["execution_location"] = {"mode": "local", "source": "PI selection", "approval_id": "route-choice"}
+    await Orchestrator(hub).run_request("r")
+    request = hub.requests["r"]
+    assert request.get("outcome") == "plan_approved", request.get("report")
+    first, second = [card["detail"] for card in hub.approvals if card["kind"] == "research_plan"]
+    assert first["target_sha256"] != second["target_sha256"]
+    assert second["단계 실행 위치 · runner"] == "s1 · local · second-runner"
+    approval = request["research_contract"]["approval"]
+    assert approval["target_sha256"] == second["target_sha256"] == contract.plan_sha256(request["plan"])
+    assert approval["approval_id"] != "old-cp1"
+
+
+@pytest.mark.parametrize("record", ["results", "reuse_tools", "pending_revisions"])
+def test_runner_refresh_preserves_the_plan_for_existing_execution_records(record):
+    plan = placed_plan()
+    request = {"plan": plan, record: {"s1": {}}}
+    choice = {"mode": "local"}
+    agents = {"worker": {"runner_id": "replacement-runner"}}
+    with pytest.raises(ValueError, match="step runner changed after execution began"):
+        refresh_for_approval(plan, request, choice, agents)
+    assert request["plan"]["steps"][0]["runner_id"] == "mock-runner"
+
+
+@pytest.mark.parametrize("resume", [False, True])
+async def test_cp1_binds_environment_clones_to_their_final_runners(resume):
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    plan = placed_plan(count=3)
+    env, first, second = plan["steps"]
+    env["outputs"] = [ENV_LOCK_OUTPUT]
+    first["depends_on"] = second["depends_on"] = [env["id"]]
+    second.update(agent_id="other-worker", runner_id="other-runner")
+
+    async def dispatch(task):
+        assert task.meta["kind"] == "plan"
+        planner_draft = copy.deepcopy(plan)
+        for step in planner_draft["steps"]:
+            step.pop("runner_id")
+        return result(task, structured=planner_draft)
+
+    hub = MiniHub(settings, dispatch, mode="orchestrate", work_kind="research", text="compare conditions")
+    hub.agents["worker"].update(engine="codex", sandbox="workspace-write", runner_id="mock-runner")
+    hub.agents["other-worker"] = {**hub.agents["worker"], "id": "other-worker", "runner_id": "other-runner"}
+    hub.agent_runner = {"worker": "mock-runner", "other-worker": "other-runner"}
+    hub.runners = {runner: object() for runner in hub.agent_runner.values()}
+    hub.runner_capabilities = {runner: {"runtime_env": "windows"} for runner in hub.runners}
+    request = hub.requests["r"]
+    request["execution_location"] = {"mode": "local", "source": "PI selection", "approval_id": "route-choice"}
+    if resume:
+        request["plan"] = plan
+    await Orchestrator(hub).run_request("r", resume=resume)
+    assert request.get("outcome") == "plan_approved", request.get("report")
+    [card] = [card["detail"] for card in hub.approvals if card["kind"] == "research_plan"]
+    frozen = json.loads(card["plan_canonical"])
+    clones = [step for step in frozen["steps"] if step.get("environment_binding")]
+    assert len(clones) == 2
+    assert {step["agent_id"]: step["runner_id"] for step in clones} == hub.agent_runner
+    assert all(step["runner_id"] == step["environment_binding"]["runner_id"] for step in clones)
+    assert card["target_sha256"] == contract.plan_sha256(request["plan"])
 
 
 @pytest.mark.parametrize("mode", ["local", "hpc"])
