@@ -2,9 +2,12 @@
 
 import json
 import re
+from dataclasses import replace
 
 from ..intake import reference_dirs
+from ..research import continuation
 from ..research.contract import plan_sha256
+from ..research.input_proof import capture
 from ..wsl_paths import shared_path
 
 
@@ -166,6 +169,27 @@ def reuse_input_request(task, request):
     if mixed_hpc(task.meta.get('execution_location')):
         return {}
     return request
+
+
+def capture_reuse_inputs(request, plan, settings):
+    """Observe the two input scopes used at dispatch for the continuation check."""
+    local_proof = capture(request, settings, allow_request_projects=True)
+    mixed = is_mixed(plan, request.get('execution_location'))
+    # A citation can still reach the HPC prompt. An empty path proof cannot attest to that citation.
+    paths_only = all(isinstance(ref, dict) and ref.get('kind') == 'path' for ref in request.get('references') or [])
+    hpc_proof = capture({}, settings, allow_request_projects=True) if mixed and paths_only else None
+    return local_proof, hpc_proof
+
+
+def continuation_proof_problems(previous, plan, carry, tools, request, proofs):
+    local_proof, hpc_proof = proofs
+    if not is_mixed(plan, request.get('execution_location')):
+        return continuation.proof_problems(previous, plan, carry, tools, request, local_proof)
+    hpc_steps = {step['id'] for step in plan['steps'] if step['execution'] == 'hpc'}
+    hpc = replace(carry, reuse=[sid for sid in carry.reuse if sid in hpc_steps])
+    local = replace(carry, reuse=[sid for sid in carry.reuse if sid not in hpc_steps])
+    return {**continuation.proof_problems(previous, plan, local, tools, request, local_proof),
+            **continuation.proof_problems(previous, plan, hpc, tools, request, hpc_proof)}
 
 
 def isolate_hpc_task(task, request):

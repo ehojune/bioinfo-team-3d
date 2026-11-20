@@ -7154,12 +7154,11 @@ class Orchestrator:
         carried = contract['continuation']
         previous = contract['rounds'][-1]
         tools = self._research_reuse_tools(rid, plan)
-        from ..research.input_proof import capture
-        input_proof = await asyncio.to_thread(capture, req, self.hub.s, allow_request_projects=True)
+        input_proofs = await asyncio.to_thread(step_execution.capture_reuse_inputs, req, plan, self.hub.s)
         refused = dict(sealed.get('rerun') or {}) if sealed else {}
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
-        refused.update(research_continuation.proof_problems(previous, plan, carry, tools, req, input_proof))
+        refused.update(step_execution.continuation_proof_problems(previous, plan, carry, tools, req, input_proofs))
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
         try:
@@ -7179,7 +7178,7 @@ class Orchestrator:
             current = {**req, 'plan_sha256': contract['plan_sha256'],
                        'pack_snapshot': contract.get('pack_snapshot'), 'round': contract.get('round')}
             retained = research_continuation.carry_over(current, plan, contract.get('pack_snapshot'), [])
-            problems = research_continuation.proof_problems(current, plan, retained, tools, req, input_proof)
+            problems = step_execution.continuation_proof_problems(current, plan, retained, tools, req, input_proofs)
             for step in plan['steps']:
                 sid = step['id']
                 if sid not in completed:

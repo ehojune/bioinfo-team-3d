@@ -499,3 +499,45 @@ def test_mixed_placement_refuses_unapproved_or_unverifiable_routes(change, reaso
     elif change == 'hpc_environment':
         first['outputs'] = [ENV_LOCK_OUTPUT]
     assert any(reason in problem for problem in plan_errors(plan['steps'], choice, agents, version=version))
+
+
+@pytest.mark.parametrize('changed', ['none', 'pc_file', 'citation'])
+async def test_mixed_continuation_checks_each_steps_input_scope(tmp_path, monkeypatch, changed):
+    from labhq.research.input_proof import capture
+    from tests.test_continuation_797 import archive
+
+    source = tmp_path / 'reference'
+    source.mkdir()
+    table = source / 'table.tsv'
+    table.write_text('original', encoding='utf-8')
+    hub = FakeHub(None)
+    hub.s.runner.reference_roots = [str(source)]
+    hub.agents['worker'].update(runner_id='mock-runner', whole_request_hpc=True, hpc_tools=True, builtin_mcp=['hpc'])
+    orchestrator = Orchestrator(hub)
+    old = archive()
+    plan = old['plan']
+    plan['step_execution_version'] = 1
+    for step in plan['steps']:
+        step.update(runner_id='mock-runner', execution='hpc' if step['id'] == 's1' else 'local')
+    sha = old['plan_sha256'] = contract.plan_sha256(plan)
+    for row in old['results'].values():
+        row['structured']['plan_sha256'] = sha
+    old['reuse_tools'] = orchestrator._research_reuse_tools('r', plan)
+    old['reuse_no_request_inputs'] = {step['id']: False for step in plan['steps']}
+    req = hub.requests['r']
+    req.update(plan=copy.deepcopy(plan), references=[{'kind': 'path', 'value': str(source)}],
+               execution_location={'mode': 'local', 'approval_id': 'choice', 'mixed_hpc_runner_id': 'mock-runner'},
+               research_contract={'round': 2, 'plan_sha256': sha, 'pack_snapshot': {}, 'rounds': [old],
+                                  'continuation': {'plan_sha256': sha, 'round': 2}})
+    pc_proof = capture(req, hub.s, allow_request_projects=True)
+    hpc_proof = capture({}, hub.s, allow_request_projects=True)
+    assert pc_proof and hpc_proof and pc_proof != hpc_proof
+    old['reuse_input_proof'] = {'s1': hpc_proof, 's2': pc_proof, 's3': pc_proof}
+    monkeypatch.setattr(continuation, 'verify_reuse', lambda *args: {})
+    if changed == 'pc_file':
+        table.write_text('changed PC-only input', encoding='utf-8')
+    elif changed == 'citation':
+        req['references'].append({'kind': 'pmid', 'value': '12345'})
+    carry, _ = await orchestrator._continuation_candidates('r', req['plan'])
+    expected = {'none': ['s1', 's2', 's3'], 'pc_file': ['s1'], 'citation': []}
+    assert carry.reuse == expected[changed], carry.rerun
