@@ -8,7 +8,7 @@ When a consult is confirmed to have failed before process start because a file w
 
 **Checking each step's runner at CP1.** When the PI explicitly chooses an execution location for the request and a worker is available on that route, the research planner can opt in with `step_execution_version: 1`. For version 1, check **단계 실행 위치 · runner** (step execution location and runner) on the CP1 card. The approval hash includes both values for each step. Every step follows the request's selected location. Plans that mix HPC and this PC are refused.
 
-The runner saves a local receipt with each completed HPC step's remote inventory. The PC handoff check requires the selected producer revision and verifies every collected file before copying it to `inputs/<step_id>/`. Missing, changed or oversized inputs block the PC step with a reason.
+When a completed HPC step has a verified remote inventory, the runner saves it with the checksums of the received files and reasons for omitted declared outputs.
 
 Runner assignments are checked after paper skill preparation, just before the first research step goes to the gateway. If an assignment changes, approve the updated plan on a new CP1 card. Replanning is required when execution records or sealed reuse evidence already exist, or when the new assignment conflicts with the runner for an existing environment.
 

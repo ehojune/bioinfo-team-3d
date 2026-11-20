@@ -143,6 +143,7 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
     ('duplicate', 'ambiguous'),
     ('path_alias', 'colliding HPC output path'),
     ('remote_hash', 'local copy not verified'),
+    ('local_only', 'local.tsv: absent from the verified HPC inventory'),
     ('partial_directory', 'name not allowed'),
     ('deleted', 'z.tsv: received file is missing'),
     ('size', 'z.tsv: received file size differs'),
@@ -201,6 +202,13 @@ def test_invalid_hpc_source_removes_any_old_or_partial_snapshot(tmp_path, proble
         artifact['outputs'].append('outputs/Results/alias.tsv')
     elif problem == 'remote_hash':
         manifest['files'][-1]['sha256'] = _sha(b'xyz')
+    elif problem == 'local_only':
+        path = 'outputs/local.tsv'
+        (source / path).write_bytes(b'local')
+        run['outputs'].append(path)
+        artifact['outputs'].append(path)
+        run['output_sha256'][path] = _sha(b'local')
+        artifact['output_sha256'][path] = _sha(b'local')
     elif problem == 'partial_directory':
         run['hpc_local_receipt']['omissions'] = [
             {'path': 'outputs/results/part 3.tsv', 'reason': 'name not allowed'}]

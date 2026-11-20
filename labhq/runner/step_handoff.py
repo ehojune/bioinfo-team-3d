@@ -88,6 +88,9 @@ def verified_hpc_sizes(run, artifact, request_id, revision):
                 raise ValueError(f'{path}: missing remote SHA-256')
             if received.get(path) != digest or hashes.get(path) != digest:
                 missing.setdefault(path, f'{path}: local copy not verified')
+    for path in outputs:
+        if path not in sizes:
+            missing.setdefault(path, f'{path}: absent from the verified HPC inventory')
     if missing:
         detail = '; '.join(list(missing.values())[:5])
         raise ValueError(detail + (f'; {len(missing) - 5} more' if len(missing) > 5 else ''))
