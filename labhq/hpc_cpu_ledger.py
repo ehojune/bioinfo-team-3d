@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .test_guard import guard_test_path
 
+LEDGER_LOCK_WAIT_S = 30
 _FINAL = frozenset({"BOOT_FAIL", "CANCELLED", "COMPLETED", "DEADLINE", "FAILED", "NODE_FAIL",
                     "OUT_OF_MEMORY", "PREEMPTED", "REVOKED", "TIMEOUT"})
 # These flags can also appear while a job is being requeued. Keep counting a live row with either flag.
@@ -88,7 +89,7 @@ class CpuLedger:
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(self.path, timeout=30)) as db, db:
+        with closing(sqlite3.connect(self.path, timeout=LEDGER_LOCK_WAIT_S)) as db, db:
             db.row_factory = sqlite3.Row
             db.execute("BEGIN IMMEDIATE")
             db.execute("""CREATE TABLE IF NOT EXISTS submissions (

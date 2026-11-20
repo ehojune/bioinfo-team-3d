@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -182,6 +183,35 @@ def test_init_accounting_timeout_reports_no_submission_and_allows_retry(cluster,
     fake.accounting_timeout = False
     assert trial(settings(), tmp_path)["outcome"] == "tracked"
     assert len(fake.submits) == 1
+
+
+def test_staff_and_broker_submit_budgets_include_cpu_admission_and_remote_upload(cluster, monkeypatch):
+    from labhq.hpc_cpu_ledger import LEDGER_LOCK_WAIT_S
+    from labhq.hpc_session import SessionConfig
+    from labhq.hpc_transfer import UPLOAD_BUDGET_S
+    from labhq.runner.daemon import labhq_mcp_timeout_s
+    from labhq.tools import hpc_mcp
+    from labhq.tools.scheduler import scheduler_call_budget_s
+
+    _, settings = cluster
+    config = settings()
+    profile = hpc_site.load_profile(config.hpc.site_profile)
+    session = SessionConfig(argv=["fixture"], reconnect_attempts=4, connect_timeout_s=90)
+    monkeypatch.setattr(Scheduler, "session", lambda _: SimpleNamespace(cfg=session))
+    monkeypatch.setattr(Scheduler, "transfer", lambda _: object())
+    monkeypatch.setattr(hpc_mcp, "S", config)
+    monkeypatch.setattr(hpc_mcp, "SCHED", Scheduler(config.hpc))
+    monkeypatch.setattr(hpc_mcp, "SESSION_ERROR", None)
+    timeout = config.hpc.command_timeout_s
+    admission = scheduler_call_budget_s(session, timeout, 3) + 2 * LEDGER_LOCK_WAIT_S
+    broker_work = hpc_mcp._submit_wait_s()
+    cli_timeout = labhq_mcp_timeout_s(config)
+    assert broker_work == 2 * scheduler_call_budget_s(session, timeout) + UPLOAD_BUDGET_S + admission
+    assert cli_timeout > config.policy.approvals.timeout_s + broker_work + 30
+
+    monkeypatch.setattr(hpc_site, "load_profile", lambda *args: profile.model_copy(update={"max_concurrent_cpus": None}))
+    assert broker_work - hpc_mcp._submit_wait_s() == admission
+    assert cli_timeout - labhq_mcp_timeout_s(config) == admission
 
 
 def test_parallel_calls_reserve_before_sbatch_returns(cluster, tmp_path):

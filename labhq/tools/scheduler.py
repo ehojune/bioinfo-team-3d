@@ -16,7 +16,7 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 
-from ..hpc_cpu_ledger import CpuLedger, Submission, slurm_rows, terminal_legacy
+from ..hpc_cpu_ledger import LEDGER_LOCK_WAIT_S, CpuLedger, Submission, slurm_rows, terminal_legacy
 from ..settings import HpcSettings, slurm_cluster_option
 
 TERMINAL = {"completed", "failed", "cancelled", "unknown_finished"}
@@ -30,6 +30,11 @@ def scheduler_call_budget_s(session_cfg, command_timeout_s: float, commands: int
     from ..hpc_session import call_budget_s
 
     return commands * call_budget_s(session_cfg, command_timeout_s)
+
+
+def slurm_cpu_admission_budget_s(session_cfg, command_timeout_s: float) -> float:
+    """Allow squeue, up to two sacct queries, and the reservation and receipt locks."""
+    return scheduler_call_budget_s(session_cfg, command_timeout_s, 3) + 2 * LEDGER_LOCK_WAIT_S
 
 
 # Commands each backend runs on the runner (or hpc.ssh_host); doctor checks they are installed.

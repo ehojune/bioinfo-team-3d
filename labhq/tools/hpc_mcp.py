@@ -26,7 +26,7 @@ from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
     MAYBE_SUBMITTED, Scheduler, build_script, checked_job_id, sanitize_job_name, scheduler_call_budget_s,
-    slurm_cluster_directive,
+    slurm_cluster_directive, slurm_cpu_admission_budget_s,
 )
 
 S = Settings.load(os.environ.get("LABHQ_CONFIG"))
@@ -79,7 +79,8 @@ def _submit_wait_s() -> float:
     try:
         transfers = not SESSION_ERROR and SCHED.transfer() is not None
         if not SESSION_ERROR and SCHED.cpu_cap_enabled():
-            cpu_wait = _hpc_wait_s(3) + 30  # squeue, up to two sacct queries, and the ledger's lock wait
+            session = SCHED.session()
+            cpu_wait = slurm_cpu_admission_budget_s(session.cfg if session else None, S.hpc.command_timeout_s)
     except RuntimeError:
         transfers = False
     return cpu_wait + wait + (wait + UPLOAD_BUDGET_S if transfers else 0)

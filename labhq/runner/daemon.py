@@ -152,16 +152,24 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     work = 120
     if settings.hpc.site_profile and settings.hpc.scheduler != "none":
         from ..hpc_session import SessionConfig
-        from ..tools.scheduler import scheduler_call_budget_s
+        from ..hpc_site import SiteProfileError
+        from ..tools.scheduler import scheduler_call_budget_s, slurm_cpu_admission_budget_s
         from ..hpc_transfer import UPLOAD_BUDGET_S
 
+        scheduler = Scheduler(settings.hpc)
         try:
-            session = Scheduler(settings.hpc).session()
+            session = scheduler.session()
         except RuntimeError:  # an unreadable profile is reported by the tool, not while constructing CLI settings
             session = None
         cfg = session.cfg if session is not None else SessionConfig(argv=["x"], first_output_wait_s=60)
-        hpc = scheduler_call_budget_s(cfg, float(settings.hpc.command_timeout_s), 1)
-        work = max(work, int(2 * hpc + UPLOAD_BUDGET_S) + 90)  # submit includes upload and remote input verification
+        command_timeout = float(settings.hpc.command_timeout_s)
+        hpc = scheduler_call_budget_s(cfg, command_timeout)
+        try:
+            cpu_cap = settings.hpc.scheduler == "slurm" and scheduler.cpu_cap_enabled()
+        except SiteProfileError:
+            cpu_cap = True  # preserve the outer budget if an unreadable Slurm profile becomes usable
+        admission = slurm_cpu_admission_budget_s(cfg, command_timeout) if cpu_cap else 0
+        work = max(work, math.ceil(2 * hpc + UPLOAD_BUDGET_S + admission) + 90)
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 
 
