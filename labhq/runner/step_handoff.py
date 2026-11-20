@@ -7,6 +7,23 @@ from ..hpc_transfer import TransferError, validate_remote_manifest
 from ..util import INPUT_STEP_ID, output_relpath
 
 
+def mixed_step_input_refusal(task, agent, runner_id):
+    location = task.meta.get('execution_location') or {}
+    if location.get('scope') != 'step':
+        return None
+    if (location.get('runner_id') != runner_id or location.get('workspace') != task.request_id
+            or location.get('mode') not in {'local', 'hpc'}
+            or task.meta.get('kind') not in {'step', 'result_correction', 'slot_repair', 'wrap_up'}):
+        return 'invalid mixed step runner or request binding'
+    if location['mode'] == 'hpc' and (
+            agent.project_dirs or any(task.meta.get(key) for key in (
+                'reference_dirs', 'project_dirs', 'references', 'precedent_texts', 'hpc_input_approval'))
+            or any((task.meta.get('reuse_input_request') or {}).values())
+            or any((task.meta.get('reuse_input_meta') or {}).values())):
+        return 'mixed HPC steps cannot read PC reference or project inputs'
+    return None
+
+
 def required_hpc_revisions(task, whole_hpc, artifact_contract):
     """Read the dispatcher-provided producer revisions. Ordinary tasks have no handoff."""
     if 'hpc_ancestor_revisions' not in task.meta:

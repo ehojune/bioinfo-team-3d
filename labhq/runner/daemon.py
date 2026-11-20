@@ -2414,8 +2414,10 @@ class Runner:
         input_refusal = ("HPC request inputs require a verified scheduler-readable request-input snapshot"
                          if whole_hpc and (agent.project_dirs or task.meta.get("project_dirs")
                                            or task.meta.get("reference_dirs")) else None)
+        from .step_handoff import mixed_step_input_refusal
+        isolated_refusal = mixed_step_input_refusal(task, agent, self.s.runner.id)
         input_approval = task.meta.get("hpc_input_approval")
-        if input_refusal and not agent.project_dirs and isinstance(input_approval, dict):
+        if input_refusal and not isolated_refusal and not agent.project_dirs and isinstance(input_approval, dict):
             from ..research.input_proof import capture
             from ..wsl_paths import message_paths
             descriptor = {key: task.meta.get(key) or [] for key in ("reference_dirs", "project_dirs")}
@@ -2428,6 +2430,7 @@ class Runner:
         if whole_hpc and task.meta.get("precedent_texts"):
             # Scheduler jobs never read precedent texts; drop them instead of refusing the step (#1336).
             task.meta = {key: value for key, value in task.meta.items() if key != "precedent_texts"}
+        input_refusal = isolated_refusal or input_refusal
         refusal = input_refusal or (read_only_refusal(agent.id, agent.engine) if read_only else None)
         # A contract hire works only once active, and staff that send data to external services never take restricted
         # inputs (#424); the gateway refuses both first.
@@ -3643,6 +3646,8 @@ class Runner:
         result.provenance = ws.provenance()
         if remote_manifests:
             result.provenance["hpc_remote_data"] = remote_manifests
+            if location.get('scope') == 'step':
+                result.provenance['hpc_step_revision'] = task.meta.get('revision', 0)
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step
         if tool_errors:

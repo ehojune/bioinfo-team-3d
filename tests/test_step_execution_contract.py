@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from labhq.models import TaskResult
+from labhq.orchestrator.execution import plan_errors
 from labhq.orchestrator.cso import ENV_LOCK_OUTPUT, Orchestrator
 from labhq.orchestrator.step_execution import refresh_for_approval
 from labhq.recruit import paper_skills, planning as recruit_planning
@@ -408,6 +409,43 @@ async def test_dag_dispatch_uses_the_approved_runner_pin(mode):
     assert task.meta["execution_location"]["mode"] == mode
 
 
+async def test_pc_choice_offers_a_mixed_plan_and_cp1_binds_both_locations():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+
+    async def dispatch(task):
+        assert task.meta['kind'] == 'plan'
+        assert 'PC as the default' in task.prompt
+        assert 'including in mixed plans' in task.output_schema['properties']['step_execution_version']['description']
+        plan = valid_plan(steps=2)
+        plan['step_execution_version'] = 1
+        plan['steps'][0]['execution'] = 'hpc'
+        plan['steps'][1]['depends_on'] = ['s1']
+        return result(task, structured=plan)
+
+    class ChoosingHub(MiniHub):
+        async def request_approval(self, **kwargs):
+            receipt = await super().request_approval(**kwargs)
+            return {**receipt, 'note': '1: b'} if kwargs['kind'] == 'clarify' else receipt
+
+    hub = ChoosingHub(settings, dispatch, mode='plan_only', work_kind='research', text='compare conditions')
+    hub.agents['worker'].update(runner_id='mock-runner', whole_request_hpc=True, hpc_tools=True,
+                               builtin_mcp=['hpc'])
+    hub.runners = {'mock-runner': object()}
+    hub.runner_capabilities = {'mock-runner': {'scheduler': 'mock'}}
+    await Orchestrator(hub).run_request('r')
+    row = hub.requests['r']
+    assert row['outcome'] == 'plan_approved', row.get('report')
+    assert row['execution_location']['mixed_hpc_runner_id'] == 'mock-runner'
+    [card] = [card for card in hub.approvals if card['kind'] == 'research_plan']
+    assert '단계별 HPC·PC' in card['summary']
+    assert card['detail']['단계 실행 위치 · runner'] == 's1 · hpc · mock-runner\ns2 · local · mock-runner'
+    assert card['detail']['target_sha256'] == contract.plan_sha256(row['plan'])
+    assert [task.meta['kind'] for task in hub.calls] == ['plan']
+
+
 async def test_resume_cannot_dispatch_on_new_runner_under_an_old_cp1_or_mix_locations():
     original = placed_plan(count=2)
     changed = placed_plan(runner="replacement-runner", count=2)
@@ -427,3 +465,37 @@ async def test_resume_cannot_dispatch_on_new_runner_under_an_old_cp1_or_mix_loca
     with pytest.raises(ValueError, match="mixed plans are refused"):
         await orchestrator.run_dag("r", "request", changed["steps"], {}, only={"s2"})
     assert hub.calls == []
+
+
+@pytest.mark.parametrize(('change', 'reason'), [
+    ('unversioned', 'mixed plans are refused'),
+    ('unselected', 'mixed plans are refused'),
+    ('pc_to_hpc', 'PC-to-HPC dependency'),
+    ('different_runner', 'HPC-to-PC dependency on s1 requires the same runner'),
+    ('hpc_not_eligible', 'requires whole-request HPC eligibility'),
+    ('hpc_environment', 'HPC environment bindings'),
+])
+def test_mixed_placement_refuses_unapproved_or_unverifiable_routes(change, reason):
+    plan = placed_plan(count=3)
+    first, second, third = plan['steps']
+    first['execution'] = 'hpc'
+    second['depends_on'] = ['s1']
+    third['depends_on'] = ['s2']
+    choice = {'mode': 'local', 'approval_id': 'choice', 'mixed_hpc_runner_id': 'mock-runner'}
+    agents = {'worker': {'runner_id': 'mock-runner', 'whole_request_hpc': True, 'hpc_tools': True,
+                         'builtin_mcp': ['hpc']}, 'other': {'runner_id': 'other-runner'}}
+    assert plan_errors(plan['steps'], choice, agents, version=1) == []
+    version = 1
+    if change == 'unversioned':
+        version = None
+    elif change == 'unselected':
+        choice.pop('approval_id')
+    elif change == 'pc_to_hpc':
+        second['execution'], first['execution'] = 'hpc', 'local'
+    elif change == 'different_runner':
+        third.update(agent_id='other', runner_id='other-runner')
+    elif change == 'hpc_not_eligible':
+        agents['worker']['whole_request_hpc'] = False
+    elif change == 'hpc_environment':
+        first['outputs'] = [ENV_LOCK_OUTPUT]
+    assert any(reason in problem for problem in plan_errors(plan['steps'], choice, agents, version=version))

@@ -3512,7 +3512,8 @@ class Orchestrator:
                 return False
             req["execution_location"] = {"mode": mode, "source": "PI 선택",
                                          "approval_id": decision.get("approval_id") or decision.get("id"),
-                                         **({"runner_id": host, "workspace": rid} if mode == "hpc" else {})}
+                                         **({"runner_id": host, "workspace": rid} if mode == "hpc" else
+                                            {"mixed_hpc_runner_id": host})}
         if not await self._hpc_input_gate(rid):
             await self._finish(rid, "HPC request-input snapshot preflight or approval failed", {}, ok=False)
             return False
@@ -4264,9 +4265,10 @@ class Orchestrator:
     async def run_step(self, task: Task, first_attempt: int = 1) -> TaskResult:
         task = self._with_research_round(self._with_request_identity(task))
         rid = task.request_id or ""
-        location = self.hub.requests.get(rid, {}).get("execution_location")
-        if location:
-            request_row = self.hub.requests.get(rid) or {}
+        request_row = self.hub.requests.get(rid) or {}
+        location = step_execution.task_location(request_row, task)
+        task = step_execution.isolate_hpc_task(task, request_row)
+        if location and not step_execution.mixed_hpc(location):
             if location.get("mode") == "hpc" and not await self._hpc_input_gate(rid):
                 raise ValueError("HPC request-input snapshot preflight or approval failed")
             task = task.model_copy(update={"meta": {**task.meta, "execution_location": location}})
@@ -4483,10 +4485,11 @@ class Orchestrator:
                         and not research_continuation.has_request_inputs(execution_req)
                         and not research_continuation.has_request_inputs(attempt_task.meta))
                     from ..research.input_proof import capture
-                    execution_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, attempt_task.meta,
+                    input_request = step_execution.reuse_input_request(attempt_task, execution_req)
+                    execution_inputs = await asyncio.to_thread(capture, input_request, self.hub.s, attempt_task.meta,
                                                                allow_request_projects=True)
                     attempt_task = attempt_task.model_copy(update={'meta': {**attempt_task.meta,
-                        'reuse_input_request': {key: copy.deepcopy(execution_req.get(key) or [])
+                        'reuse_input_request': {key: copy.deepcopy(input_request.get(key) or [])
                             for key in ('references', 'reference_dirs', 'project_dirs')},
                         'reuse_input_meta': {key: copy.deepcopy(attempt_task.meta.get(key) or [])
                             for key in ('reference_dirs', 'project_dirs')}}})
@@ -4505,6 +4508,7 @@ class Orchestrator:
                         placement.before_send(execution_req.get("execution_location"), hub_agents(self.hub, rid))
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
                                   with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
+                    dispatched = execution_policy.prepare_dispatch(dispatched, execution_req, hub_agents(self.hub, rid))
                     tracked = getattr(self.hub, 'dispatch_with_identity', None)
                     if current.meta.get('kind') == 'paper_skill' and tracked is not None:
                         res = await tracked(dispatched, lambda tid: self._bind_paper_dispatch_identity(
@@ -4534,7 +4538,7 @@ class Orchestrator:
                         await persist_request(self.hub, rid)
                 else:
                     if execution_step and execution_req.get('research_contract'):
-                        after_inputs = await asyncio.to_thread(capture, execution_req, self.hub.s, dispatched.meta,
+                        after_inputs = await asyncio.to_thread(capture, input_request, self.hub.s, dispatched.meta,
                                                                allow_request_projects=True)
                         if (after_inputs != execution_inputs or execution_inputs is None
                                 or res.request_input_sha256 != execution_inputs['sha256']):
@@ -5714,7 +5718,6 @@ class Orchestrator:
     async def _run_dag(self, rid: str, request: str, steps: list[dict], results: dict[str, TaskResult],
                        only: set[str] | None = None, feedback: dict[str, str] | None = None) -> None:
         choice = self.hub.requests.get(rid, {}).get("execution_location")
-        whole_hpc = bool(choice and choice["mode"] == "hpc")
         by_id = {s["id"]: s for s in steps}
         todo = {s["id"] for s in steps if only is None or s["id"] in only}
         running: dict[str, asyncio.Task] = {}
@@ -5777,7 +5780,7 @@ class Orchestrator:
                 text += "\n" + clip(r.text, self.cfg.context_chars_per_step)
             return clip(text, self.cfg.context_chars_per_step)[:self.cfg.context_chars_per_step]
 
-        def upstream(step: dict) -> str:
+        def upstream(step: dict, whole_hpc: bool) -> str:
             parts = []
             for d in step["depends_on"]:
                 r = results.get(d)
@@ -5833,6 +5836,8 @@ class Orchestrator:
             return "\n\n".join(parts)
 
         async def run_one(step: dict) -> TaskResult:
+            location = step_execution.step_location(choice, (req_state or {}).get('plan') or {}, step, rid)
+            whole_hpc = bool(location and location['mode'] == 'hpc')
             template = RESEARCH_STEP_PROMPT if research_plan else STEP_PROMPT
             if research_plan:
                 template = template.replace(
@@ -5877,7 +5882,7 @@ class Orchestrator:
                     required=", ".join(f"./{rel}" for rel in declared) or "(none)",
                     optional=", ".join(f"./{rel}" for rel in optional) or "(none)")
             if whole_hpc:
-                prompt += ("\n\nThis whole request runs on HPC. Use hpc_submit for ALL data processing, including "
+                prompt += ("\n\nThis step runs on HPC. Use hpc_submit for ALL data processing, including "
                            "downloads, setup, QC and report files. Your local turn only prepares job scripts and "
                            "reads permitted summaries. Job cwd is this step's isolated outputs/ folder: strip the leading "
                            "outputs/ from declared output paths inside scripts. Ancestor files are copied by the runner "
@@ -5885,7 +5890,7 @@ class Orchestrator:
                            "Do not read sibling workspaces or process data in the local shell. "
                            "Submit, end the turn, then resume when the scheduler finishes.")
             decision = decisions.get(step["id"])
-            ctx = upstream(step)
+            ctx = upstream(step, whole_hpc)
             updates = []
             if decision:
                 outcome = read_ask_results([decision])
@@ -5962,7 +5967,8 @@ class Orchestrator:
                                  if "environment_binding" in step else {}),
                               **({"environment_bindings": step["environment_bindings"]}
                                  if "environment_bindings" in step else {}),
-                              **({"execution_location": choice} if choice else {}),
+                              **({"execution_location": location} if location else {}),
+                              **step_execution.hpc_ancestor_meta(location, linked, by_id, results),
                               "shared_environment_protected": shared_environment_protected,
                                **({"restricted_inputs": True} if step["id"] in restricted else {}),
                                **({"general_result_contract": True} if not research_plan else {}),
@@ -7112,7 +7118,7 @@ class Orchestrator:
         if not remote:
             return failures
         req = self.hub.requests[rid]
-        location = req.get('execution_location') or {}
+        location = step_execution.reuse_location(req.get('execution_location'), plan, rid)
         runner_id = location.get('runner_id')
         agent_id = next((aid for aid, agent in hub_agents(self.hub, rid).items()
                          if hub_runner(self.hub, aid, rid) == runner_id
@@ -7759,7 +7765,7 @@ class Orchestrator:
                     if hiring_warnings:
                         approval_notices.append("\n".join(hiring_warnings))
                     if req.get("execution_location"):
-                        summary += " " + execution_policy.record_line(req["execution_location"])
+                        summary += " " + execution_policy.record_line(req["execution_location"], plan)
                     pinned_note = ""
                     if reuse_pending:
                         source = ("CP2 수정 요청 반영" if carried.get("trigger") == "cp2_revise"
@@ -8225,6 +8231,7 @@ class Orchestrator:
                         schema = research_plan_schema(
                             vocab is not None, output_types.ENTRY_SCHEMA,
                             offer_step_placement=step_execution.can_offer(req.get("execution_location"), roster))
+                        schema = step_execution.describe_schema(schema, req.get("execution_location"))
                     else:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()
@@ -8244,7 +8251,7 @@ class Orchestrator:
                         prompt += self._lookup_usage_line(rid)
                         schema = plan_schema(vocab is not None)
                     if req.get("execution_location"):
-                        prompt += execution_policy.plan_rule(req["execution_location"])
+                        prompt += execution_policy.plan_rule(req["execution_location"], offer_step_placement=research_lane)
                     planned = await self.run_step(Task(
                         agent_id=self.cfg.cso_agent, request_id=rid, output_schema=schema,
                         resume_session_id=session_id, prompt=prompt,
@@ -9298,7 +9305,7 @@ class Orchestrator:
         if paper_record:
             metadata.append(paper_record)
         if req.get("execution_location"):
-            metadata.append(execution_policy.record_line(req["execution_location"]))
+            metadata.append(execution_policy.record_line(req["execution_location"], req.get('plan')))
         route = req.get("route_decision") or {}
         if route.get("fallback"):
             metadata.append("처리 방식: 단독 실패 → 팀" +

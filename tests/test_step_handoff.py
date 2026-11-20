@@ -11,11 +11,14 @@ import pytest
 from labhq import hpc_transfer as ht
 from labhq.adapters.mock import MockAdapter
 from labhq.models import AgentSpec, Engine, Task, TaskResult
+from labhq.orchestrator.cso import Orchestrator
 from labhq.runner.daemon import Runner
 from labhq.runner.step_handoff import required_hpc_revisions
 from labhq.runner.step_inputs import stage_inputs
 from labhq.runner.workspace import TaskWorkspace
+from tests.test_cso import FakeHub
 from tests.test_hpc_transfer_1308 import site, write_script
+from tests.test_step_execution_contract import approved, placed_plan
 from tests.test_workspace_boundary import _settings
 
 
@@ -35,7 +38,8 @@ def _restart(runner, settings, agent, monkeypatch):
 
 
 @pytest.mark.parametrize('oversize', [False, True])
-async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, monkeypatch, oversize):
+@pytest.mark.parametrize('mixed', [False, True], ids=['receipt-only', 'mixed-dag'])
+async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, monkeypatch, oversize, mixed):
     settings = _settings(site.tmp)
     settings.hpc = site.settings.hpc
     settings.policy.approvals.hpc_core_hours_threshold = 1000
@@ -43,6 +47,11 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
     contents = {'results/a.tsv': b'a\n', 'results/z.tsv': b'z' * (1024 * 1024 + 1) if oversize else b'z\n'}
     reads = []
     row_paths = ['outputs/' + name for name in contents]
+    refs = site.tmp / 'reference'
+    refs.mkdir()
+    (refs / 'note.txt').write_text('local only', encoding='utf-8')
+    settings.runner.reference_roots = [str(refs)]
+    observed = {}
     runner = Runner(settings)
     monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
 
@@ -68,6 +77,11 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
         ctx.before_spawn()
         if ctx.task.meta['step_id'] == 'consumer':
             assert all(Path(directory) != source for directory in ctx.extra_dirs)
+            if mixed:
+                assert str(refs) in ctx.read_dirs and str(refs) not in ctx.extra_dirs
+                assert (refs / 'note.txt').read_text(encoding='utf-8') == 'local only'
+                assert ctx.task.meta['hpc_ancestor_revisions'] == {'producer': 2}
+                assert ctx.task.meta['execution_location']['mode'] == 'local'
             reads.extend((ctx.workdir / 'inputs/producer' / name).read_bytes() for name in contents)
         elif not ctx.task.resume_session_id:
             site.workdir = ctx.workdir
@@ -85,6 +99,70 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
     producer_meta = {'kind': 'step', 'step_id': 'producer', 'revision': 2, 'outputs': ['outputs/results'],
                      'execution_location': {'mode': 'hpc', 'runner_id': settings.runner.id}}
     try:
+        if mixed:
+            async def dispatch(task):
+                if task.meta['step_id'] == 'producer':
+                    assert task.meta['execution_location']['mode'] == 'hpc'
+                    assert task.meta['session_runner'] == settings.runner.id
+                    assert 'reference_dirs' not in task.meta and 'project_dirs' not in task.meta
+                    assert 'precedent_texts' not in task.meta
+                    assert str(refs) not in task.model_dump_json() and refs.as_posix() not in task.model_dump_json()
+                    outcome = await runner.run_task(task)
+                    observed[task.id] = outcome
+                    return outcome
+                if not oversize:
+                    return await runner.run_task(task)
+                with pytest.raises(ValueError, match='outputs/results/z.tsv.*fetch size limit') as exc:
+                    await runner.run_task(task)
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=str(exc.value))
+
+            async def wait_jobs(task_id):
+                nonlocal runner
+                [job_id] = observed[task_id].pending_jobs
+                state_file = site.tmp / 'slurm.json'
+                state = json.loads(state_file.read_text())
+                state['jobs'][job_id]['state'] = 'COMPLETED'
+                state_file.write_text(json.dumps(state))
+                await runner._poll_jobs()
+                assert runner.jobs[job_id].get('fetched'), runner.jobs[job_id]
+                runner = _restart(runner, settings, agent, monkeypatch)
+                return {'jobs': [runner.jobs[job_id]]}
+
+            hub = FakeHub(dispatch)
+            hub.agents['worker'].update(runner_id=settings.runner.id, whole_request_hpc=True,
+                                       hpc_tools=True, builtin_mcp=['hpc'])
+            hub.wait_jobs = wait_jobs
+            hub.supports_resume = lambda _: True
+            hub.step_revision_floor = lambda _rid, sid: 2 if sid == 'producer' else 0
+            plan = placed_plan(runner=settings.runner.id, count=2)
+            producer, consumer = plan['steps']
+            producer.update(id='producer', execution='hpc', outputs=['outputs/results'],
+                            instruction='prepare the mock data; PC input is ' + refs.as_posix())
+            consumer.update(id='consumer', depends_on=['producer'], outputs=[])
+            request = hub.requests['r']
+            request.update(plan=plan, research_contract=approved(plan),
+                           execution_location={'mode': 'local', 'approval_id': 'choice', 'source': 'fixture',
+                                               'mixed_hpc_runner_id': settings.runner.id},
+                           references=[{'kind': 'path', 'value': str(refs)}],
+                           pi_notes=[{'text': 'Keep this file local: ' + refs.as_posix()}])
+            results = {}
+            orchestrator = Orchestrator(hub)
+            await orchestrator.run_dag('r', 'PC reference ' + refs.as_posix(), plan['steps'], results,
+                                       only={'producer'})
+            assert results['producer'].ok, results['producer'].error
+            assert results['producer'].provenance['hpc_step_revision'] == 2
+            source = Path(results['producer'].workdir)
+            # Both sides restart. The PC adapter receives only the verified copies and the local reference.
+            runner = _restart(runner, settings, agent, monkeypatch)
+            monkeypatch.setattr(runner.scheduler, 'transfer', lambda: pytest.fail('PC handoff called the scheduler'))
+            persisted = json.loads(json.dumps({key: row.model_dump(mode='json') for key, row in results.items()}))
+            results = {key: TaskResult.model_validate(row) for key, row in persisted.items()}
+            await Orchestrator(hub).run_dag('r', 'PC reference ' + refs.as_posix(), plan['steps'], results,
+                                           only={'consumer'})
+            assert results['consumer'].ok is not oversize, results['consumer'].error
+            assert reads == ([] if oversize else list(contents.values()))
+            assert [task.meta['step_id'] for task in hub.calls] == ['producer', 'producer', 'consumer']
+            return
         pending = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='produce', meta=producer_meta))
         assert pending.ok and len(pending.pending_jobs) == 1
         state_file = site.tmp / 'slurm.json'
