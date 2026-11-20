@@ -17,6 +17,7 @@ from ..adapters.owned import plain_directory, write_owned_bytes
 from ..intake import overlaps_zone
 from ..private_paths import _managed_operand, credential_path
 from ..util import INPUT_STEP_ID, output_relpath
+from .step_handoff import verified_hpc_sizes
 
 INVENTORY = '.labhq-inputs.json'
 
@@ -579,14 +580,18 @@ def remote_ancestor_inputs(ws, artifacts, workspace_root):
     return found
 
 
-def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, max_total, remaining=None):
+def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, max_total, remaining=None,
+                 *, hpc_revisions=None):
     """Return (read-only snapshot roots, failures). Metadata comes from the DAG's finished ancestors.
 
-    ``remaining`` is the step's one cumulative byte budget (``[bytes left]``), shared with the precedent texts."""
+    ``remaining`` is the step's one cumulative byte budget (``[bytes left]``), shared with the precedent texts.
+    Ancestors pinned in ``hpc_revisions`` also need a matching local receipt from the selected HPC run."""
     staged, refused = [], {}
     remaining = remaining if remaining is not None else [max_total]
+    hpc_revisions = hpc_revisions or {}
     root = Path(workspace_root).resolve(strict=True)
     for step, artifact in artifacts.items():
+        from_hpc = step in hpc_revisions
         owned = False
         budget_before = remaining[0]
         try:
@@ -602,7 +607,8 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
             if not source_parts or source == ws.dir.resolve() or source != source.resolve(strict=True):
                 raise ValueError('source is not a plain ancestor workspace')
             with _folder(root, source_parts) as held:
-                manifest = _json(held, 'manifest.json')
+                manifest = (_json(held, 'manifest.json', limit=16 * 1024 * 1024) if from_hpc
+                            else _json(held, 'manifest.json'))
             task = manifest.get('task') or {}
             source_task = artifact['task_id']
             if not isinstance(source_task, str) or not source_task.strip():
@@ -614,8 +620,11 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                     run.get('step_id', (task.get('meta') or {}).get('step_id')) != step):
                 raise ValueError('source is not a successful step of this request')
             outputs, hashes = artifact['outputs'], artifact['output_sha256']
-            if not isinstance(outputs, list) or not outputs or len(outputs) > MAX_FILES:
+            if not isinstance(outputs, list) or not outputs:
                 raise ValueError('invalid collected output list')
+            if len(outputs) > MAX_FILES:
+                raise ValueError(f'{len(outputs)} collected files exceed the input limit of {MAX_FILES}')
+            hpc_sizes = verified_hpc_sizes(run, artifact, ws.task.request_id, hpc_revisions[step]) if from_hpc else {}
             files = []
             for raw in outputs:
                 relative = output_relpath(raw)
@@ -632,7 +641,17 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 files.append((relative, name, expected))
             if len({name.casefold() for _, name, _ in files}) != len(files):
                 raise ValueError('collected input names collide')
-            needed = sum(_size(root, (*source_parts, *_parts(relative))) for relative, _, _ in files)
+            needed = 0
+            for relative, _, _ in files:
+                try:
+                    size = _size(root, (*source_parts, *_parts(relative)))
+                except FileNotFoundError as exc:
+                    if from_hpc:
+                        raise ValueError(f'{relative}: received file is missing') from exc
+                    raise
+                if relative in hpc_sizes and size != hpc_sizes[relative]:
+                    raise ValueError(f'{relative}: received file size differs from the HPC manifest')
+                needed += size
             if needed > remaining[0]:
                 # Named before any byte is copied: the ancestor fits alone, but earlier ancestors used the step's
                 # one shared total (#1065).
@@ -641,10 +660,15 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
             _room(ws.dir, needed)
             _reset(ws.dir, step, [name for _, name, _ in files])
             for relative, name, expected in files:
-                _copy(root, (*source_parts, *_parts(relative)), ws.dir,
-                      f'inputs/{step}/{name}', expected, max_file, remaining)
+                try:
+                    _copy(root, (*source_parts, *_parts(relative)), ws.dir,
+                          f'inputs/{step}/{name}', expected, max_file, remaining)
+                except ValueError as exc:
+                    if from_hpc:
+                        raise ValueError(f'{relative}: {exc}') from exc
+                    raise
             staged.append(str(ws.dir / 'inputs' / step))
-            if warnings := _copy_literature(root, source_parts, ws.dir, max_file, remaining):
+            if not from_hpc and (warnings := _copy_literature(root, source_parts, ws.dir, max_file, remaining)):
                 refused[f'{step}:literature'] = 'literature handoff incomplete: ' + '; '.join(warnings[:10])
         except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
             # The refused ancestor's copies are removed below, so the bytes they used are not spent: a later

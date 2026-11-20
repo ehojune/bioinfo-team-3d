@@ -8,6 +8,8 @@ When a consult is confirmed to have failed before process start because a file w
 
 **Checking each step's runner at CP1.** When the PI explicitly chooses an execution location for the request and a worker is available on that route, the research planner can opt in with `step_execution_version: 1`. For version 1, check **단계 실행 위치 · runner** (step execution location and runner) on the CP1 card. The approval hash includes both values for each step. Every step follows the request's selected location. Plans that mix HPC and this PC are refused.
 
+The runner saves a local receipt with each completed HPC step's remote inventory. The PC handoff check requires the selected producer revision and verifies every collected file before copying it to `inputs/<step_id>/`. Missing, changed or oversized inputs block the PC step with a reason.
+
 Runner assignments are checked after paper skill preparation, just before the first research step goes to the gateway. If an assignment changes, approve the updated plan on a new CP1 card. Replanning is required when execution records or sealed reuse evidence already exist, or when the new assignment conflicts with the runner for an existing environment.
 
 **Output paths in a whole-HPC request:** A job already starts in the step's `outputs/` directory. Write `result.tsv` rather than `outputs/result.tsv` in the job script. The best-effort submission check looks for simple literal `>`, `>>`, `&>`, the last destination of `cp`, `mv`, and `install`, and destinations of `mkdir`, `touch`, `tee`, and `cd outputs`. It does not reject input reads. Options that take arguments, variables, invoked scripts, here-documents, and paths after a working-directory change can escape this check, so passing it does not certify the script.

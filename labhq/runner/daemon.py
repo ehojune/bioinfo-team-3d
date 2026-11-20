@@ -2649,6 +2649,8 @@ class Runner:
             root = self.ws_root.resolve()
             artifact_contract = (task.meta.get("kind") in {"step", "result_correction", "slot_repair"} and
                                  isinstance(task.meta.get("upstream_artifacts"), dict))
+            from .step_handoff import required_hpc_revisions, require_hpc_snapshots
+            hpc_revisions = required_hpc_revisions(task, whole_hpc, artifact_contract)
             staged_inputs: list[str] = []
             for directory in ([] if artifact_contract else task.meta.get("upstream_dirs", [])):
                 upstream = Path(directory).resolve()
@@ -2683,12 +2685,16 @@ class Runner:
                 staged_inputs, unavailable = await asyncio.to_thread(
                     stage_inputs, ws, local_ancestors, root, [*zones, *internal_zones],
                     list(private_now),
-                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget)
+                    self.s.runner.input_hash_max_file_bytes, self.s.runner.input_hash_max_total_bytes, input_budget,
+                    hpc_revisions=hpc_revisions)
                 if remote_only := {sid: accepted[sid] for sid in remote_ancestors if sid not in local_ancestors}:
                     from .step_inputs import remote_literature_warnings
                     unavailable.update(await asyncio.to_thread(remote_literature_warnings, remote_only, root))
                 unavailable.update({str(sid): f"inputs/{sid} unavailable (ancestor mapping mismatch)"
                                     for sid in artifacts if sid not in accepted})
+                unavailable.update({sid: f"inputs/{sid} unavailable (HPC ancestor missing)"
+                                    for sid in hpc_revisions if sid not in artifacts})
+                require_hpc_snapshots(hpc_revisions, unavailable)
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
                         "These copies are read-only; do not read sibling workspaces. "
                         "Save scripts and intermediate files only in outputs/ or .tmp/. "
@@ -3410,7 +3416,8 @@ class Runner:
                                             if path not in refused}
                 found = list(dict.fromkeys([*found, *remote_paths]))
                 result.outputs = list(dict.fromkeys([*result.outputs, *remote_paths]))
-                ws.stage_run(task.id, hpc_remote_outputs=remote_manifests)
+                ws.stage_run(task.id, hpc_remote_outputs=remote_manifests,
+                             hpc_local_receipt={"sha256": receipts, "omissions": missing_received})
                 transfer = self.scheduler.transfer()
                 retained_text = "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
                     f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} known bytes retained "
