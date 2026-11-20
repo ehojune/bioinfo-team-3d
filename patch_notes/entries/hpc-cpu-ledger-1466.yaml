@@ -8,3 +8,7 @@ rows:
     at: '2026-11-21 02:58'
     summary: Slurm CPU 상한을 설정하는 방법을 한영 매뉴얼에 추가했습니다.
     text: 노드 선택과 첫 현장 점검을 안내하고 CPU 원장 회귀를 Windows CI에서 실행한다.
+  - sha: '79f2dae'
+    at: '2026-11-21 03:07'
+    summary: Slurm에서 같은 설정의 별도 실행과 한 잡의 전송 재시도를 구분합니다.
+    text: 실행별 submission_id와 재시도 결과를 표시하고 REVOKED 잡의 CPU 예약을 해제한다.
