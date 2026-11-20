@@ -667,10 +667,15 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
     return out
 
 
-# The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
-RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types", "model_tier"),
-                                                ("OutputTypeEntry", "PackApplicabilityRecord"))
-for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results"):
+# Output declarations are offered only when switched on. Step placement fields belong to
+# the stored approval contract while the planner still uses request-wide execution.
+RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(
+    ResearchPlan.model_json_schema(),
+    "ResearchStep", ("output_types", "model_tier", "runner_id"),
+    ("OutputTypeEntry", "PackApplicabilityRecord"),
+)
+for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results",
+                      "step_execution_version"):
     RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)
     if _system_field in RESEARCH_PLAN_SCHEMA.get("required", []):
         RESEARCH_PLAN_SCHEMA["required"].remove(_system_field)
