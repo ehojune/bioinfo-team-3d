@@ -1,0 +1,34 @@
+pr: null
+rows:
+  - sha: 'b211faa'
+    at: '2026-11-21 02:51'
+    summary: Slurm 잡을 보낼 때 실행과 대기에 쓰는 CPU 합계를 제한합니다.
+    text: 선택형 사이트 상한을 runner와 init 시험 잡에 적용하고 접수 미확정 예약을 SQLite에 남겨 재전송을 막았다.
+  - sha: '49691ce'
+    at: '2026-11-21 02:58'
+    summary: Slurm CPU 상한을 설정하는 방법을 한영 매뉴얼에 추가했습니다.
+    text: 노드 선택과 첫 현장 점검을 안내하고 CPU 원장 회귀를 Windows CI에서 실행한다.
+  - sha: '79f2dae'
+    at: '2026-11-21 03:07'
+    summary: Slurm에서 같은 설정의 별도 실행과 한 잡의 전송 재시도를 구분합니다.
+    text: 실행별 submission_id와 재시도 결과를 표시하고 REVOKED 잡의 CPU 예약을 해제한다.
+  - sha: '58e1072'
+    at: '2026-11-21 03:18'
+    summary: Slurm이 제출을 명시적으로 거절하면 예약한 CPU를 반환합니다.
+    text: 접수 불명 응답의 예약은 유지하고 큐에서 빠진 시작·노드 구성 실패 잡의 예약을 해제한다.
+  - sha: 'd93594d'
+    at: '2026-11-21 03:29'
+    summary: 첫 Slurm 제출 전에 accounting을 확인합니다.
+    text: 상한을 켠 init은 완료가 확인된 시험 뒤 새 잡을 제출하며 접수 미확정 시험은 기존 예약에서 복원한다.
+  - sha: 'f4c442a'
+    at: '2026-11-21 03:31'
+    summary: Slurm 상태 조회 시간이 끝나면 새 잡의 미제출 상태를 알립니다.
+    text: CPU 원장의 sacct·squeue timeout을 init과 runner에 제출 실패로 전달한다.
+  - sha: 'd0faae6'
+    at: '2026-11-21 03:42'
+    summary: staff CLI가 Slurm CPU 원장의 처리 시간까지 기다립니다.
+    text: MCP 안팎의 제한 시간에 큐·accounting 조회와 SQLite 잠금 대기를 함께 반영한다.
+  - sha: '9a0eb8f'
+    at: '2026-11-21 03:49'
+    summary: Slurm 제출을 재사용할 때 업로드한 입력 내용도 비교합니다.
+    text: 검증된 SHA-256을 제출 식별에 넣고 기존 원장 행이 있어도 새 제출 전 accounting을 확인한다.

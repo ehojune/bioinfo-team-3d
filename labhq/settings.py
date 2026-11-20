@@ -308,6 +308,7 @@ class HpcSettings(_SettingsModel):
     # cluster is reached and stays outside the repository; only its name is kept here.
     site_profile: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     _login_ledger: str | None = PrivateAttr(default=None)  # set by Settings from runner.state_dir
+    _runner_state_path: Path | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def require_job_group_for_submit_prefix(self) -> "HpcSettings":
@@ -886,9 +887,12 @@ class Settings(_SettingsModel):
         from .hpc_login_budget import FILE
 
         try:
-            self.hpc._login_ledger = str(self.path(self.runner.state_dir) / FILE)
+            state_dir = self.path(self.runner.state_dir)
+            self.hpc._login_ledger = str(state_dir / FILE)
+            self.hpc._runner_state_path = state_dir / f"runner-{self.runner.id}.sqlite3"
         except RuntimeError:  # the test guard refusing an operator path: no ledger, no count
             self.hpc._login_ledger = None
+            self.hpc._runner_state_path = None
 
     def project(self, project_id: str | None) -> ProjectSettings | None:
         return next((p for p in self.projects if p.id == project_id), None) if project_id else None

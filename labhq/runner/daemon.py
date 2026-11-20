@@ -152,16 +152,24 @@ def labhq_mcp_timeout_s(settings: Settings) -> int:
     work = 120
     if settings.hpc.site_profile and settings.hpc.scheduler != "none":
         from ..hpc_session import SessionConfig
-        from ..tools.scheduler import scheduler_call_budget_s
+        from ..hpc_site import SiteProfileError
+        from ..tools.scheduler import scheduler_call_budget_s, slurm_cpu_admission_budget_s
         from ..hpc_transfer import UPLOAD_BUDGET_S
 
+        scheduler = Scheduler(settings.hpc)
         try:
-            session = Scheduler(settings.hpc).session()
+            session = scheduler.session()
         except RuntimeError:  # an unreadable profile is reported by the tool, not while constructing CLI settings
             session = None
         cfg = session.cfg if session is not None else SessionConfig(argv=["x"], first_output_wait_s=60)
-        hpc = scheduler_call_budget_s(cfg, float(settings.hpc.command_timeout_s), 1)
-        work = max(work, int(2 * hpc + UPLOAD_BUDGET_S) + 90)  # submit includes upload and remote input verification
+        command_timeout = float(settings.hpc.command_timeout_s)
+        hpc = scheduler_call_budget_s(cfg, command_timeout)
+        try:
+            cpu_cap = settings.hpc.scheduler == "slurm" and scheduler.cpu_cap_enabled()
+        except SiteProfileError:
+            cpu_cap = True  # preserve the outer budget if an unreadable Slurm profile becomes usable
+        admission = slurm_cpu_admission_budget_s(cfg, command_timeout) if cpu_cap else 0
+        work = max(work, math.ceil(2 * hpc + UPLOAD_BUDGET_S + admission) + 90)
     return max(settings.policy.approvals.timeout_s, ASK_MAX_WAIT_S) + work
 
 
@@ -3822,6 +3830,8 @@ class Runner:
                 done.set_result(None)
 
         async def record(result: dict) -> None:
+            if (key := result.get("cpu_submission_key")) and self.jobs.get(result["job_id"], {}).get("cpu_submission_key") == key:
+                return
             if location.get("mode") == "hpc":
                 ws.update_run(tid, hpc_step_id=ws.task.meta.get("step_id") or "direct", hpc_submitted=True,
                               hpc_revision=ws.task.meta.get("revision", 0))
@@ -3830,6 +3840,7 @@ class Runner:
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
                                    "name": result["name"], "script": result["script"],
                                    "script_sha256": result["script_sha256"],
+                                   "cpu_submission_key": result.get("cpu_submission_key"),
                                    "core_hours": result["core_hours"]},
                                   {"submission_overlapped": submission_overlapped,
                                    "transfer": {**result["transfer"], "fetch_to": str(fetch_to),
@@ -4011,6 +4022,7 @@ class Runner:
                            "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
                            "exit_status": None, "submitted_at": time.time(), "submission_seq": sequence,
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
+                           "site_profile": self.s.hpc.site_profile, "cpu_submission_key": body.get("cpu_submission_key"),
                            "workdir": str(ws.dir) if ws else None,
                            "script_sha256": body.get("script_sha256"), "submitted_by_runner": True, **(extra or {})}
         if ws:

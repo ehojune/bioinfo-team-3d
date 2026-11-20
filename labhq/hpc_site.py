@@ -66,6 +66,8 @@ class SiteProfile(BaseModel):
     # Nodes jobs may run on, when the user pins them (#1295): added to every submission, and a submission choosing its own
     # node, partition or queue is refused. Empty: the scheduler picks within the queue.
     pinned_nodes: list[str] = Field(default_factory=list)
+    # Sum of live and unconfirmed Slurm submissions from one runner state directory and ID.
+    max_concurrent_cpus: int | None = Field(default=None, strict=True, gt=0)
     remote_workdir: str | None = None
     # Local retrieval limits; leaving them out preserves the historical defaults.
     fetch_max_bytes: int = Field(default=1024 * 1024, strict=True, gt=0)
@@ -144,6 +146,8 @@ def problems(profile: SiteProfile) -> list[str]:
         found.append("a queue or node pin is not supported for pbs: every submission would be refused")
     if profile.login_window_minutes and not profile.login_limit_per_window:
         found.append("login_window_minutes is set without login_limit_per_window")
+    if profile.max_concurrent_cpus is not None and profile.scheduler not in (None, "slurm"):
+        found.append("max_concurrent_cpus is supported only for Slurm")
     return found
 
 
