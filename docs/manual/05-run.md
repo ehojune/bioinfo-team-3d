@@ -59,6 +59,8 @@ cd <labhq 저장소>
 .\labhq -c config\labhq.yaml open
 ```
 
+`up`은 gateway의 인증된 응답을 최대 60초 기다린 뒤 runner를 시작합니다. 시간이 지나면 `gateway.log` 위치와 같은 설정으로 `up`을 다시 실행하는 명령을 표시하고 exit 2로 끝납니다. 다시 실행하면 이미 떠 있거나 시작 중인 같은 gateway를 사용합니다.
+
 설정 경로가 없거나 gateway client token이 `change-me` 기본값이면 시작하지 않습니다. `open`과 다른 API 명령은 gateway가 꺼졌거나 HTTP 오류가 나면 traceback 대신 한 줄과 exit 2를 돌려줍니다.
 오프라인 데모를 폰으로 보려면 PC와 폰이 같은 Wi-Fi에 있어야 합니다([웹 사무실](06-web-office.md#웹-사무실)).
 게이트웨이는 요청·승인·이벤트를 로컬에 저장하므로 상태 디렉터리를 유지할 수 있는 VM이나 집 PC에서 돌립니다
