@@ -28,3 +28,7 @@ rows:
     at: '2026-11-21 03:42'
     summary: staff CLI가 Slurm CPU 원장의 처리 시간까지 기다립니다.
     text: MCP 안팎의 제한 시간에 큐·accounting 조회와 SQLite 잠금 대기를 함께 반영한다.
+  - sha: '9a0eb8f'
+    at: '2026-11-21 03:49'
+    summary: Slurm 제출을 재사용할 때 업로드한 입력 내용도 비교합니다.
+    text: 검증된 SHA-256을 제출 식별에 넣고 기존 원장 행이 있어도 새 제출 전 accounting을 확인한다.
