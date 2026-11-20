@@ -171,3 +171,48 @@ test('review cards show the corresponding count including zero and hide unavaila
   assert.match(rows[0].textContent,/자동 승인0건/); assert.match(rows[1].textContent,/자동 승인4건/);
   assert.doesNotMatch(rows[2].textContent,/자동 승인/);
 });
+
+test('automatic approvals load the selected request on open and render recorded values as text', async () => {
+  class Element {
+    constructor(tag) { this.tagName=tag; this.children=[]; this.open=false; this.textContent=''; }
+    get firstElementChild() { return this.children[0]; }
+    append(...nodes) { this.children.push(...nodes); }
+    replaceChildren(...nodes) { this.children=nodes; }
+    setAttribute() {}
+  }
+  global.document={createElement:tag=>new Element(tag)};
+  const source=fs.readFileSync(path.join(root,'ui/decide.js'),'utf8');
+  const {syncAutomaticApprovalDetails}=await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64'));
+  const parent=new Element('div'), requested=[];
+  const command='printf "<img src=x>"\necho test';
+  const fetchList=async id=>{
+    requested.push(id);
+    return {request_id:'a',approvals:[{agent_id:'analyst',step_id:'prepare',category:'workspace',command},{}]};
+  };
+  syncAutomaticApprovalDetails(parent,'a',2,fetchList);
+  const fold=parent.firstElementChild;
+  assert.equal(fold.tagName,'details');
+  assert.equal(fold.firstElementChild.textContent,'자동 승인 2건');
+  assert.deepEqual(requested,[]);
+  fold.open=true;
+  await fold.ontoggle();
+  const items=fold.children[2].firstElementChild.children;
+  assert.deepEqual(items[0].firstElementChild.children.slice(0,6).map(node=>node.textContent),
+    ['직원','analyst','단계','prepare','부류','작업 폴더']);
+  const pre=items[0].firstElementChild.children[7].firstElementChild;
+  assert.equal(pre.tagName,'pre');
+  assert.equal(pre.textContent,command);
+  assert.equal(items[1].firstElementChild.children[1].textContent,'기록 없음');
+  syncAutomaticApprovalDetails(parent,'a',2,fetchList);
+  assert.equal(parent.firstElementChild,fold);
+  syncAutomaticApprovalDetails(parent,'a',3,fetchList);
+  assert.equal(parent.firstElementChild.open,true);
+  syncAutomaticApprovalDetails(parent,'b',1,fetchList);
+  const other=parent.firstElementChild;
+  assert.equal(other.open,false);
+  other.open=true;
+  await other.ontoggle();
+  assert.match(other.children[1].textContent,/목록을 불러오지 못했습니다/);
+  assert.deepEqual(other.children[2].children,[]);
+  assert.deepEqual(requested,['a','b']);
+});
