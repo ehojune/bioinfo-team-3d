@@ -1,5 +1,6 @@
 """Versioned CP1 placement tests with in-memory workers and a fake HPC runner."""
 
+import asyncio
 import copy
 import json
 
@@ -8,7 +9,7 @@ from pydantic import ValidationError
 
 from labhq.orchestrator.cso import ENV_LOCK_OUTPUT, Orchestrator
 from labhq.orchestrator.step_execution import refresh_for_approval
-from labhq.recruit import planning as recruit_planning
+from labhq.recruit import paper_skills, planning as recruit_planning
 from labhq.research import contract, continuation
 from labhq.settings import Settings
 from tests.test_cso import FakeHub, result
@@ -172,6 +173,65 @@ async def test_cp1_reopens_when_a_runner_changes_before_dispatch(drift_point):
     assert approval["target_sha256"] == second["target_sha256"] == contract.plan_sha256(request["plan"])
     assert approval["approval_id"] != "old-cp1"
     assert dispatched == (["second-runner"] if settings.research.evidence_checkpoint else [])
+
+
+@pytest.mark.parametrize("drift_point", ["paper_skill", "budget_reservation"])
+async def test_runner_change_during_step_preparation_reopens_cp1_before_any_send(monkeypatch, drift_point):
+    settings = Settings()
+    settings.research.enabled = settings.research.evidence_checkpoint = True
+    settings.orchestrator.chief_of_staff_agent = settings.orchestrator.reviewer_agent = None
+    sends = []
+    prepared = []
+    closed = []
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            plan = valid_plan(steps=2)
+            plan["step_execution_version"] = 1
+            return result(task, structured=plan)
+        assert task.meta["kind"] == "step"
+        sends.append((task.meta["step_id"], task.meta["session_runner"], len(hub.approvals)))
+        return result(task, ok=False, error="end the mock step")
+
+    class PreparingOrchestrator(Orchestrator):
+        async def _start_paper_builds(self, rid, rows, execution_slots):
+            prepared.append(rows)
+            return object()
+
+        async def _close_paper_builds(self, rid, batch):
+            closed.append(batch)
+
+        async def _resolve_step_paper_skills(self, task):
+            assert self.paper_builds[task.request_id]
+            await asyncio.sleep(0)
+            self.hub.agents["worker"]["runner_id"] = "second-runner"
+            return task.model_copy(update={"meta": {**task.meta, "paper_skills": []}})
+
+        async def _reserve_dispatch(self, rid, task, *, optional):
+            if drift_point == "budget_reservation" and task.meta["kind"] == "step":
+                await asyncio.sleep(0)
+                self.hub.agents["worker"]["runner_id"] = "second-runner"
+            return await super()._reserve_dispatch(rid, task, optional=optional)
+
+        async def _research_after_steps(self, *args):
+            pass
+
+    if drift_point == "paper_skill":
+        monkeypatch.setattr(paper_skills, "attachments", lambda *args: [{"status": "deferred"}])
+    hub = MiniHub(settings, dispatch, mode="orchestrate", work_kind="research", text="compare conditions")
+    hub.agents["worker"]["runner_id"] = "first-runner"
+    request = hub.requests["r"]
+    request["execution_location"] = {"mode": "local", "source": "PI selection", "approval_id": "route-choice"}
+    orchestrator = PreparingOrchestrator(hub)
+    await orchestrator.run_request("r")
+
+    first, second = [card["detail"] for card in hub.approvals if card["kind"] == "research_plan"]
+    assert first["target_sha256"] != second["target_sha256"]
+    assert request["research_contract"]["approval"]["target_sha256"] == second["target_sha256"]
+    assert sorted(sends) == [("s1", "second-runner", 2), ("s2", "second-runner", 2)]
+    assert orchestrator.attempts["r"]["s1"] == orchestrator.attempts["r"]["s2"] == 1
+    assert not orchestrator.paper_builds and not orchestrator.first_step_dispatch
+    assert len(prepared) == len(closed) == (2 if drift_point == "paper_skill" else 0)
 
 
 @pytest.mark.parametrize("record", ["results", "reuse_tools", "pending_revisions"])

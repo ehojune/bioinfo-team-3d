@@ -3298,6 +3298,7 @@ class Orchestrator:
         self.budget_outcomes: dict[str, list[dict]] = {}
         self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
         self.paper_builds: dict[str, paper_skills.ApprovedBuilds] = {}
+        self.first_step_dispatch: dict[str, step_execution.FirstDispatch] = {}
         self.paper_budget_holds: dict[str, dict[str, float]] = {}
         # #862: attempts this process reserved and is dispatching now; a restart prune never touches them.
         self.dispatch_inflight: dict[str, set[str]] = {}
@@ -4499,6 +4500,9 @@ class Orchestrator:
                 attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
                 self._note_inflight_cap(rid, attempt_task)
                 try:
+                    placement = self.first_step_dispatch.get(rid) if current.meta.get("kind") == "step" else None
+                    if placement is not None:
+                        placement.before_send(execution_req.get("execution_location"), hub_agents(self.hub, rid))
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
                                   with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
                     tracked = getattr(self.hub, 'dispatch_with_identity', None)
@@ -4508,6 +4512,9 @@ class Orchestrator:
                     else:
                         res = await self.hub.dispatch(dispatched)
                     res = paper_skills.with_preparation_outcome(res, attempt_task)
+                except step_execution.ReapprovalRequired:
+                    await self._release_dispatch_hold(rid, attempt_task.id)
+                    raise
                 except asyncio.CancelledError:
                     (await self._release_if_unsent(rid, attempt_task.id))
                     raise
@@ -6245,6 +6252,13 @@ class Orchestrator:
                                                                error="unmet dependencies"))
                 break
             done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
+            placement = self.first_step_dispatch.get(rid)
+            if placement is not None and placement.stale:
+                for pending in running.values():
+                    if not pending.done():
+                        pending.cancel()
+                await asyncio.gather(*running.values(), return_exceptions=True)
+                raise step_execution.ReapprovalRequired("step runners changed before dispatch; renewed CP1 required")
             for sid, t in list(running.items()):
                 if t in done:
                     running.pop(sid)
@@ -8837,14 +8851,29 @@ class Orchestrator:
                 # failure; only a step without a good result re-plans or ends the request (PR #378 review).
                 return any(not result.ok for result in results.values())
 
-            if remaining:
+            while remaining:
                 # CP1 can be followed by more awaits, including the blind draft, before the first DAG call.
                 while research_lane and step_placement_changed(req["plan"]):
                     if not await finish_research_plan():
                         return
                     steps = req["plan"]["steps"]
-                await self.run_dag(rid, text, steps, results, only=remaining,
-                                   feedback=resume_feedback or None)
+                placement = (step_execution.FirstDispatch(req)
+                             if research_lane and req["plan"].get("step_execution_version") is not None else None)
+                if placement is not None:
+                    self.first_step_dispatch[rid] = placement
+                try:
+                    await self.run_dag(rid, text, steps, results, only=remaining,
+                                       feedback=resume_feedback or None)
+                    break
+                except step_execution.ReapprovalRequired:
+                    if placement is None or not placement.stale:
+                        raise
+                    placement.discard_unsent_proofs(req)
+                    self._forget_step_state(rid, remaining)
+                    await self._drop_unsent_holds(rid)
+                    await persist_request(self.hub, rid)
+                finally:
+                    self.first_step_dispatch.pop(rid, None)
             def serialized_results() -> dict[str, dict]:
                 return {k: {**v.model_dump(mode="json"),
                             "status": "skipped" if (v.error or "").startswith("skipped:") else

@@ -3,6 +3,38 @@
 from ..research.contract import plan_sha256
 
 
+_PRE_DISPATCH_PROOFS = ("reuse_tools", "reuse_no_request_inputs", "reuse_input_proof")
+_EXECUTION_RECORDS = ("results", "step_decisions", "pending_revisions", *_PRE_DISPATCH_PROOFS)
+
+
+class ReapprovalRequired(RuntimeError):
+    """The first research dispatch was withheld because the approved runners changed."""
+
+
+class FirstDispatch:
+    """Shared by the parallel steps until any of them enters gateway dispatch."""
+
+    def __init__(self, request):
+        self.plan = request["plan"]
+        self.started = any(request.get(key) for key in _EXECUTION_RECORDS) or bool(
+            (request.get("research_contract") or {}).get("continuation"))
+        self.stale = False
+
+    def before_send(self, choice, agents):
+        if self.started:
+            return
+        # The check and transition are synchronous. Once stale, no sibling can start under this approval.
+        self.stale = self.stale or bind_draft(self.plan, choice, agents, refresh_runner=True) != self.plan
+        if self.stale:
+            raise ReapprovalRequired("step runners changed before dispatch; renewed CP1 required")
+        self.started = True
+
+    def discard_unsent_proofs(self, request):
+        # Only a stale first-dispatch guard can abandon preparation; no research step entered dispatch.
+        for key in _PRE_DISPATCH_PROOFS:
+            request.pop(key, None)
+
+
 def can_offer(choice, roster):
     """Offer the opt-in after an explicit execution choice with a worker on that route."""
     return bool(choice and choice.get("approval_id") and any(
@@ -50,7 +82,7 @@ def refresh_for_approval(plan, request, choice, agents):
     """Refresh the server's runner assignments before any research step has run."""
     refreshed = bind_draft(plan, choice, agents, refresh_runner=True)
     changed = refreshed != plan
-    if changed and any(request.get(key) for key in ("results", "reuse_tools", "pending_revisions")):
+    if changed and any(request.get(key) for key in _EXECUTION_RECORDS):
         raise ValueError("step runner changed after execution began; revise the plan to preserve the original evidence")
     return refreshed, changed
 
