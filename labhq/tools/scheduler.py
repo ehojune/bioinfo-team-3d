@@ -80,6 +80,16 @@ ACCOUNTING_DISABLED = re.compile(r"accounting storage is disabled", re.I)
 _CPU_ENV_PREFIX = re.compile(r"(?:SBATCH|SQUEUE|SACCT|SLURM)_", re.I)
 _CPU_ENV_ALLOWED = {"SLURM_CONF", "SLURM_CONF_SERVER", "SLURM_TIME_FORMAT"}
 _CPU_ENV_REFUSED = "Slurm CPU admission refuses scheduler option variables"
+_SBATCH_REJECTED = "sbatch: error: Batch job submission failed: "
+# sbatch also exits nonzero when its RPC response is lost. Only explicit Slurm rejections release capacity.
+_SBATCH_REJECTION_REASONS = {
+    "Invalid partition name specified",
+    "Invalid account or account/partition combination specified",
+    "Invalid qos specification",
+    "Job violates accounting/QOS policy (job submit limit, user's size and/or time limits)",
+    "Requested time limit is invalid (missing or exceeds some limit)",
+    "Requested node configuration is not available",
+}
 _CPU_SH_GUARD = (
     "if env | cut -d= -f1 | grep -viEx 'SLURM_(CONF|CONF_SERVER|TIME_FORMAT)' "
     "| grep -qiE '^(SBATCH|SQUEUE|SACCT|SLURM)_'; then "
@@ -89,7 +99,7 @@ _CPU_SH_GUARD = (
 
 
 class _SlurmNotSent(RuntimeError):
-    """The scheduler command was refused by the environment guard before it could run."""
+    """There is direct evidence that Slurm did not accept the submission."""
 
 
 @dataclass
@@ -725,7 +735,13 @@ class Scheduler:
         if cpu_guard and p.returncode == 97 and (p.stderr or "").strip() == _CPU_ENV_REFUSED:
             raise _SlurmNotSent(_CPU_ENV_REFUSED)
         if p.returncode != 0:
-            raise RuntimeError(f"{cmd} failed ({p.returncode}): {_detail(p)}")
+            message = f"{cmd} failed ({p.returncode}): {_detail(p)}"
+            if cpu_guard and p.returncode == 1 and not (p.stdout or "").strip():
+                reasons = (line.removeprefix(_SBATCH_REJECTED) for line in (p.stderr or "").splitlines()
+                           if line.startswith(_SBATCH_REJECTED))
+                if any(reason in _SBATCH_REJECTION_REASONS for reason in reasons):
+                    raise _SlurmNotSent(message)
+            raise RuntimeError(message)
         lines = [line.strip() for line in p.stdout.splitlines() if line.strip()]
         if not lines:
             raise RuntimeError(f"{cmd} printed no job id{MAYBE_SUBMITTED}")

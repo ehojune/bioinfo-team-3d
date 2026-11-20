@@ -17,6 +17,8 @@ from .test_guard import guard_test_path
 
 _FINAL = frozenset({"BOOT_FAIL", "CANCELLED", "COMPLETED", "DEADLINE", "FAILED", "NODE_FAIL",
                     "OUT_OF_MEMORY", "PREEMPTED", "REVOKED", "TIMEOUT"})
+# These flags can also appear while a job is being requeued. Keep counting a live row with either flag.
+_ACCOUNTING_FINAL_FLAGS = frozenset({"LAUNCH_FAILED", "RECONFIG_FAIL"})
 _JOB_ID = re.compile(r"[0-9]+(?:[_+][0-9]+)?\Z")
 SUBMISSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _LEGACY_CLOCK_TOLERANCE_S = 120
@@ -52,6 +54,10 @@ class SlurmRow:
     @property
     def final(self) -> bool:
         return self.state.split(maxsplit=1)[0] in _FINAL
+
+    @property
+    def accounting_final(self) -> bool:
+        return self.final or self.state in _ACCOUNTING_FINAL_FLAGS
 
     def matches_legacy(self, job: dict) -> bool:
         submitted_at = job.get("submitted_at")
@@ -165,7 +171,7 @@ class CpuLedger:
                 raise RuntimeError("conflicting Slurm IDs for one LabHQ submission")
             if matches:
                 job_id = matches[0].parent
-                finished = all(match.final for match in matches)
+                finished = name not in active_cpus and all(match.accounting_final for match in matches)
             cpus = max(reservation["cpus"], active_cpus[name])
             db.execute("UPDATE submissions SET job_id = ?, finished = ?, cpus = ? WHERE site = ? AND key = ?",
                        (job_id, finished, cpus, self.site, reservation["key"]))
@@ -197,7 +203,7 @@ class CpuLedger:
                 total += sum(row.cpus for row in active)
             elif active and (not terminal_legacy(job) or any(row.name == job.get("name") for row in active)):
                 return None
-            elif any(not row.final for row in matches) or (not matches and not terminal_legacy(job)):
+            elif any(not row.accounting_final for row in matches) or (not matches and not terminal_legacy(job)):
                 return None
         return total
 
@@ -209,7 +215,7 @@ class CpuLedger:
                 raise RuntimeError("the Slurm job ID conflicts with the CPU reservation")
 
     def unsent(self, key: str) -> None:
-        """Release only when the transport proves it never opened a connection for this submit."""
+        """Release after a pre-submit refusal or a confirmed Slurm rejection."""
         with self._transaction() as db:
             db.execute("DELETE FROM submissions WHERE site = ? AND key = ? AND job_id IS NULL", (self.site, key))
 

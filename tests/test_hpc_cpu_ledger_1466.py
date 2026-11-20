@@ -25,6 +25,7 @@ class FakeSlurm:
         self.calls = []
         self.lose_response = False
         self.late_accept = False
+        self.submit_failure = None
         self.queue_failure = False
         self.enter_sbatch = None
         self.continue_sbatch = None
@@ -37,6 +38,8 @@ class FakeSlurm:
             if self.enter_sbatch is not None:
                 self.enter_sbatch.set()
                 assert self.continue_sbatch.wait(5)
+            if self.submit_failure is not None:
+                return subprocess.CompletedProcess(args, *self.submit_failure)
             cpus = next(int(arg.split("=")[1]) for arg in args if arg.startswith("--cpus-per-task="))
             name = next(arg.split("=")[1] for arg in args if arg.startswith("--job-name="))
             job_id = str(1000 + len(self.submits))
@@ -181,12 +184,50 @@ def test_distinct_invocations_submit_identical_jobs_and_reused_id_refuses_change
     assert len(fake.submits) == 2
 
 
-def test_revoked_in_accounting_releases_capacity(cluster, tmp_path):
+@pytest.mark.parametrize("state", ["REVOKED", "LAUNCH_FAILED", "RECONFIG_FAIL"])
+def test_terminal_accounting_releases_capacity(cluster, tmp_path, state):
     fake, settings = cluster
-    first = submit(settings(), tmp_path, "revoked", 60)
-    fake.finish(first["job_id"], "REVOKED")
+    first = submit(settings(), tmp_path, "first", 60)
+    fake.finish(first["job_id"], state)
     assert submit(settings(), tmp_path, "new", 60)["submitted"]
     assert len(fake.submits) == 2
+
+
+@pytest.mark.parametrize("state", ["LAUNCH_FAILED", "RECONFIG_FAIL"])
+def test_live_failure_flag_still_counts_toward_capacity(cluster, tmp_path, state):
+    fake, settings = cluster
+    first = submit(settings(), tmp_path, "first", 60)
+    job_id = first["job_id"]
+    fake.live[job_id] = replace(fake.live[job_id], state=state)
+    assert "60 reserved + 1 requested" in submit(settings(), tmp_path, "next", 1)["error"]
+    assert len(fake.submits) == 1
+
+
+@pytest.mark.parametrize("reason", ["Invalid partition name specified", "Invalid qos specification"])
+def test_confirmed_sbatch_rejection_releases_capacity(cluster, tmp_path, reason):
+    fake, settings = cluster
+    fake.submit_failure = (1, "", f"sbatch: error: Batch job submission failed: {reason}\n")
+    first = submit(settings(), tmp_path, "first", 60, submission_id="first")
+    assert reason in first["error"]
+    assert "reservation is held" not in first["error"]
+    fake.submit_failure = None
+    assert submit(settings(), tmp_path, "first", 60, timestamp="retry", submission_id="first")["submitted"]
+    assert len(fake.submits) == 2
+
+
+@pytest.mark.parametrize("failure", [
+    (1, "", "sbatch: error: Batch job submission failed: Socket timed out on send/recv operation\n"),
+    (255, "", "ssh: connection closed\n"),
+    (1, "1001\n", "sbatch: error: Batch job submission failed: Invalid qos specification\n"),
+])
+def test_uncertain_nonzero_exit_holds_capacity(cluster, tmp_path, failure):
+    fake, settings = cluster
+    fake.submit_failure = failure
+    first = submit(settings(), tmp_path, "first", 60)
+    assert "reservation is held" in first["error"]
+    assert "was not resent" in submit(settings(), tmp_path, "first", 60, timestamp="retry")["error"]
+    assert "60 reserved + 1 requested" in submit(settings(), tmp_path, "next", 1)["error"]
+    assert len(fake.submits) == 1
 
 
 async def test_mcp_passes_invocation_identity_and_returns_original_receipt(cluster, tmp_path, monkeypatch):
