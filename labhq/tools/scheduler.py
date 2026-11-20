@@ -729,7 +729,7 @@ class Scheduler:
             accounting.extend(read([*base, "--starttime", start, "--name", ",".join(row["name"] for row in missing)]))
         if legacy_ids:
             accounting.extend(read([*base, "--duplicates", "-j", ",".join(legacy_ids)]))
-        elif not reservations:
+        elif not missing:
             read(probe)
         return live, accounting
 

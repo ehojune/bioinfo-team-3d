@@ -236,7 +236,8 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         kwargs = {}
         if cap_enabled:
             identity = (body.get("task_id"), body.get("agent_id"), name, script_sha256)
-            fingerprint = submission_key("runner", identity, argv[:-1], inputs or [],
+            input_identity = spec["inputs"] if spec else inputs
+            fingerprint = submission_key("runner", identity, argv[:-1], input_identity or [],
                                          (remote_data or {}).get("request_snapshot"))
             key = (submission_key("runner invocation", *identity[:2], invocation)
                    if invocation is not None else fingerprint)

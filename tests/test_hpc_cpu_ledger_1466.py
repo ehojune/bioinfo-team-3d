@@ -1,6 +1,7 @@
 """Exercise runner and init submission against a fake Slurm controller only."""
 import asyncio
 import concurrent.futures
+import hashlib
 import json
 import subprocess
 import threading
@@ -96,7 +97,8 @@ def cluster(tmp_path, monkeypatch):
     return fake, settings
 
 
-def submit(settings, workdir, name, cores, *, task=None, timestamp="one", directive="", submission_id=None):
+def submit(settings, workdir, name, cores, *, task=None, timestamp="one", directive="", submission_id=None,
+           inputs=None):
     jobs = workdir / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     script = jobs / f"{name}-{timestamp}.sh"
@@ -108,7 +110,7 @@ def submit(settings, workdir, name, cores, *, task=None, timestamp="one", direct
     return asyncio.run(submit_job(settings, Scheduler(settings.hpc), workdir,
                                  {"script": str(script), "name": name, "cores": cores, "walltime": "00:05:00",
                                   "task_id": task or name, "agent_id": "fixture",
-                                  "submission_id": submission_id}, approve))
+                                  "submission_id": submission_id, "inputs": inputs}, approve))
 
 
 def trial(settings, tmp_path):
@@ -171,6 +173,23 @@ def test_accounting_disabled_blocks_first_submit_before_creating_a_reservation(c
     fake.accounting_disabled = False
     assert submit(settings(), tmp_path, "first", 60)["submitted"]
     assert len(fake.submits) == 1
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_accounting_disabled_blocks_new_submit_with_existing_ledger(cluster, tmp_path, finished):
+    fake, settings = cluster
+    first = submit(settings(), tmp_path, "first", 1)
+    if finished:
+        fake.finish(first["job_id"])
+        fake.submit_failure = (1, "", "sbatch: error: Batch job submission failed: Invalid qos specification\n")
+        assert "Invalid qos" in submit(settings(), tmp_path, "rejected", 1)["error"]
+        fake.submit_failure = None
+
+    submissions_before = len(fake.submits)
+    fake.accounting_disabled = True
+    assert "requires Slurm accounting" in submit(settings(), tmp_path, "next", 1)["error"]
+    assert fake.calls[-2:] == ["squeue", "sacct"]
+    assert len(fake.submits) == submissions_before
 
 
 def test_init_accounting_timeout_reports_no_submission_and_allows_retry(cluster, tmp_path):
@@ -262,6 +281,40 @@ def test_distinct_invocations_submit_identical_jobs_and_reused_id_refuses_change
     assert replay["replayed"] is True
     assert replay["script"] == first["script"]
     assert len(fake.submits) == 2
+
+
+@pytest.mark.parametrize("submission_id", [None, "run-1"])
+def test_uploaded_input_content_is_part_of_submission_identity(cluster, tmp_path, monkeypatch, submission_id):
+    from labhq.runner import hpc_jobs
+
+    fake, settings = cluster
+    monkeypatch.setattr(Scheduler, "transfer", lambda _: SimpleNamespace(path=lambda path: f"/fixture/{path}"))
+
+    def upload_job(transfer, spec, script, root, inputs):
+        spec["inputs"] = {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in inputs}
+
+    monkeypatch.setattr(hpc_jobs, "upload_job", upload_job)
+    input_name = "input.txt"
+    input_path = tmp_path / input_name
+    input_path.write_bytes(b"first version")
+
+    def run(timestamp):
+        return submit(settings(), tmp_path, "job", 30, timestamp=timestamp, submission_id=submission_id,
+                      inputs=[input_name])
+
+    first = run("first")
+    retry = run("retry")
+    assert retry["job_id"] == first["job_id"]
+    assert retry["replayed"] is True
+    assert len(fake.submits) == 1
+    input_path.write_bytes(b"changed version")
+    changed = run("changed")
+    if submission_id is None:
+        assert changed["job_id"] != first["job_id"]
+        assert len(fake.submits) == 2
+    else:
+        assert "different job payload" in changed["error"]
+        assert len(fake.submits) == 1
 
 
 @pytest.mark.parametrize("state", ["REVOKED", "LAUNCH_FAILED", "RECONFIG_FAIL"])
