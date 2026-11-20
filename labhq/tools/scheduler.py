@@ -695,16 +695,24 @@ class Scheduler:
         """Batch queue and accounting reads on the same local cluster and scheduler account."""
         def read(args):
             result = self._run(args, cpu_guard=True)
+            if args[0] == "sacct" and (ACCOUNTING_DISABLED.search(result.stderr or "")
+                                      or ACCOUNTING_DISABLED.search(result.stdout or "")):
+                raise RuntimeError("max_concurrent_cpus requires Slurm accounting (sacct); no new job was submitted")
             if result.returncode != 0:
                 raise RuntimeError(f"{args[0]} CPU admission query failed: {_detail(result)}")
             return slurm_rows(result.stdout)
+
+        base = ["sacct", "--local", "-n", "-P", "-X", "-o", "JobID%128,AllocCPUS,Submit,State%64,JobName%128"]
+        probe = [*base, "--starttime", "now", "--name", "labhq-accounting-probe"]
+        if not reservations and not legacy:
+            read(probe)
+            return [], []
 
         live = read(["squeue", "--local", "--all", "--me", "-h", "-r", "-t", "all", "-o", "%i|%C|%V|%T|%j"])
         names_in_queue = {row.name for row in live}
         missing = [row for row in reservations if not row["finished"] and row["name"] not in names_in_queue]
         legacy_ids = [str(job["job_id"]) for job in legacy if re.fullmatch(r"[0-9]+", str(job.get("job_id", "")))
                       and not any(row.matches_legacy(job) for row in live) and not terminal_legacy(job)]
-        base = ["sacct", "--local", "-n", "-P", "-X", "-o", "JobID%128,AllocCPUS,Submit,State%64,JobName%128"]
         accounting = []
         if missing:
             # UTC day minus one avoids missing records at the site's local midnight.
@@ -713,6 +721,8 @@ class Scheduler:
             accounting.extend(read([*base, "--starttime", start, "--name", ",".join(row["name"] for row in missing)]))
         if legacy_ids:
             accounting.extend(read([*base, "--duplicates", "-j", ",".join(legacy_ids)]))
+        elif not reservations:
+            read(probe)
         return live, accounting
 
     def _send_submit(self, args: list[str], *, cpu_guard: bool = False) -> str:

@@ -206,7 +206,8 @@ def trial_job(hpc: HpcSettings, trial_dir: Path, confirm: Callable[[str], bool],
     try:
         if isinstance(backend, Scheduler) and backend.cpu_cap_enabled():
             key = submission_key("init trial", str(trial_dir.resolve()), job[:5])
-            submission = Submission(key, script.read_text(encoding="utf-8"), {})
+            submission = Submission(key, script.read_text(encoding="utf-8"), {},
+                                    fingerprint=submission_key("init trial options", preview), repeat_after_finish=True)
             job_id = backend.submit(str(script), *job, cpu_submission=submission)
         else:
             job_id = backend.submit(str(script), *job)

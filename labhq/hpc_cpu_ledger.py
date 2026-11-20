@@ -37,6 +37,7 @@ class Submission:
     receipt: dict
     legacy_identity: tuple | None = None
     fingerprint: str | None = None
+    repeat_after_finish: bool = False
 
 
 @dataclass(frozen=True)
@@ -116,12 +117,19 @@ class CpuLedger:
         problem = None
         with self._transaction() as db:
             rows = list(db.execute("SELECT * FROM submissions WHERE site = ?", (self.site,)))
-            existing = next((row for row in rows if row["key"] == submission.key), None)
+            key = submission.key
+            by_key = {row["key"]: row for row in rows}
+            if submission.repeat_after_finish:
+                # Keep each init trial's old reservation and ID, so completion cannot race with a new submit.
+                while (next_key := submission_key("next init trial", key)) in by_key:
+                    key = next_key
+            existing = by_key.get(key)
             if existing:
                 receipt = json.loads(existing["receipt"])
-                if receipt.pop("cpu_submission_fingerprint", None) != submission.fingerprint:
+                recorded_fingerprint = receipt.pop("cpu_submission_fingerprint", None)
+                if not submission.repeat_after_finish and recorded_fingerprint != submission.fingerprint:
                     raise RuntimeError("submission_id is already used with a different job payload")
-            if existing and existing["job_id"]:
+            if existing and existing["job_id"] and not submission.repeat_after_finish:
                 submission.receipt = {**receipt, "replayed": True}
                 return existing["job_id"], existing["name"]
             legacy = self._legacy_jobs()
@@ -130,13 +138,21 @@ class CpuLedger:
                 == submission.legacy_identity for job in legacy
             ):
                 raise RuntimeError("a pre-ledger Slurm submission matches this job; check the existing job before retrying")
-            live, accounting = query(rows, legacy) if rows or legacy else ([], [])
-            used, recovered = self._reconcile(db, rows, live, accounting, submission.key)
+            live, accounting = query(rows, legacy)
+            used, recovered, finished = self._reconcile(db, rows, live, accounting, key)
+            if submission.repeat_after_finish and existing and existing["job_id"] and finished:
+                # If this call just recovered a lost receipt, return that ID once before starting another trial.
+                key = next_key
+                existing = None
             if existing:
-                if recovered:
+                if (submission.repeat_after_finish and recorded_fingerprint is not None
+                        and recorded_fingerprint != submission.fingerprint):
+                    problem = "the pending init trial used different submission settings; check it before retrying"
+                elif recovered:
                     submission.receipt = {**receipt, "replayed": True}
                     return recovered, existing["name"]
-                problem = "Slurm acceptance is unconfirmed; the CPU reservation is held and the job was not resent"
+                else:
+                    problem = "Slurm acceptance is unconfirmed; the CPU reservation is held and the job was not resent"
             else:
                 legacy_used = self._legacy_cpus(legacy, live, accounting)
                 if legacy_used is None:
@@ -151,11 +167,12 @@ class CpuLedger:
                         receipt["cpu_submission_fingerprint"] = submission.fingerprint
                     db.execute("INSERT INTO submissions (site, key, name, cpus, reserved_at, receipt) "
                                "VALUES (?, ?, ?, ?, ?, ?)",
-                               (self.site, submission.key, name, cores, time.time(), json.dumps(receipt)))
+                               (self.site, key, name, cores, time.time(), json.dumps(receipt)))
+                    submission.key = key
                     return None, name
         raise RuntimeError(problem)
 
-    def _reconcile(self, db, reservations, live, accounting, key) -> tuple[int, str | None]:
+    def _reconcile(self, db, reservations, live, accounting, key) -> tuple[int, str | None, bool]:
         by_name = defaultdict(list)
         for match in (*live, *accounting):
             by_name[match.name].append(match)
@@ -163,7 +180,7 @@ class CpuLedger:
         for row in live:
             if not row.final:
                 active_cpus[row.name] += row.cpus
-        used, recovered = 0, None
+        used, recovered, current_finished = 0, None, False
         for reservation in reservations:
             name, job_id, finished = reservation["name"], reservation["job_id"], reservation["finished"]
             matches = by_name[name]
@@ -178,8 +195,8 @@ class CpuLedger:
             if not finished:
                 used += cpus
             if reservation["key"] == key:
-                recovered = job_id
-        return used, recovered
+                recovered, current_finished = job_id, bool(finished)
+        return used, recovered, current_finished
 
     @staticmethod
     def _legacy_cpus(jobs: list[dict], live: list[SlurmRow], accounting: list[SlurmRow]) -> int | None:

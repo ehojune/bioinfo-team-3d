@@ -27,6 +27,7 @@ class FakeSlurm:
         self.late_accept = False
         self.submit_failure = None
         self.queue_failure = False
+        self.accounting_disabled = False
         self.enter_sbatch = None
         self.continue_sbatch = None
 
@@ -55,6 +56,8 @@ class FakeSlurm:
                 return subprocess.CompletedProcess(args, 1, "", "fixture queue query failed")
             return self.rows(args, self.live.values())
         if args[0] == "sacct" and cpu_guard:
+            if self.accounting_disabled:
+                return subprocess.CompletedProcess(args, 1, "", "Slurm accounting storage is disabled\n")
             if "--name" in args:
                 names = set(args[args.index("--name") + 1].split(","))
                 return self.rows(args, (row for row in self.accounting.values() if row.name in names))
@@ -121,7 +124,7 @@ def test_pending_and_running_sum_to_60_excluding_other_sessions(cluster, tmp_pat
     assert all(not any(arg.startswith("--nodelist") for arg in args) for args in fake.submits)
 
 
-def test_init_shares_limit_and_retains_same_trial_identity_after_restart(cluster, tmp_path):
+def test_init_shares_limit_and_only_repeats_a_finished_trial(cluster, tmp_path):
     fake, settings = cluster
     first = submit(settings(), tmp_path, "full", 60)
     assert "60 reserved + 1 requested" in trial(settings(), tmp_path)["message"]
@@ -131,7 +134,39 @@ def test_init_shares_limit_and_retains_same_trial_identity_after_restart(cluster
     restarted = trial(settings(), tmp_path)
     assert restarted["job_id"] == allowed["job_id"]
     assert "1 reserved + 60 requested" in submit(settings(), tmp_path, "another", 60)["error"]
+    changed = settings()
+    changed.hpc.slurm.sbatch_args.append("--qos=trial-fixture")
+    assert "used different submission settings" in trial(changed, tmp_path)["message"]
     assert len(fake.submits) == 2
+    fake.finish(allowed["job_id"])
+    fresh = trial(changed, tmp_path)
+    assert fresh["job_id"] != allowed["job_id"]
+    assert "--qos=trial-fixture" in fake.submits[-1]
+    assert trial(changed, tmp_path)["job_id"] == fresh["job_id"]
+    assert len(fake.submits) == 3
+
+
+def test_init_recovers_a_finished_trial_after_lost_acceptance_before_submitting_again(cluster, tmp_path):
+    fake, settings = cluster
+    fake.lose_response = True
+    assert "acceptance is unconfirmed" in trial(settings(), tmp_path)["message"]
+    fake.lose_response = False
+    fake.finish("1001")
+    recovered = trial(settings(), tmp_path)
+    assert recovered["outcome"] == "tracked"
+    assert recovered["job_id"] == "1001"
+    assert len(fake.submits) == 1
+    assert trial(settings(), tmp_path)["job_id"] == "1002"
+
+
+def test_accounting_disabled_blocks_first_submit_before_creating_a_reservation(cluster, tmp_path):
+    fake, settings = cluster
+    fake.accounting_disabled = True
+    assert "requires Slurm accounting" in submit(settings(), tmp_path, "first", 60)["error"]
+    assert fake.calls == ["sacct"]
+    fake.accounting_disabled = False
+    assert submit(settings(), tmp_path, "first", 60)["submitted"]
+    assert len(fake.submits) == 1
 
 
 def test_parallel_calls_reserve_before_sbatch_returns(cluster, tmp_path):
@@ -333,7 +368,7 @@ def test_environment_refusal_never_starts_sbatch_and_allows_same_key_when_fixed(
     def run(args, *, env, **kwargs):
         invoked.append(args)
         assert env["SLURM_TIME_FORMAT"] == "%s"
-        return subprocess.CompletedProcess(args, 0, "1001\n", "")
+        return subprocess.CompletedProcess(args, 0, "1001\n" if args[0] == "sbatch" else "", "")
 
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setenv("SBATCH_ARRAY_INX", "1-10")
@@ -343,4 +378,4 @@ def test_environment_refusal_never_starts_sbatch_and_allows_same_key_when_fixed(
     assert not invoked
     monkeypatch.delenv("SBATCH_ARRAY_INX")
     assert scheduler.submit(str(tmp_path / "run.sh"), "fixture", 60, cpu_submission=submission) == "1001"
-    assert len(invoked) == 1
+    assert [args[0] for args in invoked] == ["sacct", "sbatch"]
