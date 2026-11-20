@@ -24,3 +24,7 @@ rows:
     at: '2026-11-21 03:31'
     summary: Slurm 상태 조회 시간이 끝나면 새 잡의 미제출 상태를 알립니다.
     text: CPU 원장의 sacct·squeue timeout을 init과 runner에 제출 실패로 전달한다.
+  - sha: 'd0faae6'
+    at: '2026-11-21 03:42'
+    summary: staff CLI가 Slurm CPU 원장의 처리 시간까지 기다립니다.
+    text: MCP 안팎의 제한 시간에 큐·accounting 조회와 SQLite 잠금 대기를 함께 반영한다.
