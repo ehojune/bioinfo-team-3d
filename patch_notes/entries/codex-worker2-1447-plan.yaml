@@ -32,3 +32,7 @@ rows:
   at: 2026-11-21 05:57
   text: 논문 스킬 준비와 예산 예약 뒤 첫 gateway dispatch 경계까지 CP1의 runner 배정을 대조한다.
   summary: 준비를 기다리는 동안 담당 runner가 바뀌면 연구 단계를 보내기 전에 새 승인을 받습니다.
+- sha: '4a751e6'
+  at: 2026-11-21 06:04
+  text: 실행 기록이 있는 재개·이어 가기에서도 dispatch 직전에 runner를 확인하고 변경 시 연구 중단으로 넘긴다.
+  summary: 재개 중 담당 runner가 바뀌면 이미 얻은 결과를 보존하고 새 계획을 요청합니다.
