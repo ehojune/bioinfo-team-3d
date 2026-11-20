@@ -667,10 +667,11 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
     return out
 
 
-# Output declarations are offered only when switched on. Step placement fields belong to
-# the stored approval contract while the planner still uses request-wide execution.
+# Output declarations and the placement opt-in are offered only when available.
+# Runner IDs are resolved by the server before the plan is approved.
+_PLAN_MODEL_SCHEMA = ResearchPlan.model_json_schema()
 RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(
-    ResearchPlan.model_json_schema(),
+    _PLAN_MODEL_SCHEMA,
     "ResearchStep", ("output_types", "model_tier", "runner_id"),
     ("OutputTypeEntry", "PackApplicabilityRecord"),
 )
@@ -697,12 +698,20 @@ RESEARCH_STEP_SCHEMA["properties"]["blocking_decision"] = {
     "description": "When blocked or a plan stop condition is met: the reason, question and choices."}
 
 
-def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = None) -> dict[str, Any]:
-    """RESEARCH_PLAN_SCHEMA, or with ``declare`` a copy whose steps take optional ``output_types`` entries."""
-    if not declare:
+def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = None, *,
+                         offer_step_placement: bool = False) -> dict[str, Any]:
+    """Offer optional output declarations and placement without exposing system-assigned runner IDs."""
+    if not declare and not offer_step_placement:
         return RESEARCH_PLAN_SCHEMA
     out = json.loads(json.dumps(RESEARCH_PLAN_SCHEMA))
-    out["$defs"]["ResearchStep"]["properties"]["output_types"] = json.loads(json.dumps(entry_schema))
+    if declare:
+        out["$defs"]["ResearchStep"]["properties"]["output_types"] = json.loads(json.dumps(entry_schema))
+    if offer_step_placement:
+        out["properties"]["step_execution_version"] = {
+            **_PLAN_MODEL_SCHEMA["properties"]["step_execution_version"],
+            "description": "Use 1 to bind each step to its worker's runner at plan approval. "
+                           "All steps still follow the request's execution location.",
+        }
     return out
 
 

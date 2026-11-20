@@ -8171,7 +8171,9 @@ class Orchestrator:
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         prompt += self._lookup_usage_line(rid)
                         prompt += continuation_note
-                        schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
+                        schema = research_plan_schema(
+                            vocab is not None, output_types.ENTRY_SCHEMA,
+                            offer_step_placement=step_execution.can_offer(req.get("execution_location"), roster))
                     else:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()

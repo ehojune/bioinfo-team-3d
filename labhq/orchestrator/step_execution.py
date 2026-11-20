@@ -3,12 +3,23 @@
 from ..research.contract import plan_sha256
 
 
+def can_offer(choice, roster):
+    """Offer the opt-in after an explicit execution choice with a worker on that route."""
+    return bool(choice and choice.get("approval_id") and any(
+        worker.get("runner_id") and (choice["mode"] == "local" or worker["runner_id"] == choice["runner_id"])
+        for worker in roster
+    ))
+
+
 def bind_draft(plan, choice, agents):
     """Resolve omitted placement fields before CP1. Preserve explicit declarations for validation."""
     if plan.get("step_execution_version") is None or not choice or not isinstance(plan.get("steps"), list):
         return plan
     return {**plan, "steps": [
-        {"execution": choice["mode"], "runner_id": agents.get(step.get("agent_id"), {}).get("runner_id"), **step}
+        {**step,
+         "execution": choice["mode"] if step.get("execution") is None else step["execution"],
+         "runner_id": (agents.get(step["agent_id"], {}).get("runner_id")
+                       if step.get("runner_id") is None else step["runner_id"])}
         if isinstance(step, dict) and isinstance(step.get("agent_id"), str) else step
         for step in plan["steps"]
     ]}

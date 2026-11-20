@@ -67,6 +67,7 @@ def test_runner_declarations_require_a_supported_contract(version):
 async def test_cp1_shows_and_hashes_resolved_step_placement():
     plan = valid_plan()
     plan["step_execution_version"] = 1
+    plan["steps"][0]["execution"] = None
     settings = Settings()
     settings.research.enabled = True
     settings.orchestrator.chief_of_staff_agent = None
@@ -74,10 +75,15 @@ async def test_cp1_shows_and_hashes_resolved_step_placement():
 
     async def dispatch(task):
         assert task.meta["kind"] == "plan"
+        schema = task.output_schema
+        assert "step_execution_version" in schema["properties"]
+        assert "step_execution_version" not in schema["required"]
+        assert "runner_id" not in schema["$defs"]["ResearchStep"]["properties"]
         return result(task, structured=plan)
 
     hub = MiniHub(settings, dispatch, mode="plan_only", work_kind="research", text="compare conditions")
     hub.agents["worker"]["runner_id"] = "mock-runner"
+    hub.requests["r"]["execution_location"] = {"mode": "local", "source": "PI selection", "approval_id": "mock-route-choice"}
     await Orchestrator(hub).run_request("r")
     row = hub.requests["r"]
     assert row["outcome"] == "plan_approved", row.get("report")
