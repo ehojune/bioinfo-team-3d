@@ -4,6 +4,7 @@ import re
 from pathlib import PurePosixPath
 
 from ..util import output_relpath
+from . import step_execution
 
 QUESTION = "이 요청을 HPC에서 처음부터 끝까지 할까요, 이 PC에서 할까요?"
 OPTIONS = [
@@ -76,7 +77,13 @@ def input_errors(metadata, choice, approved_input=None):
     return []
 
 
-def plan_errors(steps, choice, agents):
+def plan_errors(steps, choice, agents, *, version=None):
+    if version is not None:
+        if type(version) is not int or version != 1:
+            return ["unsupported step_execution_version"]
+        errors = step_execution.placement_errors(steps, choice, agents)
+        if errors:
+            return errors
     if not choice:
         return []  # historical plans keep their frozen hash and execution contract
     errors = []
@@ -111,6 +118,14 @@ def plan_errors(steps, choice, agents):
                     errors.append(f"{step.get('id')}: step workspace output collision: {path}")
                 outputs.append(parts)
     return errors
+
+
+def validate_versioned_plan(plan, choice, agents):
+    version = plan.get("step_execution_version")
+    if version is not None:
+        problems = plan_errors(plan.get("steps"), choice, agents, version=version)
+        if problems:
+            raise ValueError("; ".join(problems))
 
 
 def record_line(choice):

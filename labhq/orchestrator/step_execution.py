@@ -1,0 +1,62 @@
+"""Bind versioned research steps to the existing request-wide execution route."""
+
+from ..research.contract import plan_sha256
+
+
+def bind_draft(plan, choice, agents):
+    """Resolve omitted placement fields before CP1. Preserve explicit declarations for validation."""
+    if plan.get("step_execution_version") is None or not choice or not isinstance(plan.get("steps"), list):
+        return plan
+    return {**plan, "steps": [
+        {"execution": choice["mode"], "runner_id": agents.get(step.get("agent_id"), {}).get("runner_id"), **step}
+        if isinstance(step, dict) and isinstance(step.get("agent_id"), str) else step
+        for step in plan["steps"]
+    ]}
+
+
+def placement_errors(steps, choice, agents):
+    """A versioned plan must use the request's mode and each worker's current runner."""
+    if not choice:
+        return ["versioned step execution requires a request execution location"]
+    if not isinstance(steps, list):
+        return ["execution plan steps must be a list"]
+    errors = []
+    for step in steps:
+        if not isinstance(step, dict):
+            errors.append("execution plan step must be an object")
+            continue
+        sid, runner, agent = step.get("id"), step.get("runner_id"), step.get("agent_id")
+        if step.get("execution") != choice["mode"]:
+            errors.append(f"{sid}: execution must be {choice['mode']}; mixed plans are refused")
+        if not isinstance(runner, str) or not runner.strip():
+            errors.append(f"{sid}: versioned step execution requires runner_id")
+        elif not isinstance(agent, str) or agents.get(agent, {}).get("runner_id") != runner:
+            errors.append(f"{sid}: runner_id differs from the assigned worker's runner")
+    return errors
+
+
+def require_approved_placement(plan, steps, contract):
+    if plan.get("step_execution_version") is None:
+        return
+    approval = contract.get("approval") or {}
+    if (steps != plan.get("steps") or approval.get("approved") is not True
+            or approval.get("target_sha256") != contract.get("plan_sha256")
+            or approval.get("target_sha256") != plan_sha256(plan)):
+        raise ValueError("step execution differs from the approved CP1 plan; renewed approval required")
+
+
+def runner_pin(plan, step, environment_pin):
+    if plan.get("step_execution_version") is None:
+        return environment_pin
+    runner = step["runner_id"]
+    if environment_pin and environment_pin != runner:
+        raise ValueError(f"{step['id']}: environment runner differs from the approved step runner")
+    return runner
+
+
+def card_detail(plan):
+    if plan.get("step_execution_version") is None:
+        return {}
+    return {"단계 실행 위치 · runner": "\n".join(
+        f"{step['id']} · {step['execution']} · {step['runner_id']}" for step in plan["steps"]
+    )}

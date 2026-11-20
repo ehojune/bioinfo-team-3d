@@ -78,6 +78,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import INPUT_STEP_ID, clip, extract_json, input_relpath, output_relpath, short
 from . import execution as execution_policy
+from . import step_execution
 from .. import vocab as output_vocab
 from ..recruit import paper2agent, paper_skills, planning as recruit_planning
 from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
@@ -5275,7 +5276,7 @@ class Orchestrator:
             used += len(line) + 1
         return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan),
                 # The same frozen-plan fields the CP1 card carries, so the web renders the whole plan (#654 review).
-                "detail": {"plan_canonical": canonical_plan_json(plan),
+                "detail": {"plan_canonical": canonical_plan_json(plan), **step_execution.card_detail(plan),
                            "pack_applicability": plan.get("pack_applicability") or {},
                            "warnings": plan.get("warnings") or [],
                            "protocol_revision": plan["protocol"].get("revision"), "packs": plan["protocol"].get("packs"),
@@ -5666,10 +5667,12 @@ class Orchestrator:
         problems = execution_policy.input_errors(
             {**reference_meta(request_row), "project_dirs": request_row.get("project_dirs")}, choice,
             request_row.get("hpc_input_approval"))
-        problems += execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid))
+        plan = request_row.get('plan') or {}
+        problems += execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid),
+                                                 version=plan.get('step_execution_version'))
         if problems:
             raise ValueError("; ".join(problems))
-        plan = (self.hub.requests.get(rid) or {}).get('plan') or {}
+        step_execution.require_approved_placement(plan, steps, request_row.get('research_contract') or {})
         rows = [row for step in steps if (only is None or step['id'] in only)
                 and (only is not None or not (results.get(step['id']) and results[step['id']].ok))
                 for row in paper_skills.attachments(plan, step['id'], step['agent_id'], rid)]
@@ -5909,7 +5912,7 @@ class Orchestrator:
                              if d in results and results[d].ok and results[d].workdir and results[d].outputs]
             upstream_steps = {d: results[d].workdir for d in linked
                               if d in results and results[d].ok and results[d].workdir and results[d].outputs}
-            pin = environment_runner_pin(step)
+            pin = step_execution.runner_pin((req_state or {}).get("plan") or {}, step, environment_runner_pin(step))
             if pin and (session_id or workdir):
                 origin = self._session_origin(rid, step["agent_id"], session_id)
                 if origin != pin:
@@ -7622,6 +7625,7 @@ class Orchestrator:
                                  f"새 요청 {new_rid}에서 계획을 다시 세우고 새 CP1을 받습니다."
                                  + (f"\nPI 메모: {note}" if note.strip() else ""), {}, ok=True))
 
+                execution_policy.validate_versioned_plan(plan, req.get("execution_location"), hub_agents(self.hub, rid))
                 stored = req.get("research_contract") or {}
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
@@ -7779,7 +7783,7 @@ class Orchestrator:
                             kind="research_plan", request_id=rid,
                             summary=f"{card[:698 - len(budget_line)]} {budget_line}",
                             detail={"gate": "research_plan", "target_sha256": plan_hash,
-                                    "plan_canonical": canonical_plan_json(plan),
+                                    "plan_canonical": canonical_plan_json(plan), **step_execution.card_detail(plan),
                                     "pack_applicability": plan.get("pack_applicability") or {},
                                     "warnings": plan.get("warnings") or [],
                                     **({"plan_warnings": req.get("plan_warnings") or [],
@@ -8274,7 +8278,9 @@ class Orchestrator:
                             problems = [str(error)]
                         problems.extend(recruit_planning.proposal_errors(candidate))
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
-                        problems += execution_policy.plan_errors(drafted, req.get("execution_location"), hub_agents(self.hub, rid))
+                        problems += execution_policy.plan_errors(
+                            drafted, req.get("execution_location"), hub_agents(self.hub, rid),
+                            version=candidate.get("step_execution_version") if isinstance(candidate, dict) else None)
                         bad_agents = unavailable_plan_agents(drafted, known, orchestration)
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
@@ -8376,6 +8382,7 @@ class Orchestrator:
                                 "This trace is not evidence of scientific performance gain.")
                         plan = {**plan, 'warnings': list(dict.fromkeys([*current_warnings, *fit_warnings]))}
                         req['plan_warnings'] = list(dict.fromkeys([*req['plan_warnings'], *plan['warnings']]))
+                        plan = step_execution.bind_draft(plan, req.get("execution_location"), hub_agents(self.hub, rid))
                         problems = selection_problems + output_problems + plan_problems(plan, candidate_packs)
                         problems.extend(fit_warnings)
                         if not problems:
