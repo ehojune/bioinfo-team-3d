@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:43 | [`df436e4`](https://github.com/ehojune/bioinfo-team-3d/commit/df436e4) | **HPC 산출을 PC로 넘길 때 쓸 파일별 수신 검증을 준비했습니다.**<br>향후 PC 전달에 쓸 검증에서 원격 목록에 없는 산출을 거절하도록 준비한다. 매뉴얼에는 현재 저장하는 수신 기록만 설명한다. |
+| 06:35 | [`d50818c`](https://github.com/ehojune/bioinfo-team-3d/commit/d50818c) | **HPC 단계가 끝나면 PC에서 받은 파일과 생략 사유를 작업 기록에 남깁니다.**<br>HPC 단계의 PC 수신 기록을 저장하고 단계 간 전달에 쓸 검사를 준비한다. |
 | 06:10 | [`4614883`](https://github.com/ehojune/bioinfo-team-3d/commit/4614883) | **결과를 다듬기 전에 담당 runner가 바뀌면 원래 산출물을 남기고 새 계획을 요청합니다.**<br>결과 교정과 증거 칸 보완 전에도 CP1 배정을 확인하고 변경 시 원래 산출 기록을 보존한다. |
 | 06:04 | [`4a751e6`](https://github.com/ehojune/bioinfo-team-3d/commit/4a751e6) | **재개 중 담당 runner가 바뀌면 이미 얻은 결과를 보존하고 새 계획을 요청합니다.**<br>실행 기록이 있는 재개·이어 가기에서도 dispatch 직전에 runner를 확인하고 변경 시 연구 중단으로 넘긴다. |
 | 05:57 | [`4431f3e`](https://github.com/ehojune/bioinfo-team-3d/commit/4431f3e) | **준비를 기다리는 동안 담당 runner가 바뀌면 연구 단계를 보내기 전에 새 승인을 받습니다.**<br>논문 스킬 준비와 예산 예약 뒤 첫 gateway dispatch 경계까지 CP1의 runner 배정을 대조한다. |
