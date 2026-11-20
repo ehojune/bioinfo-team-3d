@@ -14,9 +14,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:10 | [`4614883`](https://github.com/ehojune/bioinfo-team-3d/commit/4614883) | **결과를 다듬기 전에 담당 runner가 바뀌면 원래 산출물을 남기고 새 계획을 요청합니다.**<br>결과 교정과 증거 칸 보완 전에도 CP1 배정을 확인하고 변경 시 원래 산출 기록을 보존한다. |
+| 06:04 | [`4a751e6`](https://github.com/ehojune/bioinfo-team-3d/commit/4a751e6) | **재개 중 담당 runner가 바뀌면 이미 얻은 결과를 보존하고 새 계획을 요청합니다.**<br>실행 기록이 있는 재개·이어 가기에서도 dispatch 직전에 runner를 확인하고 변경 시 연구 중단으로 넘긴다. |
+| 05:57 | [`4431f3e`](https://github.com/ehojune/bioinfo-team-3d/commit/4431f3e) | **준비를 기다리는 동안 담당 runner가 바뀌면 연구 단계를 보내기 전에 새 승인을 받습니다.**<br>논문 스킬 준비와 예산 예약 뒤 첫 gateway dispatch 경계까지 CP1의 runner 배정을 대조한다. |
+| 05:48 | [`d952f7d`](https://github.com/ehojune/bioinfo-team-3d/commit/d952f7d) | **연구를 시작하기 직전에 담당 runner가 바뀌어도 새 승인을 받습니다.**<br>blind draft를 포함한 준비가 끝난 뒤 첫 단계 실행 직전에 runner 배정을 다시 확인한다. |
+| 05:42 | [`d232d81`](https://github.com/ehojune/bioinfo-team-3d/commit/d232d81) | **실행 전 담당 runner가 바뀌면 새 승인 카드에서 배정을 다시 확인합니다.**<br>환경 단계 복제 뒤 runner를 확정하고 실행 전 배정 변경을 새 CP1에 반영한다. |
+| 05:36 | [`e162996`](https://github.com/ehojune/bioinfo-team-3d/commit/e162996) | **연구 계획을 승인할 때 단계별로 무엇을 확인하고 언제 다시 승인하는지 매뉴얼에서 볼 수 있습니다.**<br>한영 매뉴얼에 버전 1 적용 조건, CP1의 단계별 runner 확인과 배정 변경 시 재승인 절차를 적는다. |
+| 05:31 | [`9fce908`](https://github.com/ehojune/bioinfo-team-3d/commit/9fce908) | **채용한 직원이 실제로 사용할 runner를 연구 계획 승인에 담습니다.**<br>채용으로 담당 직원이 바뀌면 CP1 승인 전에 최종 runner를 다시 고정한다. |
+| 05:23 | [`d280192`](https://github.com/ehojune/bioinfo-team-3d/commit/d280192) | **연구 계획을 만들 때 단계의 실행 위치를 승인 내용에 넣을 수 있습니다.**<br>PI가 실행 위치를 고른 연구 요청에서 버전 1을 선택하면 CP1 전에 서버가 runner를 채운다. |
+| 05:16 | [`918984b`](https://github.com/ehojune/bioinfo-team-3d/commit/918984b) | **계획을 만드는 기존 경로와 새 승인 계약을 함께 검사합니다.**<br>기본 계획 스키마의 해시를 보존하고 단계별 실행 계약 테스트를 Windows CI에 등록한다. |
 | 04:23 | [`7012b4c`](https://github.com/ehojune/bioinfo-team-3d/pull/1470/commits/7012b4c) | **gateway의 첫 응답 확인도 60초 대기에 포함합니다.**<br>이미 떠 있는 gateway의 인증 요청이나 상태 요청이 지연돼도 대기 시간을 새로 시작하지 않습니다. |
 | 04:22 | [`09e3f2b`](https://github.com/ehojune/bioinfo-team-3d/commit/09e3f2b) | **한영 매뉴얼에 자동 승인 목록을 여는 방법을 추가했습니다.**<br>요청별 승인 기록 조회와 SQLite 재개방 검증을 Windows CI에 포함했습니다. |
 | 04:15 | [`d3b59fe`](https://github.com/ehojune/bioinfo-team-3d/pull/1470/commits/d3b59fe) | **PC를 다시 켠 뒤 labhq가 늦게 뜰 때 확인할 곳을 한영 매뉴얼에 적었습니다.**<br>Gateway 응답 대기 시간과 로그 위치, 같은 설정으로 다시 실행하는 방법을 안내합니다. |
+| 04:15 | [`38c2266`](https://github.com/ehojune/bioinfo-team-3d/commit/38c2266) | **승인한 연구 계획에 단계가 실행될 위치와 담당 runner가 함께 기록됩니다.**<br>버전 1 연구 계획의 단계별 실행 위치와 runner를 CP1 해시에 넣고 재개와 실행 전에 대조한다. |
 | 04:13 | [`672639f`](https://github.com/ehojune/bioinfo-team-3d/commit/672639f) | **자동 승인 건수를 펼치면 해당 요청의 명령, 직원, 단계, 부류가 나옵니다.**<br>작업판과 결정 탭의 검토 카드에서 목록을 펼칠 때 확정된 자동 승인 기록을 읽습니다. |
 | 04:11 | [`9441756`](https://github.com/ehojune/bioinfo-team-3d/pull/1470/commits/9441756) | **labhq를 켜면 gateway가 응답할 때까지 최대 60초 기다립니다.**<br>인증된 응답을 확인한 뒤 runner를 시작하고, 시간 초과 시 gateway.log와 재시도 명령을 표시합니다. |
 | 03:49 | [`9a0eb8f`](https://github.com/ehojune/bioinfo-team-3d/commit/9a0eb8f) | **Slurm 제출을 재사용할 때 업로드한 입력 내용도 비교합니다.**<br>검증된 SHA-256을 제출 식별에 넣고 기존 원장 행이 있어도 새 제출 전 accounting을 확인한다. |
