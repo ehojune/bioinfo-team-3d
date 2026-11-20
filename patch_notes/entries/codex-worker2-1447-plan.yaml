@@ -28,3 +28,7 @@ rows:
   at: 2026-11-21 05:48
   text: blind draft를 포함한 준비가 끝난 뒤 첫 단계 실행 직전에 runner 배정을 다시 확인한다.
   summary: 연구를 시작하기 직전에 담당 runner가 바뀌어도 새 승인을 받습니다.
+- sha: '4431f3e'
+  at: 2026-11-21 05:57
+  text: 논문 스킬 준비와 예산 예약 뒤 첫 gateway dispatch 경계까지 CP1의 runner 배정을 대조한다.
+  summary: 준비를 기다리는 동안 담당 runner가 바뀌면 연구 단계를 보내기 전에 새 승인을 받습니다.
