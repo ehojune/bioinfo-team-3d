@@ -161,6 +161,7 @@
     "tests/test_hpc_batch_poll_1295.py",
     "tests/test_hpc_broker_routes_1307.py",
     "tests/test_hpc_consult.py",
+    "tests/test_hpc_cpu_ledger_1466.py",
     "tests/test_hpc_failures.py",
     "tests/test_hpc_followups.py",
     "tests/test_hpc_job_script_lf_1331.py",
@@ -440,6 +441,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_hpc_cpu_ledger_1466.py": "Windows SQLite admission transactions, restart recovery and scheduler command boundaries; Slurm is faked.",
     "tests/test_annotation_outputs_1446.py": "Annotation artifact capture, native links, UTF-8 hashes and bounded ancestor-input staging; synthetic records only.",
     "tests/test_annot_pubmed_1446.py": "PubMed page files, UTF-8 hashes, shared lookup admission/deadlines and real Windows ancestor-input staging; synthetic records only.",
     "tests/test_access_deny_1413.py": "Windows Codex ancestor-input refusal and non-blocked protection paths; mock adapters only.",

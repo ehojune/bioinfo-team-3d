@@ -42,6 +42,9 @@ curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "http://127.0.0.1:87
   (기본 `--nodes=1 --ntasks=1 --cpus-per-task={cores} --mem={mem} --time={walltime} --export=NONE`), partition은 `default_queue`나 제출 때의 queue입니다.
   `--account`·`--qos`가 필요하면 `sbatch_args`에 더합니다. 다른 placeholder, 옵션이 아닌 값, 다른 cluster로 보내는 `-M`/`--cluster`/`--clusters`는 설정을 읽을 때 거부합니다.
   직원 스크립트의 `#SBATCH`도 같은 판정으로 제출 전에 거부하고, 그래도 다른 cluster로 갔으면(`SBATCH_CLUSTERS` 등) 그 잡을 추적하지 않고 cluster와 id를 오류로 알립니다.
+  **Slurm 동시 CPU 상한** (#1466). 로컬 사이트 프로필의 `max_concurrent_cpus`에 양의 정수(예: `60`)를 적습니다. 비워 두면 이 상한을 적용하지 않습니다. Slurm이 노드를 고르게 하려면 `pinned_nodes: []`를 씁니다.
+  runner와 init 시험 잡은 같은 runner 상태 DB와 사이트 이름을 기준으로 실행·대기 잡과 접수 미확정 예약을 합산합니다. 새 요청을 더해 상한을 넘으면 제출을 거부합니다. 같은 계정의 다른 세션 잡은 집계에서 빠집니다. 접수 여부가 불확실하면 예약을 유지하고 재시작 뒤에도 같은 작업을 재전송하지 않습니다.
+  상한을 켜려면 `submit_prefix` 없이 표준 1노드·1태스크 옵션을 사용하고, 스케줄러 지시문이 없는 Bash 스크립트를 제출합니다. 첫 현장 제출 직전에 제출 기록을 실제 실행·대기 목록과 맞춰 보고, Slurm이 할당한 CPU가 요청량을 넘지 않는지 확인합니다.
   `hpc_status`·`hpc_cancel`은 숫자로 시작하는 job id만 받습니다. 옵션, Torque `qdel all`, SGE 잡 이름처럼 여러 잡을 고르는 값은 스케줄러에 넘기지 않습니다.
   `hpc_submit`의 승인 판단과 제출 명령은 러너가 직접 합니다. `hpc_cancel`은 러너가 제출해 받은 id 가운데 그 직원의 같은 task·요청 잡과 그 배열 task만 취소합니다. 직원이 알려 온 id는 근거가 되지 않습니다. 공유 data-account의 다른 잡은 PI가 직접 취소합니다.
   `job_group` 제출은 외부 parent traversal을 먼저 확인한 뒤 `jobs`·`logs`·`hpc_out`을 만듭니다.
