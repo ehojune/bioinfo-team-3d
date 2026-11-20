@@ -1,5 +1,9 @@
 pr: null
 rows:
+- sha: '094a4ef'
+  at: 2026-11-21 07:25
+  summary: 혼합 실행 중에도 승인된 작업 폴더 정리와 PC 단계의 부분 결과 저장을 이어갑니다.
+  text: 혼합 단계의 facilities_fix를 허용하고 PC wrap_up에 동일한 HPC 수신 증명 검사를 적용한다.
 - sha: 'b47dcbe'
   at: 2026-11-21 07:16
   summary: 연구 계획에서 무거운 단계는 HPC로 보내고 그 결과를 이 PC의 다음 단계로 넘길 수 있습니다.
