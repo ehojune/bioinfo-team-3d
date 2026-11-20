@@ -48,6 +48,8 @@ _BUNDLE_WAIT_SECONDS = 60.0
 _BUNDLE_POLL_SECONDS = 3.0
 # How long `up` waits for a new supervisor to pin its ancestors and record the role it started (#589).
 _CHILD_RECORD_WAIT_SECONDS = 20.0
+_GATEWAY_READY_SECONDS = 60.0
+_HEALTH_PROBE_SECONDS = 5.0
 
 
 def _instance_config(name: str) -> str:
@@ -282,13 +284,14 @@ def _request_deadline_line(s, rid: str, state: dict | None = None) -> str | None
     return "시간 상한: " + request_deadline_text(detail, time.time())
 
 
-def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, headers: dict | None = None, **kw):
+def _api(s: Settings, method: str, path: str, *, raw_errors: bool = False, headers: dict | None = None,
+         timeout: float = 30, **kw):
     import httpx
 
     try:
         r = httpx.request(method, _http_base(s) + path,
                           headers={"Authorization": f"Bearer {s.gateway.client_token}", **(headers or {})},
-                          timeout=30, **kw)
+                          timeout=timeout, **kw)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPError as exc:
@@ -534,11 +537,11 @@ def _config_command(s: Settings, command: str) -> str:
     return f'{launcher} -c "{s.config_path}" {command}' if s.config_path else f"{launcher} {command}"
 
 
-def _authenticated_requests(s: Settings, *, limit: int) -> list[dict] | None:
+def _authenticated_requests(s: Settings, *, limit: int, timeout: float = 30) -> list[dict] | None:
     import httpx
 
     try:
-        value = _api(s, "GET", f"/api/requests?status=running&limit={limit}", raw_errors=True)
+        value = _api(s, "GET", f"/api/requests?status=running&limit={limit}", raw_errors=True, timeout=timeout)
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 401:
             print("client_token이 이 gateway와 다릅니다.", file=sys.stderr)
@@ -567,13 +570,22 @@ def _request_cost_totals_overview(totals: dict) -> str:
     return text
 
 
-def _health(s: Settings) -> dict | None:
+def _health(s: Settings, *, deadline: float | None = None) -> dict | None:
     import httpx
 
-    if _authenticated_requests(s, limit=1) is None:
+    def probe_timeout() -> float:
+        if deadline is None:
+            return 30
+        return min(_HEALTH_PROBE_SECONDS, deadline - time.monotonic())
+
+    timeout = probe_timeout()
+    if timeout <= 0 or _authenticated_requests(s, limit=1, timeout=timeout) is None:
+        return None
+    timeout = probe_timeout()
+    if timeout <= 0:
         return None
     try:
-        value = _api(s, "GET", "/api/health", raw_errors=True)
+        value = _api(s, "GET", "/api/health", raw_errors=True, timeout=timeout)
     except (httpx.HTTPError, ValueError):
         return None
     return value if isinstance(value, dict) and value.get("service") == "labhq gateway" else None
@@ -581,11 +593,16 @@ def _health(s: Settings) -> dict | None:
 
 def _wait_for_health(s: Settings, *, runner: bool, timeout: float = 20) -> dict | None:
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        health = _health(s)
+    remaining = timeout
+    while remaining > 0:
+        health = _health(s, deadline=deadline)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         if health and (not runner or s.runner.id in (health.get("runners") or [])):
             return health
-        time.sleep(0.2)
+        time.sleep(min(0.2, remaining))
+        remaining = deadline - time.monotonic()
     return None
 
 
@@ -1066,24 +1083,14 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
         state, _record, reason = _process_record(s, "gateway")
         if state == "unknown":
             _record_problem("gateway", reason)
-        if state == "alive":
-            health = _wait_for_health(s, runner=False, timeout=30)
-            if health is None:
-                print(f"gateway 프로세스는 살아 있으나 인증된 상태를 확인할 수 없음 — 로그: "
-                      f"{_launch_state(s) / 'logs' / 'gateway.log'}", file=sys.stderr)
-                raise SystemExit(2)
-        elif _supervised(s, "gateway"):
-            # Its supervisor is restarting it (settings: supervisor.restart); a second supervisor would race it.
-            health = _wait_for_health(s, runner=False, timeout=30)
-            if health is None:
-                print(f"gateway 감독 프로세스는 살아 있으나 gateway가 응답하지 않음 — 로그: "
-                      f"{_launch_state(s) / 'logs' / 'gateway.log'}", file=sys.stderr)
-                raise SystemExit(2)
-        else:
+        # A live supervisor may be between restarts. Wait for that gateway instead of starting another.
+        if state != "alive" and not _supervised(s, "gateway"):
             _start_background(s, "gateway", popen=popen)
-            health = _wait_for_health(s, runner=False)
+        health = _wait_for_health(s, runner=False, timeout=_GATEWAY_READY_SECONDS)
         if health is None:
-            print(f"gateway가 시작되지 않았습니다. 로그: {_launch_state(s) / 'logs' / 'gateway.log'}",
+            print(f"gateway가 {_GATEWAY_READY_SECONDS:g}초 안에 인증된 응답을 보내지 않아 runner를 시작하지 않았습니다. "
+                  f"로그({_launch_state(s) / 'logs' / 'gateway.log'})를 확인한 뒤 "
+                  f"`{_config_command(s, 'up')}`을 다시 실행하세요.",
                   file=sys.stderr)
             raise SystemExit(2)
         # Our own process, the one we just started, or the one this config's supervisor started again: if another
