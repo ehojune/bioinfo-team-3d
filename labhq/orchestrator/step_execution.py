@@ -11,15 +11,15 @@ def can_offer(choice, roster):
     ))
 
 
-def bind_draft(plan, choice, agents):
-    """Resolve omitted placement fields before CP1. Preserve explicit declarations for validation."""
+def bind_draft(plan, choice, agents, *, refresh_runner=False):
+    """Resolve placement before CP1 and refresh the server-owned runner after recruitment."""
     if plan.get("step_execution_version") is None or not choice or not isinstance(plan.get("steps"), list):
         return plan
     return {**plan, "steps": [
         {**step,
          "execution": choice["mode"] if step.get("execution") is None else step["execution"],
          "runner_id": (agents.get(step["agent_id"], {}).get("runner_id")
-                       if step.get("runner_id") is None else step["runner_id"])}
+                       if refresh_runner or step.get("runner_id") is None else step["runner_id"])}
         if isinstance(step, dict) and isinstance(step.get("agent_id"), str) else step
         for step in plan["steps"]
     ]}

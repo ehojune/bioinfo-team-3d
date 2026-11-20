@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from labhq.orchestrator.cso import Orchestrator
+from labhq.recruit import planning as recruit_planning
 from labhq.research import contract, continuation
 from labhq.settings import Settings
 from tests.test_cso import FakeHub, result
@@ -64,7 +65,8 @@ def test_runner_declarations_require_a_supported_contract(version):
         contract.ResearchPlan.model_validate(plan)
 
 
-async def test_cp1_shows_and_hashes_resolved_step_placement():
+@pytest.mark.parametrize("recruit", [False, True], ids=["assigned-worker", "recruited-worker"])
+async def test_cp1_shows_and_hashes_resolved_step_placement(monkeypatch, recruit):
     plan = valid_plan()
     plan["step_execution_version"] = 1
     plan["steps"][0]["execution"] = None
@@ -84,20 +86,30 @@ async def test_cp1_shows_and_hashes_resolved_step_placement():
     hub = MiniHub(settings, dispatch, mode="plan_only", work_kind="research", text="compare conditions")
     hub.agents["worker"]["runner_id"] = "mock-runner"
     hub.requests["r"]["execution_location"] = {"mode": "local", "source": "PI selection", "approval_id": "mock-route-choice"}
+    expected_agent, expected_runner = ("hire", "hire-runner") if recruit else ("worker", "mock-runner")
+    if recruit:
+        async def prepare(plan, request_id, hub, dispatch):
+            [step] = plan["steps"]
+            assert step["agent_id"] == "worker" and step["runner_id"] == "mock-runner"
+            hub.agents["hire"] = {**hub.agents["worker"], "id": "hire", "runner_id": "hire-runner"}
+            return {**plan, "steps": [{**step, "agent_id": "hire"}]}
+
+        monkeypatch.setattr(recruit_planning, "prepare_plan", prepare)
     await Orchestrator(hub).run_request("r")
     row = hub.requests["r"]
     assert row["outcome"] == "plan_approved", row.get("report")
     [card] = [approval for approval in hub.approvals if approval["kind"] == "research_plan"]
-    assert card["detail"]["단계 실행 위치 · runner"] == "s1 · local · mock-runner"
+    assert card["detail"]["단계 실행 위치 · runner"] == f"s1 · local · {expected_runner}"
     frozen = json.loads(card["detail"]["plan_canonical"])
-    assert frozen["steps"][0]["runner_id"] == "mock-runner"
+    assert frozen["steps"][0]["agent_id"] == expected_agent
+    assert frozen["steps"][0]["runner_id"] == expected_runner
     assert frozen["steps"][0]["execution"] == "local"
     assert frozen["step_execution_version"] == 1
     assert card["detail"]["target_sha256"] == contract.plan_sha256(frozen) == row["research_contract"]["plan_sha256"]
 
     # A runner change during the pause cannot reuse either the old CP1 or a resume-card receipt for its hash.
     row["resume_cp1"] = row["research_contract"]["approval"]
-    row["plan"]["steps"][0]["runner_id"] = hub.agents["worker"]["runner_id"] = "replacement-runner"
+    row["plan"]["steps"][0]["runner_id"] = hub.agents[expected_agent]["runner_id"] = "replacement-runner"
     await Orchestrator(hub).run_request("r", resume=True)
     old, new = [approval["detail"] for approval in hub.approvals if approval["kind"] == "research_plan"]
     assert new["target_sha256"] != old["target_sha256"]
