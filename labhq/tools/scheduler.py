@@ -694,7 +694,10 @@ class Scheduler:
     def _cpu_snapshot(self, reservations, legacy):
         """Batch queue and accounting reads on the same local cluster and scheduler account."""
         def read(args):
-            result = self._run(args, cpu_guard=True)
+            try:
+                result = self._run(args, cpu_guard=True)
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(f"{args[0]} CPU admission query timed out; no new job was submitted") from error
             if args[0] == "sacct" and (ACCOUNTING_DISABLED.search(result.stderr or "")
                                       or ACCOUNTING_DISABLED.search(result.stdout or "")):
                 raise RuntimeError("max_concurrent_cpus requires Slurm accounting (sacct); no new job was submitted")

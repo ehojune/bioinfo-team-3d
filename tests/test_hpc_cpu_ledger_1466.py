@@ -28,6 +28,7 @@ class FakeSlurm:
         self.submit_failure = None
         self.queue_failure = False
         self.accounting_disabled = False
+        self.accounting_timeout = False
         self.enter_sbatch = None
         self.continue_sbatch = None
 
@@ -56,6 +57,8 @@ class FakeSlurm:
                 return subprocess.CompletedProcess(args, 1, "", "fixture queue query failed")
             return self.rows(args, self.live.values())
         if args[0] == "sacct" and cpu_guard:
+            if self.accounting_timeout:
+                raise subprocess.TimeoutExpired(args, 1)
             if self.accounting_disabled:
                 return subprocess.CompletedProcess(args, 1, "", "Slurm accounting storage is disabled\n")
             if "--name" in args:
@@ -166,6 +169,18 @@ def test_accounting_disabled_blocks_first_submit_before_creating_a_reservation(c
     assert fake.calls == ["sacct"]
     fake.accounting_disabled = False
     assert submit(settings(), tmp_path, "first", 60)["submitted"]
+    assert len(fake.submits) == 1
+
+
+def test_init_accounting_timeout_reports_no_submission_and_allows_retry(cluster, tmp_path):
+    fake, settings = cluster
+    fake.accounting_timeout = True
+    first = trial(settings(), tmp_path)
+    assert first["outcome"] == "submit_failed"
+    assert "sacct CPU admission query timed out; no new job was submitted" in first["message"]
+    assert fake.calls == ["sacct"]
+    fake.accounting_timeout = False
+    assert trial(settings(), tmp_path)["outcome"] == "tracked"
     assert len(fake.submits) == 1
 
 
