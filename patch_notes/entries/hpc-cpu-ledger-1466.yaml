@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 'b211faa'
+    at: '2026-11-21 02:51'
+    summary: Slurm 잡을 보낼 때 실행과 대기에 쓰는 CPU 합계를 제한합니다.
+    text: 선택형 사이트 상한을 runner와 init 시험 잡에 적용하고 접수 미확정 예약을 SQLite에 남겨 재전송을 막았다.
