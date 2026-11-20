@@ -37,9 +37,11 @@ def _restart(runner, settings, agent, monkeypatch):
     return runner
 
 
-@pytest.mark.parametrize('oversize', [False, True])
-@pytest.mark.parametrize('mixed', [False, True], ids=['receipt-only', 'mixed-dag'])
-async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, monkeypatch, oversize, mixed):
+@pytest.mark.parametrize(('mixed', 'case'), [
+    (False, 'ok'), (False, 'oversize'), (True, 'ok'), (True, 'oversize'), (True, 'wrap_up'),
+], ids=['receipt-only', 'receipt-oversize', 'mixed-dag', 'mixed-oversize', 'mixed-wrap-up'])
+async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, monkeypatch, mixed, case):
+    oversize = case == 'oversize'
     settings = _settings(site.tmp)
     settings.hpc = site.settings.hpc
     settings.policy.approvals.hpc_core_hours_threshold = 1000
@@ -82,7 +84,13 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                 assert (refs / 'note.txt').read_text(encoding='utf-8') == 'local only'
                 assert ctx.task.meta['hpc_ancestor_revisions'] == {'producer': 2}
                 assert ctx.task.meta['execution_location']['mode'] == 'local'
+            if case == 'wrap_up' and ctx.task.meta['kind'] == 'step':
+                return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=False, error='turn limit',
+                                  error_kind='error_max_turns', session_id='consumer-session')
             reads.extend((ctx.workdir / 'inputs/producer' / name).read_bytes() for name in contents)
+            if case == 'wrap_up':
+                assert ctx.task.meta['kind'] == 'wrap_up'
+                (ctx.workdir / 'outputs/PARTIAL_STATUS.md').write_text('saved', encoding='utf-8')
         elif not ctx.task.resume_session_id:
             site.workdir = ctx.workdir
             job = await runner._on_submit_raw({'task_id': ctx.task.id, 'agent_id': agent.id, 'request_id': 'r',
@@ -159,9 +167,14 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
             results = {key: TaskResult.model_validate(row) for key, row in persisted.items()}
             await Orchestrator(hub).run_dag('r', 'PC reference ' + refs.as_posix(), plan['steps'], results,
                                            only={'consumer'})
-            assert results['consumer'].ok is not oversize, results['consumer'].error
+            assert results['consumer'].ok == (case == 'ok'), results['consumer'].error
             assert reads == ([] if oversize else list(contents.values()))
-            assert [task.meta['step_id'] for task in hub.calls] == ['producer', 'producer', 'consumer']
+            expected = ['step', 'step', 'step']
+            if case == 'wrap_up':
+                assert results['consumer'].partial_results
+                assert 'outputs/PARTIAL_STATUS.md' in results['consumer'].outputs
+                expected.append('wrap_up')
+            assert [task.meta['kind'] for task in hub.calls] == expected
             return
         pending = await runner.run_task(Task(agent_id=agent.id, request_id='r', prompt='produce', meta=producer_meta))
         assert pending.ok and len(pending.pending_jobs) == 1
@@ -206,6 +219,29 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
             outcome = await runner.run_task(consumer)
             assert outcome.ok, outcome.error
             assert reads == list(contents.values())
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize('mode', ['hpc', 'local'])
+async def test_mixed_step_accepts_approved_workspace_cache_fix(tmp_path, monkeypatch, mode):
+    settings = _settings(tmp_path)
+    runner = Runner(settings)
+    agent = AgentSpec(id='worker', name='Worker', role='test', engine=Engine.mock)
+    monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
+    cache = runner.ws_root / 'example' / '.cache'
+    cache.mkdir(parents=True)
+    (cache / 'cache-data').write_bytes(b'x')
+    task = Task(agent_id=agent.id, request_id='r', prompt='', meta={
+        'kind': 'facilities_fix', 'step_id': 'step', 'workdir': str(cache.parent),
+        'execution_location': {'scope': 'step', 'mode': mode, 'runner_id': settings.runner.id, 'workspace': 'r'},
+        'facilities_fix': {'fix_id': 'clear_workspace_cache', 'signature_id': 'disk_full',
+                           'action': 'clear fixture cache', 'execution': 'workspace_cache'},
+    })
+    try:
+        outcome = await runner.run_task(task)
+        assert outcome.ok, outcome.error
+        assert outcome.facilities_fix['ok'] and not cache.exists()
     finally:
         runner.store.close()
 

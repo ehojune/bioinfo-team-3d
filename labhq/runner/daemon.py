@@ -2650,7 +2650,8 @@ class Runner:
                 await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
-            artifact_contract = (task.meta.get("kind") in {"step", "result_correction", "slot_repair"} and
+            verified_wrap_up = task.meta.get('kind') == 'wrap_up' and 'hpc_ancestor_revisions' in task.meta
+            artifact_contract = ((verified_wrap_up or task.meta.get("kind") in {"step", "result_correction", "slot_repair"}) and
                                  isinstance(task.meta.get("upstream_artifacts"), dict))
             from .step_handoff import required_hpc_revisions, require_hpc_snapshots
             hpc_revisions = required_hpc_revisions(task, whole_hpc, artifact_contract)
