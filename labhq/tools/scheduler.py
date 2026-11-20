@@ -10,10 +10,13 @@ import getpass
 import os
 import re
 import shlex
+import sqlite3
 import subprocess
 import threading
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 
+from ..hpc_cpu_ledger import CpuLedger, Submission, slurm_rows, terminal_legacy
 from ..settings import HpcSettings, slurm_cluster_option
 
 TERMINAL = {"completed", "failed", "cancelled", "unknown_finished"}
@@ -74,6 +77,19 @@ COMMAND_ENV = re.compile(
     r"|LOCALAPPDATA|PROGRAMDATA|(?:LC|SGE|PBS|SLURM|SBATCH|SQUEUE|SACCT|SCANCEL)_\w+"
 )
 ACCOUNTING_DISABLED = re.compile(r"accounting storage is disabled", re.I)
+_CPU_ENV_PREFIX = re.compile(r"(?:SBATCH|SQUEUE|SACCT|SLURM)_", re.I)
+_CPU_ENV_ALLOWED = {"SLURM_CONF", "SLURM_CONF_SERVER", "SLURM_TIME_FORMAT"}
+_CPU_ENV_REFUSED = "Slurm CPU admission refuses scheduler option variables"
+_CPU_SH_GUARD = (
+    "if env | cut -d= -f1 | grep -viEx 'SLURM_(CONF|CONF_SERVER|TIME_FORMAT)' "
+    "| grep -qiE '^(SBATCH|SQUEUE|SACCT|SLURM)_'; then "
+    f"echo '{_CPU_ENV_REFUSED}' >&2; exit 97; fi; "
+    "export SLURM_TIME_FORMAT=%s; exec \"$@\""
+)
+
+
+class _SlurmNotSent(RuntimeError):
+    """The scheduler command was refused by the environment guard before it could run."""
 
 
 @dataclass
@@ -469,14 +485,22 @@ class Scheduler:
         if self.cfg.scheduler == "none":
             raise RuntimeError(f"{operation} not supported for scheduler=none (HPC disabled)")
 
-    def _run(self, args: list[str], *, guard_slurm_cluster: bool = False) -> subprocess.CompletedProcess:
+    def _run(self, args: list[str], *, guard_slurm_cluster: bool = False,
+             cpu_guard: bool = False) -> subprocess.CompletedProcess:
         self._require_enabled("command execution")
         from ..hpc_session import remaining_s
 
         remaining_s(self.cfg.command_timeout_s)
         session = self.session()
         env = command_env()
-        if guard_slurm_cluster:
+        if cpu_guard:
+            if session is not None or self.cfg.ssh_host:
+                args = ["sh", "-c", _CPU_SH_GUARD, "labhq-slurm-cpu", *args]
+            else:
+                if any(_CPU_ENV_PREFIX.match(key) and key.upper() not in _CPU_ENV_ALLOWED for key in env):
+                    raise _SlurmNotSent(_CPU_ENV_REFUSED)
+                env["SLURM_TIME_FORMAT"] = "%s"
+        elif guard_slurm_cluster:
             if session is None and not self.cfg.ssh_host:
                 if any(key.upper() in {"SBATCH_CLUSTERS", "SLURM_CLUSTERS"} for key in env):
                     raise RuntimeError("Pinned Slurm submission refuses SBATCH_CLUSTERS or SLURM_CLUSTERS")
@@ -545,11 +569,46 @@ class Scheduler:
 
     def submit_args(self, script: str, name: str, cores: int, mem: str, walltime: str,
                     queue: str | None, stdout: str, stderr: str) -> list[str]:
+        return self._submit_args(self._site_profile(), script, name, cores, mem, walltime, queue, stdout, stderr)
+
+    def _site_profile(self):
+        from ..hpc_site import load_profile
+
+        return load_profile(self.cfg.site_profile) if self.cfg.site_profile else None
+
+    def cpu_cap_enabled(self) -> bool:
+        profile = self._site_profile()
+        return profile is not None and profile.max_concurrent_cpus is not None
+
+    @staticmethod
+    def validate_cpu_script(text: str) -> None:
+        if not text.startswith(("#!/bin/bash\n", "#!/usr/bin/env bash\n")) or script_directives(text):
+            raise RuntimeError("Slurm CPU admission requires a Bash script without scheduler directives")
+
+    def _validate_cpu_args(self, profile, cores: int) -> None:
+        from ..settings import _default_sbatch_args
+
+        if self.cfg.scheduler != "slurm" or profile.scheduler not in (None, "slurm") or self.cfg.submit_prefix:
+            raise RuntimeError("max_concurrent_cpus requires direct Slurm submission without submit_prefix")
+        if type(cores) is not int or not 1 <= cores <= profile.max_concurrent_cpus:
+            raise RuntimeError(f"Slurm CPU limit {profile.max_concurrent_cpus}: {cores} requested; no new job was submitted")
+        canonical = _default_sbatch_args()
+        required = canonical[:3]
+        options = self.cfg.slurm.sbatch_args
+        if (any(options.count(arg) != 1 for arg in required)
+                or any(arg not in canonical and not re.fullmatch(r"--(?:account|qos)=[A-Za-z0-9_.-]+", arg)
+                       for arg in options)):
+            raise RuntimeError("Slurm CPU admission requires the default single-node/single-task CPU options; "
+                               "only the standard resource options and --account/--qos are supported")
+
+    def _submit_args(self, profile, script: str, name: str, cores: int, mem: str, walltime: str,
+                     queue: str | None, stdout: str, stderr: str) -> list[str]:
         self._require_enabled("submit")
-        from ..hpc_site import load_profile, pin_submit
+        from ..hpc_site import pin_submit
 
         # A pin also applies on shared filesystems and profiles without a connect command.
-        profile = load_profile(self.cfg.site_profile) if self.cfg.site_profile else None
+        if profile is not None and profile.max_concurrent_cpus is not None:
+            self._validate_cpu_args(profile, cores)
         pinned = profile is not None and bool(profile.queue or profile.pinned_nodes)
         if self.cfg.scheduler == "slurm" and profile is not None and profile.pinned_nodes and self.cfg.submit_prefix:
             raise RuntimeError("Pinned Slurm nodes cannot use submit_prefix: its environment cannot be verified")
@@ -583,16 +642,78 @@ class Scheduler:
         return [*self.cfg.submit_prefix, *pin_submit(profile, self.cfg.scheduler, [*args, script], queue)]
 
     def submit(self, script: str, name: str, cores: int = 1, mem: str = "4G", walltime: str = "04:00:00",
-               queue: str | None = None, stdout: str = "/dev/null", stderr: str = "/dev/null") -> str:
+               queue: str | None = None, stdout: str = "/dev/null", stderr: str = "/dev/null", *,
+               cpu_submission: Submission | None = None) -> str:
         """Run the submit command once. labhq never retries it: a second call could double-submit."""
         if self.cfg.scheduler == "mock":
             return f"mock-{abs(hash((script, name))) % 10**6}"
+        profile = self._site_profile()
+        args = self._submit_args(profile, script, name, cores, mem, walltime, queue, stdout, stderr)
+        if profile is not None and profile.max_concurrent_cpus is not None:
+            if cpu_submission is None or self.cfg._runner_state_path is None:
+                raise RuntimeError("Slurm CPU admission requires a durable runner state and submission identity")
+            return self._submit_with_cpu_cap(profile, args, cpu_submission, cores)
+        if cpu_submission is not None:
+            raise RuntimeError("the Slurm CPU policy changed during submission; no new job was submitted")
+        return self._send_submit(args)
+
+    def _submit_with_cpu_cap(self, profile, args: list[str], submission: Submission, cores: int) -> str:
+        from ..hpc_login_budget import LoginLimitReached
+
+        self.validate_cpu_script(submission.script_text)
+        ledger = CpuLedger(self.cfg._runner_state_path, profile.name, profile.max_concurrent_cpus)
+        job_id, unique_name = ledger.reserve(submission, cores, self._cpu_snapshot)
+        if job_id is not None:
+            return job_id
+        args = [f"--job-name={unique_name}" if arg.startswith("--job-name=") else arg for arg in args[:-1]] + [
+            "--no-requeue", f"--wrap=exec /bin/bash -- {shlex.quote(args[-1])}",
+        ]
+        try:
+            job_id = self._send_submit(args, cpu_guard=True)
+        except (LoginLimitReached, _SlurmNotSent):
+            ledger.unsent(submission.key)
+            raise
+        except Exception as error:
+            raise RuntimeError(f"{error}; Slurm acceptance is unconfirmed and the CPU reservation is held") from error
+        try:
+            ledger.accept(submission.key, job_id)
+        except sqlite3.Error as error:
+            raise RuntimeError("Slurm accepted the job but the ID could not be saved; do not resend") from error
+        return job_id
+
+    def _cpu_snapshot(self, reservations, legacy):
+        """Batch queue and accounting reads on the same local cluster and scheduler account."""
+        def read(args):
+            result = self._run(args, cpu_guard=True)
+            if result.returncode != 0:
+                raise RuntimeError(f"{args[0]} CPU admission query failed: {_detail(result)}")
+            return slurm_rows(result.stdout)
+
+        live = read(["squeue", "--local", "--all", "--me", "-h", "-r", "-t", "all", "-o", "%i|%C|%V|%T|%j"])
+        names_in_queue = {row.name for row in live}
+        missing = [row for row in reservations if not row["finished"] and row["name"] not in names_in_queue]
+        legacy_ids = [str(job["job_id"]) for job in legacy if re.fullmatch(r"[0-9]+", str(job.get("job_id", "")))
+                      and not any(row.matches_legacy(job) for row in live) and not terminal_legacy(job)]
+        base = ["sacct", "--local", "-n", "-P", "-X", "-o", "JobID%128,AllocCPUS,Submit,State%64,JobName%128"]
+        accounting = []
+        if missing:
+            # UTC day minus one avoids missing records at the site's local midnight.
+            oldest = min(row["reserved_at"] for row in missing)
+            start = (datetime.fromtimestamp(oldest, timezone.utc) - timedelta(days=1)).date().isoformat()
+            accounting.extend(read([*base, "--starttime", start, "--name", ",".join(row["name"] for row in missing)]))
+        if legacy_ids:
+            accounting.extend(read([*base, "--duplicates", "-j", ",".join(legacy_ids)]))
+        return live, accounting
+
+    def _send_submit(self, args: list[str], *, cpu_guard: bool = False) -> str:
         cmd = "sbatch" if self.cfg.scheduler == "slurm" else "qsub"
         try:
-            args = self.submit_args(script, name, cores, mem, walltime, queue, stdout, stderr)
             # Decide from the actual argv, so a profile changed between two reads cannot disable the guard.
             guarded = self.cfg.scheduler == "slurm" and any(arg.startswith("--nodelist=") for arg in args)
-            p = self._run(args, guard_slurm_cluster=True) if guarded else self._run(args)
+            if cpu_guard:
+                p = self._run(args, cpu_guard=True)
+            else:
+                p = self._run(args, guard_slurm_cluster=True) if guarded else self._run(args)
         except subprocess.TimeoutExpired as e:
             raise RuntimeError(f"{cmd} timed out after {self.cfg.command_timeout_s}s{MAYBE_SUBMITTED}") from e
         except Exception as e:
@@ -601,6 +722,8 @@ class Scheduler:
             if isinstance(e, SessionLost):  # the shell dropped while qsub/sbatch ran: it may have gone through
                 raise RuntimeError(f"{e}{MAYBE_SUBMITTED}") from e
             raise
+        if cpu_guard and p.returncode == 97 and (p.stderr or "").strip() == _CPU_ENV_REFUSED:
+            raise _SlurmNotSent(_CPU_ENV_REFUSED)
         if p.returncode != 0:
             raise RuntimeError(f"{cmd} failed ({p.returncode}): {_detail(p)}")
         lines = [line.strip() for line in p.stdout.splitlines() if line.strip()]

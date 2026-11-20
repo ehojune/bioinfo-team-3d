@@ -3822,6 +3822,8 @@ class Runner:
                 done.set_result(None)
 
         async def record(result: dict) -> None:
+            if (key := result.get("cpu_submission_key")) and self.jobs.get(result["job_id"], {}).get("cpu_submission_key") == key:
+                return
             if location.get("mode") == "hpc":
                 ws.update_run(tid, hpc_step_id=ws.task.meta.get("step_id") or "direct", hpc_submitted=True,
                               hpc_revision=ws.task.meta.get("revision", 0))
@@ -3830,6 +3832,7 @@ class Runner:
             await self._track_job({"task_id": tid, "agent_id": aid, "job_id": result["job_id"],
                                    "name": result["name"], "script": result["script"],
                                    "script_sha256": result["script_sha256"],
+                                   "cpu_submission_key": result.get("cpu_submission_key"),
                                    "core_hours": result["core_hours"]},
                                   {"submission_overlapped": submission_overlapped,
                                    "transfer": {**result["transfer"], "fetch_to": str(fetch_to),
@@ -4011,6 +4014,7 @@ class Runner:
                            "name": body.get("name", ""), "state": "queued", "missing": 0, "terminal": False,
                            "exit_status": None, "submitted_at": time.time(), "submission_seq": sequence,
                            "scheduler": self.s.hpc.scheduler, "request_id": self.task_req.get(tid or ""),
+                           "site_profile": self.s.hpc.site_profile, "cpu_submission_key": body.get("cpu_submission_key"),
                            "workdir": str(ws.dir) if ws else None,
                            "script_sha256": body.get("script_sha256"), "submitted_by_runner": True, **(extra or {})}
         if ws:

@@ -73,11 +73,14 @@ def _submit_wait_s() -> float:
     """The runner's time for a submit: the shell command, and where files cross the shell (no shared file system) the
     whole upload (its own time allowance) before it."""
     wait = _hpc_wait_s()
+    cpu_wait = 0
     try:
         transfers = not SESSION_ERROR and SCHED.transfer() is not None
+        if not SESSION_ERROR and SCHED.cpu_cap_enabled():
+            cpu_wait = _hpc_wait_s(3) + 30  # squeue, up to two sacct queries, and the ledger's lock wait
     except RuntimeError:
         transfers = False
-    return wait + (wait + UPLOAD_BUDGET_S if transfers else 0)
+    return cpu_wait + wait + (wait + UPLOAD_BUDGET_S if transfers else 0)
 
 
 async def _runner_op(op: str, **fields) -> dict:
@@ -440,6 +443,8 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
         return json.dumps({"submitted": False, "reason": out.get("reason") or "denied by the PI",
                            "note": "Do not resubmit this job unless the PI explicitly requests it."})
     job_id = out["job_id"]
+    if out.get("cpu_submission_key"):
+        spath = spath.with_name(Path(out["script"]).name)  # a replay returns the original script and logs
     return json.dumps({
         "submitted": True, "job_id": job_id, "script": str(spath), "logs": str(logs),
         "output_dir": str(output_dir),

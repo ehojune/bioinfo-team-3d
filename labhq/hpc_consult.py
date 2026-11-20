@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from .hpc_cpu_ledger import Submission, submission_key
 from .policy import restricted_paths, touches_resolved
 from .settings import HpcSettings, PolicySettings
 from .tools.scheduler import MISSING_POLLS_BEFORE_FINISHED, JobInfo, Scheduler, build_script, command_env
@@ -180,7 +181,11 @@ def trial_job(hpc: HpcSettings, trial_dir: Path, confirm: Callable[[str], bool],
                         str(out), str(err))
 
     script, job = files(trial_dir)  # what the PI sees; the files go to a fresh folder below
-    if not confirm(f"시험 잡 1회(sleep 1, 1코어, 5분): {hide(shlex.join(backend.submit_args(str(script), *job)))}"):
+    try:
+        preview = backend.submit_args(str(script), *job)
+    except (RuntimeError, ValueError) as error:
+        return {"outcome": "submit_failed", "message": hide(str(error))}
+    if not confirm(f"시험 잡 1회(sleep 1, 1코어, 5분): {hide(shlex.join(preview))}"):
         return {"outcome": "declined", "message": "PI가 거절해 아무것도 제출하지 않았습니다."}
     try:
         trial_dir.mkdir(parents=True, exist_ok=True)
@@ -199,7 +204,12 @@ def trial_job(hpc: HpcSettings, trial_dir: Path, confirm: Callable[[str], bool],
     except OSError as e:
         return {"outcome": "prepare_failed", "message": f"시험 스크립트를 쓰지 못해 제출하지 않았습니다: {hide(str(e))}"}
     try:
-        job_id = backend.submit(str(script), *job)
+        if isinstance(backend, Scheduler) and backend.cpu_cap_enabled():
+            key = submission_key("init trial", str(trial_dir.resolve()), job[:5])
+            submission = Submission(key, script.read_text(encoding="utf-8"), {})
+            job_id = backend.submit(str(script), *job, cpu_submission=submission)
+        else:
+            job_id = backend.submit(str(script), *job)
     except (RuntimeError, OSError) as e:
         return {"outcome": "submit_failed", "message": hide(str(e))}
     max_polls = max(1, max_polls)

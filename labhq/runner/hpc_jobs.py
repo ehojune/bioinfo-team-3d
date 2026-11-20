@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 from typing import AsyncContextManager, Awaitable, Callable
 
+from ..hpc_cpu_ledger import Submission, submission_key
 from ..hpc_transfer import TransferError, job_spec, remote_script, upload_job
 from ..policy import core_hours, hpc_needs_approval
 from ..settings import Settings
@@ -120,10 +121,15 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         return {"error": f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
                          "remove -M/--clusters and submit again"}
     name = sanitize_job_name(str(body.get("name") or spath.stem))
+    script_sha256 = hashlib.sha256(script_bytes).hexdigest()
+    cap_enabled = False
     # Validate the site's submission pin before approval or any remote upload. Scheduler.submit checks again at send.
     if s.hpc.scheduler != "mock" and hasattr(scheduler, "submit_args"):
         try:
             argv = scheduler.submit_args(str(spath), name, cores, mem, walltime, queue, "/dev/null", "/dev/null")
+            cap_enabled = isinstance(scheduler, Scheduler) and scheduler.cpu_cap_enabled()
+            if cap_enabled:
+                scheduler.validate_cpu_script(text)
             if (s.hpc.scheduler == "slurm" and any(a.startswith("--nodelist=") for a in argv)
                     and slurm_heterogeneous_directive(text)):
                 return {"error": "Pinned Slurm nodes cannot use heterogeneous job directives"}
@@ -221,14 +227,23 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
                     await asyncio.to_thread(verify_remote_data, transfer, manifest, remote_data["request_id"])
             except Exception as error:  # fail closed on an unreadable or changed remote snapshot
                 return {"error": f"remote input verification failed: {error}; the job was not submitted"}
+        result = {"submitted": True, "name": name, "script": str(spath), "script_sha256": script_sha256, "core_hours": ch,
+                  **({"transfer": spec} if spec else {})}
+        kwargs = {}
+        if cap_enabled:
+            identity = (body.get("task_id"), body.get("agent_id"), name, script_sha256)
+            key = submission_key("runner", identity, argv[:-1], inputs or [],
+                                 (remote_data or {}).get("request_snapshot"))
+            result.update(cpu_submission_key=key)
+            kwargs["cpu_submission"] = Submission(key, text, result, identity)
         try:
             job_id = await asyncio.to_thread(scheduler.submit, script_arg, name, cores, mem, walltime, queue,
-                                             out_arg, err_arg)
+                                             out_arg, err_arg, **kwargs)
         except Exception as e:
             return {"error": str(e)}
-        result = {"submitted": True, "job_id": job_id, "name": name, "script": str(spath),
-                  "script_sha256": hashlib.sha256(script_bytes).hexdigest(), "core_hours": ch,
-                  **({"transfer": spec} if spec else {})}
+        if cap_enabled:
+            result = kwargs["cpu_submission"].receipt
+        result["job_id"] = job_id
         if record:
             await record(result)
     return result
