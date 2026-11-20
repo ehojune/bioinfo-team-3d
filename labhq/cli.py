@@ -573,10 +573,14 @@ def _request_cost_totals_overview(totals: dict) -> str:
 def _health(s: Settings, *, deadline: float | None = None) -> dict | None:
     import httpx
 
+    probe_limit = _HEALTH_PROBE_SECONDS
+    if deadline is None:
+        # A direct check allows the usual API timeout for each of its two requests.
+        probe_limit = 30.0
+        deadline = time.monotonic() + 2 * probe_limit
+
     def probe_timeout() -> float:
-        if deadline is None:
-            return 30
-        return min(_HEALTH_PROBE_SECONDS, deadline - time.monotonic())
+        return min(probe_limit, deadline - time.monotonic())
 
     timeout = probe_timeout()
     if timeout <= 0 or _authenticated_requests(s, limit=1, timeout=timeout) is None:
@@ -1070,6 +1074,7 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
             raise SystemExit(2)
         confirmed = confirmed and ours
 
+    gateway_deadline = time.monotonic() + _GATEWAY_READY_SECONDS
     try:
         health = _health(s)
     except SystemExit:  # 401: _authenticated_requests already said the token differs; say whose gateway it is
@@ -1084,9 +1089,9 @@ def _up_unlocked(s: Settings, *, popen=None, make_primary: bool = False) -> None
         if state == "unknown":
             _record_problem("gateway", reason)
         # A live supervisor may be between restarts. Wait for that gateway instead of starting another.
-        if state != "alive" and not _supervised(s, "gateway"):
+        if time.monotonic() < gateway_deadline and state != "alive" and not _supervised(s, "gateway"):
             _start_background(s, "gateway", popen=popen)
-        health = _wait_for_health(s, runner=False, timeout=_GATEWAY_READY_SECONDS)
+        health = _wait_for_health(s, runner=False, timeout=gateway_deadline - time.monotonic())
         if health is None:
             print(f"gateway가 {_GATEWAY_READY_SECONDS:g}초 안에 인증된 응답을 보내지 않아 runner를 시작하지 않았습니다. "
                   f"로그({_launch_state(s) / 'logs' / 'gateway.log'})를 확인한 뒤 "

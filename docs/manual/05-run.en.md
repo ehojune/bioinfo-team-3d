@@ -59,7 +59,7 @@ cd <labhq repository>
 .\labhq -c config\labhq.yaml open
 ```
 
-`up` waits up to 60 seconds for an authenticated gateway response before starting the runner. If the wait expires, it prints the location of `gateway.log` and the command to retry `up` with the same config, then exits with code 2. A retry uses the same gateway if it is already running or still starting.
+`up` waits up to 60 seconds from its first gateway check. It starts the runner once the gateway returns an authenticated response. If the wait expires, it prints the location of `gateway.log` and the command to retry `up` with the same config, then exits with code 2. A retry uses the same gateway if it is already running or still starting.
 
 If the config path is missing or the gateway client token is the default `change-me`, it does not start. When the gateway is off or returns an HTTP error, `open` and other API commands print one line and exit 2 instead of a traceback.
 To view the offline demo on a phone, the PC and phone must be on the same Wi-Fi ([Web office](06-web-office.en.md#web-office)).

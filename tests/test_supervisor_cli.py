@@ -261,6 +261,37 @@ def test_up_health_poll_bounds_a_stalled_request_by_the_remaining_time(tmp_path,
                               else [("/api/requests", 1), ("/api/health", 0.25)])
 
 
+@pytest.mark.parametrize("stalled_path", ["/api/requests", "/api/health"])
+def test_up_counts_the_initial_probe_of_an_existing_gateway_in_the_readiness_wait(
+        tmp_path, monkeypatch, capsys, stalled_path):
+    settings = _settings(tmp_path)
+    _record(settings, "gateway", CHILD)
+    now = 0.0
+    probe_timeouts = []
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    def request(method, url, *, timeout, **kwargs):
+        req = httpx.Request(method, url)
+        if req.url.path == stalled_path:
+            probe_timeouts.append(timeout)
+            advance(timeout)
+            raise httpx.ReadTimeout("gateway accepted the connection but did not respond", request=req)
+        advance(0.75)
+        return httpx.Response(200, json=[], request=req)
+
+    monkeypatch.setattr(cli, "time", RuntimeProxy(cli.time, monotonic=lambda: now, sleep=advance))
+    monkeypatch.setattr(httpx, "request", request)
+
+    with pytest.raises(SystemExit) as stopped:
+        cli._up(settings)
+    assert stopped.value.code == 2 and now == pytest.approx(60)
+    assert probe_timeouts[0] == 30 and len(probe_timeouts) > 1
+    assert "gateway가 60초 안에 인증된 응답" in capsys.readouterr().err
+
+
 def test_up_reports_a_supervisor_whose_role_never_answers(tmp_path, monkeypatch, capsys):
     settings = _settings(tmp_path)
     _record(settings, "runner-supervisor", SUP)
