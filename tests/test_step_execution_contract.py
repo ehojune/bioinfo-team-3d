@@ -14,7 +14,7 @@ from labhq.recruit import paper_skills, planning as recruit_planning
 from labhq.research import contract, continuation
 from labhq.settings import Settings
 from tests.test_cso import FakeHub, result
-from tests.test_research_protocol import MiniHub, valid_plan
+from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
 
 def placed_plan(mode="local", runner="mock-runner", *, count=1):
@@ -293,6 +293,60 @@ async def test_late_runner_change_on_resume_requires_replan_and_preserves_result
     assert request["results"]["s1"]["task_id"] == prior.task_id
     assert request["research_contract"]["approval"]["target_sha256"] == receipt["plan_sha256"]
     assert contract.plan_sha256(request["plan"]) == receipt["plan_sha256"]
+
+
+@pytest.mark.parametrize("auxiliary", ["result_correction", "slot_repair"])
+async def test_auxiliary_turn_replans_on_runner_change_and_keeps_original_outputs(auxiliary):
+    settings = Settings()
+    settings.research.enabled = settings.research.evidence_checkpoint = True
+    settings.orchestrator.chief_of_staff_agent = settings.orchestrator.reviewer_agent = None
+    attempted = []
+    observed_stops = []
+    path = "outputs/result1.tsv"
+    original_hash = "a" * 64
+
+    async def dispatch(task):
+        if task.meta["kind"] == "plan":
+            plan = valid_plan()
+            plan["step_execution_version"] = 1
+            return result(task, structured=plan)
+        assert task.meta["kind"] == "step"
+        ledger = _cp2_result(hub, task)
+        if auxiliary == "slot_repair":
+            ledger["evidence"][0]["slots"] = []
+        else:
+            del ledger["evidence"][0]["assessment_reason"]
+        hub.agents["worker"]["runner_id"] = "replacement-runner"
+        return result(task, structured=ledger, outputs=[path], output_sha256={path: original_hash},
+                      session_id="original-session")
+
+    class ResumableHub(MiniHub):
+        def supports_resume(self, agent_id):
+            return True
+
+    class RecordingOrchestrator(Orchestrator):
+        async def _reserve_dispatch(self, rid, task, *, optional):
+            attempted.append(task.meta["kind"])
+            return await super()._reserve_dispatch(rid, task, optional=optional)
+
+        async def _research_continue(self, rid, review, results, *, stops: list):
+            assert results["s1"].output_sha256 == {path: original_hash}
+            assert results["s1"].session_id == "original-session"
+            observed_stops.extend(stops)
+            return "fixture declined the replan"
+
+    hub = ResumableHub(settings, dispatch, mode="orchestrate", work_kind="research", text="compare conditions")
+    hub.agents["worker"]["runner_id"] = "first-runner"
+    request = hub.requests["r"]
+    request["execution_location"] = {"mode": "local", "source": "PI selection", "approval_id": "route-choice"}
+    await RecordingOrchestrator(hub).run_request("r")
+    assert attempted == ["plan", "step", auxiliary]
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step"]
+    assert request["results"]["s1"]["task_id"] == hub.calls[-1].id
+    assert request["results"]["s1"]["error_kind"] == "research_stop"
+    assert [sid for sid, reason in observed_stops if "revise the plan and obtain a new CP1" in reason] == ["s1"]
+    [approval] = hub.approvals
+    assert approval["detail"]["target_sha256"] == contract.plan_sha256(request["plan"])
 
 
 @pytest.mark.parametrize("resume", [False, True])

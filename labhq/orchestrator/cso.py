@@ -4500,7 +4500,7 @@ class Orchestrator:
                 attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
                 self._note_inflight_cap(rid, attempt_task)
                 try:
-                    placement = self.first_step_dispatch.get(rid) if current.meta.get("kind") == "step" else None
+                    placement = self.first_step_dispatch.get(rid) if execution_step else None
                     if placement is not None:
                         placement.before_send(execution_req.get("execution_location"), hub_agents(self.hub, rid))
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
@@ -6092,6 +6092,9 @@ class Orchestrator:
                                 answer = None
                             except Exception:
                                 answer = None
+                            if answer is not None and answer.error_kind == "research_stop":
+                                return original.model_copy(update={"ok": False, "error_kind": "research_stop",
+                                                                   "error": answer.error})
                             if answer is not None and answer.unreported_outputs:
                                 return original.model_copy(update={
                                     "ok": False, "error_kind": "contract",
@@ -6190,6 +6193,9 @@ class Orchestrator:
                             **({"workdir": current.workdir} if current.workdir else {})),
                     )
                     corrected = await self.run_step(correction_task)
+                    if corrected.error_kind == "research_stop":
+                        return original.model_copy(update={"ok": False, "error_kind": "research_stop",
+                                                           "error": corrected.error})
                     collect_paper_usage(corrected)
                     current = corrected.model_copy(update={
                         "tool_errors": list(dict.fromkeys([*current.tool_errors, *corrected.tool_errors])),
