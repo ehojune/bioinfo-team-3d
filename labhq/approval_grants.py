@@ -527,11 +527,37 @@ def _grant_key(self, rid: str, category: str) -> str | None:
             return key
     return None
 
+def _confirmed_decisions(store, rid: str) -> dict:
+    return {aid: d for aid, d in store.all("approval_decision").items()
+            if (d.get("approval") or {}).get("request_id") == rid
+            and d.get("approved") is True and not d.get("grant_pending")}
+
+
+def automatic_approvals(store, rid: str) -> dict:
+    confirmed = _confirmed_decisions(store, rid)
+    automatic = [(aid, decision) for aid, decision in confirmed.items() if decision.get("automatic") is True]
+    automatic.sort(key=lambda row: (row[1].get("decided_at") or 0, row[0]), reverse=True)
+    rows = []
+    for aid, decision in automatic:
+        card = decision["approval"]
+        detail = card.get("detail") or {}
+        tool_input = detail.get("tool_input")
+        command = tool_input.get("command") if isinstance(tool_input, dict) else None
+        task_id = card.get("task_id")
+        task = (store.get("task", task_id) or {}) if task_id else {}
+        rows.append({
+            "approval_id": aid,
+            "command": command if isinstance(command, str) else None,
+            "agent_id": card.get("agent_id"),
+            "step_id": task.get("step_id") if task.get("request_id") == rid else None,
+            # The command's classification can differ from the grant that covered it.
+            "category": detail.get("grant_category"),
+        })
+    return {"request_id": rid, "approvals": rows}
+
+
 def approval_summary(self, rid: str) -> dict:
-    decisions = self.store.all("approval_decision")
-    confirmed = {aid: d for aid, d in decisions.items()
-                 if (d.get("approval") or {}).get("request_id") == rid
-                 and d.get("approved") is True and not d.get("grant_pending")}
+    confirmed = _confirmed_decisions(self.store, rid)
     granted = {d["grant_category"] for aid, d in confirmed.items()
                if d.get("automatic") is False and d.get("grant_source") == aid
                and isinstance(d.get("grant_category"), str)}

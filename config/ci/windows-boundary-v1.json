@@ -32,6 +32,7 @@
     "tests/test_ask_review5.py",
     "tests/test_ask_review6.py",
     "tests/test_atlas_key_file_1225.py",
+    "tests/test_automatic_approval_list.py",
     "tests/test_bench.py",
     "tests/test_bench_calibration.py",
     "tests/test_bench_legacy_report.py",
@@ -516,6 +517,7 @@
     "tests/test_gateway_publish_durable.py": "Gateway SQLite publication, cancellation and durable delivery ordering.",
     "tests/test_cancel_stall_1406.py": "Runner inbox admission reads a fresh SQLite view during threaded scans; held rows resume after restart (#1406).",
     "tests/test_approval_durable_606.py": "Approval SQLite transactions, commit failure, repeated cancellation, per-card races and reconnect/ACK ordering; in-process fake commits.",
+    "tests/test_automatic_approval_list.py": "Authenticated request-scoped approval history and summary parity after reopening SQLite; in-process ASGI transport.",
     "tests/test_task_cancel_durable_606.py": "Task cancel SQLite intent ordering, heartbeat, rollback, repeated cancellation, completion races and restart replay; in-process fake commits.",
     "tests/test_request_persistence_965.py": "Awaited request/result changes, SQLite FIFO, cancellation, review receipts and restart persistence; in-process fake commits."
   },

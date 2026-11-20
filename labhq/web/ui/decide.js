@@ -541,6 +541,51 @@ export function approvalSummaryText(request, summary) {
   if (!request || !summary || summary.request_id !== request.id) return '집계 확인 불가';
   return `이 요청에서 자동 승인 ${summary.automatic_approved_count}건 · 허용한 부류: ${summary.granted_categories.map(grantCategoryLabel).join(', ') || '없음'} · 현재 유효: ${summary.active_grant_categories.map(grantCategoryLabel).join(', ') || '없음'}`;
 }
+export function syncAutomaticApprovalDetails(parent, requestId, count, fetchList, label = `자동 승인 ${count}건`) {
+  const key = JSON.stringify([requestId, count, label]);
+  if (parent._automaticApprovalKey === key) return;
+  const wasOpen = parent._automaticApprovalRequest === requestId && parent.firstElementChild?.open;
+  parent._automaticApprovalKey = key;
+  parent._automaticApprovalRequest = requestId;
+  parent.replaceChildren();
+  if (!(count > 0) || !fetchList) { add(parent, 'span', label); return; }
+  const fold = add(parent, 'details', '', 'expandable-text');
+  add(fold, 'summary', label);
+  const status = add(fold, 'p');
+  status.setAttribute('role', 'status');
+  const content = add(fold, 'div');
+  let loading = false;
+  fold.ontoggle = async () => {
+    if (!fold.open || loading) return;
+    loading = true;
+    status.textContent = '자동 승인 목록을 불러오는 중입니다.';
+    content.replaceChildren();
+    try {
+      const result = await fetchList(requestId);
+      if (result?.request_id !== requestId || !Array.isArray(result.approvals)) throw new Error('invalid approval list');
+      status.textContent = result.approvals.length ? '' : '자동 승인 기록이 없습니다.';
+      if (!result.approvals.length) return;
+      const list = add(content, 'ol');
+      for (const entry of result.approvals) {
+        const item = add(list, 'li');
+        const facts = add(item, 'dl', '', 'approval-detail');
+        for (const [name, value] of [['직원', entry.agent_id], ['단계', entry.step_id],
+          ['부류', entry.category && grantCategoryLabel(entry.category)]]) {
+          add(facts, 'dt', name);
+          add(facts, 'dd', value || '기록 없음');
+        }
+        add(facts, 'dt', '명령');
+        add(add(facts, 'dd'), 'pre', entry.command || '기록 없음');
+      }
+    } catch {
+      content.replaceChildren();
+      status.textContent = '목록을 불러오지 못했습니다. 접었다가 다시 펼쳐 주세요.';
+    } finally {
+      loading = false;
+    }
+  };
+  fold.open = Boolean(wasOpen);
+}
 export function createApprovalSummaryLoader(fetchSummary, selected, changed) {
   let serial = 0, current = null, value = null, pending = null;
   return {
@@ -1060,8 +1105,15 @@ export function syncReviewCards(container, requests, options = {}) {
       row.className += ' ui-card decision-card';
       add(body, 'h3', !reviewPending ? '결과를 어디에 저장할까요?' : reportReady ? '보고서를 검토할까요?' : '종료된 요청의 결과를 확인할까요?', 'decision-question');
       const facts = add(body, 'dl', '', 'decision-facts');
-      for (const [label, value] of [['상태', globalThis.LabHQState.reviewLabel(q)], ...(count === null ? [] : [['자동 승인', `${count}건`]])]) {
+      const canExpand = count > 0 && options.fetchAutomaticApprovals;
+      for (const [label, value] of [['상태', globalThis.LabHQState.reviewLabel(q)], ...(count === null || canExpand ? [] : [['자동 승인', `${count}건`]])]) {
         const cell = add(facts, 'div'); add(cell, 'dt', label); add(cell, 'dd', value);
+      }
+      if (canExpand) {
+        const approvals = prior?._automaticApprovals || doc().createElement('div');
+        row._automaticApprovals = approvals;
+        body.append(approvals);
+        syncAutomaticApprovalDetails(approvals, q.id, count, options.fetchAutomaticApprovals);
       }
       const status = add(body, 'span', '', 'ui-chip decision-status');
       add(status, 'i', '', 'status-dot').setAttribute?.('aria-hidden', 'true');

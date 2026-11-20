@@ -7416,6 +7416,14 @@ def create_app(settings: Settings, github_transport: httpx.AsyncBaseTransport | 
             raise HTTPException(404)
         return hub.approval_summary(rid)
 
+    @app.get("/api/requests/{rid}/automatic-approvals", dependencies=[Depends(auth)])
+    async def automatic_approval_list(rid: str, response: Response) -> dict:
+        if rid not in hub.requests:
+            raise HTTPException(404)
+        from ..approval_grants import automatic_approvals
+        response.headers["Cache-Control"] = "no-store"
+        return automatic_approvals(hub.store, rid)
+
     @app.get("/api/requests/{rid}/task-attempts", dependencies=[Depends(auth)])
     async def task_attempts(rid: str, expected_created_at: float = Query(..., gt=0, allow_inf_nan=False),
                             limit: int = Query(1000, ge=1, le=1000)) -> dict:

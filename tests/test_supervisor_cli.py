@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 
+import httpx
 import pytest
 
 from labhq import cli, doctor, proc_tree
@@ -176,6 +177,119 @@ def test_up_does_not_start_a_second_supervisor_while_the_first_is_restarting_its
     cli._up(settings, popen=lambda *args, **kwargs: pytest.fail("a second supervisor would race the first"))
 
     assert "웹 사무실:" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("gateway_delay", [25, 65], ids=["ready-after-old-limit", "ready-after-timeout"])
+def test_up_waits_for_gateway_before_starting_runner_and_reuses_it_on_retry(
+        tmp_path, monkeypatch, capsys, gateway_delay):
+    settings = _settings(tmp_path)
+    now = 0.0
+    starts = []
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    def start(s, role, *, popen):
+        starts.append(role)
+        if role == "gateway":
+            _record(s, "gateway-supervisor", SUP)
+            _record(s, "gateway", CHILD)
+        else:
+            assert now >= gateway_delay
+
+    def request(method, url, **kwargs):
+        req = httpx.Request(method, url)
+        assert kwargs["headers"]["Authorization"] == f"Bearer {settings.gateway.client_token}"
+        if not starts or now < gateway_delay:
+            raise httpx.ConnectError("gateway is still starting", request=req)
+        payload = [] if req.url.path == "/api/requests" else {
+            "service": "labhq gateway",
+            "identity": cli.instance_guard.public_identity(settings),
+            "runners": [settings.runner.id] if "runner" in starts else [],
+        }
+        return httpx.Response(200, json=payload, request=req)
+
+    monkeypatch.setattr(cli, "time", RuntimeProxy(cli.time, monotonic=lambda: now, sleep=advance))
+    monkeypatch.setattr(cli, "_start_background", start)
+    monkeypatch.setattr(httpx, "request", request)
+
+    if gateway_delay > 60:
+        with pytest.raises(SystemExit) as stopped:
+            cli._up(settings)
+        assert stopped.value.code == 2 and now == pytest.approx(60)
+        assert starts == ["gateway"]
+        error = capsys.readouterr().err
+        assert "gateway가 60초 안에 인증된 응답" in error
+        assert "gateway.log" in error and cli._config_command(settings, "up") in error
+        assert "다시 실행하세요" in error
+        # The original gateway is still starting as the next `up` begins.
+
+    cli._up(settings)
+    assert gateway_delay <= now < gateway_delay + 1
+    assert starts == ["gateway", "runner"]
+    ready_at = now
+    cli._up(settings)
+    assert now == ready_at and starts == ["gateway", "runner"]
+
+
+@pytest.mark.parametrize("stalled_path", ["/api/requests", "/api/health"])
+def test_up_health_poll_bounds_a_stalled_request_by_the_remaining_time(tmp_path, monkeypatch, stalled_path):
+    settings = _settings(tmp_path)
+    now = 0.0
+    probe_timeouts = []
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    def request(method, url, *, timeout, **kwargs):
+        req = httpx.Request(method, url)
+        probe_timeouts.append((req.url.path, timeout))
+        if req.url.path == stalled_path:
+            advance(timeout)
+            raise httpx.ReadTimeout("no response", request=req)
+        advance(0.75)
+        return httpx.Response(200, json=[], request=req)
+
+    monkeypatch.setattr(cli, "time", RuntimeProxy(cli.time, monotonic=lambda: now, sleep=advance))
+    monkeypatch.setattr(httpx, "request", request)
+
+    assert cli._wait_for_health(settings, runner=False, timeout=1) is None
+    assert now == pytest.approx(1)
+    assert probe_timeouts == ([("/api/requests", 1)] if stalled_path == "/api/requests"
+                              else [("/api/requests", 1), ("/api/health", 0.25)])
+
+
+@pytest.mark.parametrize("stalled_path", ["/api/requests", "/api/health"])
+def test_up_counts_the_initial_probe_of_an_existing_gateway_in_the_readiness_wait(
+        tmp_path, monkeypatch, capsys, stalled_path):
+    settings = _settings(tmp_path)
+    _record(settings, "gateway", CHILD)
+    now = 0.0
+    probe_timeouts = []
+
+    def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    def request(method, url, *, timeout, **kwargs):
+        req = httpx.Request(method, url)
+        if req.url.path == stalled_path:
+            probe_timeouts.append(timeout)
+            advance(timeout)
+            raise httpx.ReadTimeout("gateway accepted the connection but did not respond", request=req)
+        advance(0.75)
+        return httpx.Response(200, json=[], request=req)
+
+    monkeypatch.setattr(cli, "time", RuntimeProxy(cli.time, monotonic=lambda: now, sleep=advance))
+    monkeypatch.setattr(httpx, "request", request)
+
+    with pytest.raises(SystemExit) as stopped:
+        cli._up(settings)
+    assert stopped.value.code == 2 and now == pytest.approx(60)
+    assert probe_timeouts[0] == 30 and len(probe_timeouts) > 1
+    assert "gateway가 60초 안에 인증된 응답" in capsys.readouterr().err
 
 
 def test_up_reports_a_supervisor_whose_role_never_answers(tmp_path, monkeypatch, capsys):

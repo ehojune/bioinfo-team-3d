@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:23 | [`7012b4c`](https://github.com/ehojune/bioinfo-team-3d/pull/1470/commits/7012b4c) | **gateway의 첫 응답 확인도 60초 대기에 포함합니다.**<br>이미 떠 있는 gateway의 인증 요청이나 상태 요청이 지연돼도 대기 시간을 새로 시작하지 않습니다. |
+| 04:22 | [`09e3f2b`](https://github.com/ehojune/bioinfo-team-3d/commit/09e3f2b) | **한영 매뉴얼에 자동 승인 목록을 여는 방법을 추가했습니다.**<br>요청별 승인 기록 조회와 SQLite 재개방 검증을 Windows CI에 포함했습니다. |
+| 04:15 | [`d3b59fe`](https://github.com/ehojune/bioinfo-team-3d/pull/1470/commits/d3b59fe) | **PC를 다시 켠 뒤 labhq가 늦게 뜰 때 확인할 곳을 한영 매뉴얼에 적었습니다.**<br>Gateway 응답 대기 시간과 로그 위치, 같은 설정으로 다시 실행하는 방법을 안내합니다. |
+| 04:13 | [`672639f`](https://github.com/ehojune/bioinfo-team-3d/commit/672639f) | **자동 승인 건수를 펼치면 해당 요청의 명령, 직원, 단계, 부류가 나옵니다.**<br>작업판과 결정 탭의 검토 카드에서 목록을 펼칠 때 확정된 자동 승인 기록을 읽습니다. |
+| 04:11 | [`9441756`](https://github.com/ehojune/bioinfo-team-3d/pull/1470/commits/9441756) | **labhq를 켜면 gateway가 응답할 때까지 최대 60초 기다립니다.**<br>인증된 응답을 확인한 뒤 runner를 시작하고, 시간 초과 시 gateway.log와 재시도 명령을 표시합니다. |
 | 03:49 | [`9a0eb8f`](https://github.com/ehojune/bioinfo-team-3d/commit/9a0eb8f) | **Slurm 제출을 재사용할 때 업로드한 입력 내용도 비교합니다.**<br>검증된 SHA-256을 제출 식별에 넣고 기존 원장 행이 있어도 새 제출 전 accounting을 확인한다. |
 | 03:42 | [`d0faae6`](https://github.com/ehojune/bioinfo-team-3d/commit/d0faae6) | **staff CLI가 Slurm CPU 원장의 처리 시간까지 기다립니다.**<br>MCP 안팎의 제한 시간에 큐·accounting 조회와 SQLite 잠금 대기를 함께 반영한다. |
 | 03:31 | [`f4c442a`](https://github.com/ehojune/bioinfo-team-3d/commit/f4c442a) | **Slurm 상태 조회 시간이 끝나면 새 잡의 미제출 상태를 알립니다.**<br>CPU 원장의 sacct·squeue timeout을 init과 runner에 제출 실패로 전달한다. |

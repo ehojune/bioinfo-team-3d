@@ -455,7 +455,7 @@ details.report pre{white-space:pre-wrap;font:14px/1.65 var(--ui);margin:6px 0 0;
 <script type="module">
 import {officeSVG, officeHead, officeCharacter, officeStatus} from './ui/office-art.js';
 import {bindShutdown} from './ui/shutdown.js';
-import {answerRequired, decisionChoice, decisionNote, storageChoice, modelRefusalChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText, approvalSummaryText, createApprovalSummaryLoader} from './ui/decide.js';
+import {answerRequired, decisionChoice, decisionNote, storageChoice, modelRefusalChoice, revisedToast, revisionNoteMissing, syncReviewCards, syncDecisionCards, syncDecisionHistory, createHistoryVisibility, expandableText, syncExpandableText, approvalSummaryText, createApprovalSummaryLoader, syncAutomaticApprovalDetails} from './ui/decide.js';
 import {syncStaffCards} from './ui/strip.js';
 import {syncPaperLiterature} from './ui/literature.js';
 import {syncTaskBoard, syncStepFlow} from './ui/tasks.js';
@@ -692,7 +692,10 @@ function renderApprovals() {
   const total = items.length + sugs.length + holds.length + reviews.length;
   const decisions = items.length + sugs.length + reviews.length;
   updateDecisionBadge($('#decision-count'), decisions);
-  syncReviewCards($('#review-cards'), reviews, {presentation:'journal', approvalSummaries:S.reviewApprovalSummaries, onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone});
+  syncReviewCards($('#review-cards'), reviews, {
+    presentation:'journal', approvalSummaries:S.reviewApprovalSummaries, fetchAutomaticApprovals:api?.automaticApprovals,
+    onOpen:openReview, onDone:finishReview, onStorage:chooseStorage, disabled:() => !api?.reviewDone,
+  });
   $('#ap-count').textContent = decisions ? `${decisions}건` : '';
   const board = $('#board');  // #57 ⑧: waiting decisions make the board blink and lead to 결정
   board.classList.toggle('alert', total > 0);
@@ -810,7 +813,9 @@ let reqKey = '';
 let summaryRequest = null;
 const approvalSummary = createApprovalSummaryLoader(
   id => api?.approvalSummary ? api.approvalSummary(id) : Promise.reject(new Error('unavailable')),
-  () => S.current, () => { reqKey = ''; schedule(); });
+  () => S.current, schedule);
+const requestApprovalDetails = document.createElement('div');
+requestApprovalDetails.className = 'req-meta';
 let reportImageUrls = [];
 function loadReportImages(el, rid) {
   if (!api?.reportAsset) return;
@@ -853,10 +858,15 @@ function renderRequest() {
   const gh = q.github.filter(g => safeUrl(g.url)).map(g => `<li><a href="${esc(g.url)}" target="_blank" rel="noopener">${esc({ issue: `이슈 #${g.number}`, report: '보고서 커밋', final: '최종 코멘트', plan: '계획 코멘트', review: '리뷰 코멘트', recruit: '채용 기록', pr: 'PR', pipeline_pr: 'bioinfo-agent pipeline PR', codex_review: 'Codex 리뷰 요청' }[g.kind] || g.kind)}</a></li>`).join('');
   const pipeline = q.pipelinePr && q.pipelinePr.status !== 'open' ? `<p class="empty-note">pipeline PR ${{pending: '대기', awaiting_approval: '승인 대기', declined: '미기여'}[q.pipelinePr.status] || '거부'}: ${esc(q.pipelinePr.reason || '')}</p>` : '';
   const refList = (q.references || []).map(r => `<li class="chip">${esc(REF_KIND[r.kind] || r.kind)} ${esc(r.value)}${r.source === 'pi_profile' ? ' (기본)' : ''}</li>`).join('');
-  el.innerHTML = `${pick}${outcomeHTML(q)}${MODE === 'live' ? `<p class="req-meta">${esc(grantText)}</p>` : ''}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
+  el.innerHTML = `${pick}${outcomeHTML(q)}${MODE === 'live' ? '<div id="request-approval-details"></div>' : ''}<p class="req-meta">${processingLabel(q) ? `<span>${esc(processingLabel(q))}</span>` : ''}</p>${refList ? `<ul class="req-refs" aria-label="참고 자료">${refList}</ul>` : ''}${assumptionsHTML(q)}<div id="task-board"></div>
 <p class="req-meta">${proj ? `<span>프로젝트 ${esc(proj.name)}</span>` : ''}<span>비용 ${esc(LabHQState.costLabel(q))}</span>${deadlineText ? `<span>${esc(deadlineText)}</span>` : ''}${q.costSummary && Object.keys(q.costSummary.by_engine || {}).length ? `<span>${esc(LabHQState.engineCostLabel(q.costSummary))}</span>` : ''}${q.costSummary && q.costSummary.by_agent ? `<span>${esc(LabHQState.agentCostLabel(q.costSummary, nick))}</span>` : ''}<span class="req-status status-label st-${esc(q.status)}"><span class="status-dot" aria-hidden="true"></span>${esc(statusText)}</span></p>
   ${api?.cancelRequest && (LabHQState.isActiveRequest(q.status) || q.status === 'interrupted') ? `<p class="req-actions"><button class="btn" id="req-cancel" type="button" data-rid="${esc(q.id)}">요청 취소</button></p>` : ''}
   ${pipeline}${gh ? `<ul class="gh">${gh}</ul>` : ''}${notesHTML(q)}${hasOutcome(q) ? '' : reportHTML(q)}${reportPdfHTML(q)}${LabHQState.needsPiReview(q) ? `<p><button class="btn go" data-review-done="${esc(q.id)}">${['done', 'review_pending'].includes(q.status) ? '검토 완료' : '확인 완료'}</button></p>` : ''}${bundleHTML(q)}${auditHTML(q)}${followupHTML(q)}`;
+  if (MODE === 'live') {
+    const count = grantSummary?.request_id === q.id ? grantSummary.automatic_approved_count : null;
+    syncAutomaticApprovalDetails(requestApprovalDetails, q.id, count, api?.automaticApprovals, grantText);
+    $('#request-approval-details').replaceWith(requestApprovalDetails);
+  }
   loadReportImages(el, q.id);
   if ($('#fu-text')) $('#fu-text').value = fuDrafts.get(q.id) || '';  // a live update keeps this request's draft
   syncTaskBoard($('#task-board'), q, S.stepDetails, { nick,
@@ -1370,6 +1380,7 @@ function startLive() {
     followup: (rid, text) => post(`/api/requests/${encodeURIComponent(rid)}/followup`, { text }),
     requestDetail: rid => get(`/api/requests/${encodeURIComponent(rid)}`),
     approvalSummary: rid => get(`/api/requests/${encodeURIComponent(rid)}/approval-summary`),
+    automaticApprovals: rid => get(`/api/requests/${encodeURIComponent(rid)}/automatic-approvals`),
     reportAsset: (rid, path) => getBlob(`/api/requests/${encodeURIComponent(rid)}/report-asset?path=${encodeURIComponent(path)}`),
     auditBundle: rid => getBlob(`/api/requests/${encodeURIComponent(rid)}/audit-bundle`),
     reportPdf: async rid => {
