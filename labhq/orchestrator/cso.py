@@ -4515,6 +4515,10 @@ class Orchestrator:
                 except step_execution.ReapprovalRequired:
                     await self._release_dispatch_hold(rid, attempt_task.id)
                     raise
+                except step_execution.ReplanRequired as error:
+                    await self._release_dispatch_hold(rid, attempt_task.id)
+                    return TaskResult(task_id=attempt_task.id, agent_id=current.agent_id, ok=False,
+                                      error_kind="research_stop", error=str(error), cost_usd=0.0)
                 except asyncio.CancelledError:
                     (await self._release_if_unsent(rid, attempt_task.id))
                     raise
@@ -6253,7 +6257,7 @@ class Orchestrator:
                 break
             done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
             placement = self.first_step_dispatch.get(rid)
-            if placement is not None and placement.stale:
+            if placement is not None and placement.needs_reapproval:
                 for pending in running.values():
                     if not pending.done():
                         pending.cancel()
@@ -8866,7 +8870,7 @@ class Orchestrator:
                                        feedback=resume_feedback or None)
                     break
                 except step_execution.ReapprovalRequired:
-                    if placement is None or not placement.stale:
+                    if placement is None or not placement.needs_reapproval:
                         raise
                     placement.discard_unsent_proofs(req)
                     self._forget_step_state(rid, remaining)

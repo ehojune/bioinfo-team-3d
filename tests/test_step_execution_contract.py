@@ -7,6 +7,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from labhq.models import TaskResult
 from labhq.orchestrator.cso import ENV_LOCK_OUTPUT, Orchestrator
 from labhq.orchestrator.step_execution import refresh_for_approval
 from labhq.recruit import paper_skills, planning as recruit_planning
@@ -243,6 +244,55 @@ def test_runner_refresh_preserves_the_plan_for_existing_execution_records(record
     with pytest.raises(ValueError, match="step runner changed after execution began"):
         refresh_for_approval(plan, request, choice, agents)
     assert request["plan"]["steps"][0]["runner_id"] == "mock-runner"
+
+
+@pytest.mark.parametrize("continued", [False, True])
+async def test_late_runner_change_on_resume_requires_replan_and_preserves_results(continued):
+    settings = Settings()
+    settings.research.enabled = settings.research.evidence_checkpoint = True
+    settings.orchestrator.chief_of_staff_agent = settings.orchestrator.reviewer_agent = None
+    plan = placed_plan(count=2)
+    receipt = approved(plan)
+    prior = TaskResult(task_id="old-s1", agent_id="worker", ok=True, text="prior evidence")
+    observed_stops = []
+
+    async def dispatch(task):
+        pytest.fail(f"step dispatched under the old approval: {task.meta['kind']}")
+
+    class ResumeHub(MiniHub):
+        def result_map(self, rid):
+            return {"s1": prior}
+
+    class MovingRunnerOrchestrator(Orchestrator):
+        async def _verify_research_reuse(self, rid, plan):
+            return True
+
+        async def _reserve_dispatch(self, rid, task, *, optional):
+            if task.meta["kind"] == "step":
+                await asyncio.sleep(0)
+                self.hub.agents["worker"]["runner_id"] = "replacement-runner"
+            return await super()._reserve_dispatch(rid, task, optional=optional)
+
+        async def _research_continue(self, rid, review, results, *, stops: list):
+            assert results["s1"] == prior
+            assert results["s2"].error_kind == "research_stop"
+            observed_stops.extend(stops)
+            return "fixture declined the replan"
+
+    hub = ResumeHub(settings, dispatch, mode="orchestrate", work_kind="research", text="compare conditions")
+    hub.agents["worker"]["runner_id"] = "mock-runner"
+    request = hub.requests["r"]
+    request.update(plan=plan, results={"s1": prior.model_dump(mode="json")},
+                   execution_location={"mode": "local", "source": "PI selection", "approval_id": "route-choice"},
+                   research_contract={**receipt, "execution_enabled": True})
+    if continued:
+        request["research_contract"]["continuation"] = {"plan_sha256": receipt["plan_sha256"]}
+    await MovingRunnerOrchestrator(hub).run_request("r", resume=True)
+    assert not hub.approvals
+    assert [sid for sid, reason in observed_stops if "revise the plan and obtain a new CP1" in reason] == ["s2"]
+    assert request["results"]["s1"]["task_id"] == prior.task_id
+    assert request["research_contract"]["approval"]["target_sha256"] == receipt["plan_sha256"]
+    assert contract.plan_sha256(request["plan"]) == receipt["plan_sha256"]
 
 
 @pytest.mark.parametrize("resume", [False, True])

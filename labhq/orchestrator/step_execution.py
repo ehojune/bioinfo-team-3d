@@ -11,23 +11,27 @@ class ReapprovalRequired(RuntimeError):
     """The first research dispatch was withheld because the approved runners changed."""
 
 
+class ReplanRequired(RuntimeError):
+    """Changing runner assignments would invalidate existing evidence or reuse approval."""
+
+
 class FirstDispatch:
-    """Shared by the parallel steps until any of them enters gateway dispatch."""
+    """Check dispatch placement without changing a plan whose execution has begun."""
 
     def __init__(self, request):
         self.plan = request["plan"]
-        self.started = any(request.get(key) for key in _EXECUTION_RECORDS) or bool(
-            (request.get("research_contract") or {}).get("continuation"))
-        self.stale = False
+        self.can_reapprove = not (any(request.get(key) for key in _EXECUTION_RECORDS)
+                                  or (request.get("research_contract") or {}).get("continuation"))
+        self.needs_reapproval = False
 
     def before_send(self, choice, agents):
-        if self.started:
-            return
-        # The check and transition are synchronous. Once stale, no sibling can start under this approval.
-        self.stale = self.stale or bind_draft(self.plan, choice, agents, refresh_runner=True) != self.plan
-        if self.stale:
+        if self.needs_reapproval or bind_draft(self.plan, choice, agents, refresh_runner=True) != self.plan:
+            if not self.can_reapprove:
+                raise ReplanRequired("approved runner assignments changed; revise the plan and obtain a new CP1")
+            # Once stale, no sibling can start under this approval, even if the roster changes back.
+            self.needs_reapproval = True
             raise ReapprovalRequired("step runners changed before dispatch; renewed CP1 required")
-        self.started = True
+        self.can_reapprove = False
 
     def discard_unsent_proofs(self, request):
         # Only a stale first-dispatch guard can abandon preparation; no research step entered dispatch.
