@@ -4,3 +4,7 @@ rows:
     at: '2026-11-21 02:51'
     summary: Slurm 잡을 보낼 때 실행과 대기에 쓰는 CPU 합계를 제한합니다.
     text: 선택형 사이트 상한을 runner와 init 시험 잡에 적용하고 접수 미확정 예약을 SQLite에 남겨 재전송을 막았다.
+  - sha: '49691ce'
+    at: '2026-11-21 02:58'
+    summary: Slurm CPU 상한을 설정하는 방법을 한영 매뉴얼에 추가했습니다.
+    text: 노드 선택과 첫 현장 점검을 안내하고 CPU 원장 회귀를 Windows CI에서 실행한다.
