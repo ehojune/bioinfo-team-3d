@@ -10,6 +10,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-21
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 03:49 | [`9a0eb8f`](https://github.com/ehojune/bioinfo-team-3d/commit/9a0eb8f) | **Slurm 제출을 재사용할 때 업로드한 입력 내용도 비교합니다.**<br>검증된 SHA-256을 제출 식별에 넣고 기존 원장 행이 있어도 새 제출 전 accounting을 확인한다. |
+| 03:42 | [`d0faae6`](https://github.com/ehojune/bioinfo-team-3d/commit/d0faae6) | **staff CLI가 Slurm CPU 원장의 처리 시간까지 기다립니다.**<br>MCP 안팎의 제한 시간에 큐·accounting 조회와 SQLite 잠금 대기를 함께 반영한다. |
+| 03:31 | [`f4c442a`](https://github.com/ehojune/bioinfo-team-3d/commit/f4c442a) | **Slurm 상태 조회 시간이 끝나면 새 잡의 미제출 상태를 알립니다.**<br>CPU 원장의 sacct·squeue timeout을 init과 runner에 제출 실패로 전달한다. |
+| 03:29 | [`d93594d`](https://github.com/ehojune/bioinfo-team-3d/commit/d93594d) | **첫 Slurm 제출 전에 accounting을 확인합니다.**<br>상한을 켠 init은 완료가 확인된 시험 뒤 새 잡을 제출하며 접수 미확정 시험은 기존 예약에서 복원한다. |
+| 03:18 | [`58e1072`](https://github.com/ehojune/bioinfo-team-3d/commit/58e1072) | **Slurm이 제출을 명시적으로 거절하면 예약한 CPU를 반환합니다.**<br>접수 불명 응답의 예약은 유지하고 큐에서 빠진 시작·노드 구성 실패 잡의 예약을 해제한다. |
+| 03:07 | [`79f2dae`](https://github.com/ehojune/bioinfo-team-3d/commit/79f2dae) | **Slurm에서 같은 설정의 별도 실행과 한 잡의 전송 재시도를 구분합니다.**<br>실행별 submission_id와 재시도 결과를 표시하고 REVOKED 잡의 CPU 예약을 해제한다. |
+| 02:58 | [`49691ce`](https://github.com/ehojune/bioinfo-team-3d/commit/49691ce) | **Slurm CPU 상한을 설정하는 방법을 한영 매뉴얼에 추가했습니다.**<br>노드 선택과 첫 현장 점검을 안내하고 CPU 원장 회귀를 Windows CI에서 실행한다. |
+| 02:51 | [`b211faa`](https://github.com/ehojune/bioinfo-team-3d/commit/b211faa) | **Slurm 잡을 보낼 때 실행과 대기에 쓰는 CPU 합계를 제한합니다.**<br>선택형 사이트 상한을 runner와 init 시험 잡에 적용하고 접수 미확정 예약을 SQLite에 남겨 재전송을 막았다. |
+
 ## 2026-11-18
 
 | 시간 | 커밋 | 주요 변경사항 |
