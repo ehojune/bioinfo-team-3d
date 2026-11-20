@@ -12,6 +12,7 @@ import os
 import shlex
 import stat
 import time
+import uuid
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -19,6 +20,7 @@ import httpx
 
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned, write_owned_bytes
+from ..hpc_cpu_ledger import SUBMISSION_ID
 from ..hpc_transfer import UPLOAD_BUDGET_S, TransferError, read_confined
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
@@ -363,7 +365,7 @@ def crlf_shell_inputs(workdir: Path, inputs: list[str]) -> list[str]:
 @server.tool()
 async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G",
                      walltime: str = "04:00:00", queue: str | None = None, reason: str = "",
-                     inputs: list[str] | None = None) -> str:
+                     inputs: list[str] | None = None, submission_id: str | None = None) -> str:
     """Submit a bash script as a batch job.
 
     script: the script body (commands; scheduler directives optional). With account switching,
@@ -379,6 +381,10 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     inputs: small files your script reads, as paths relative to your workspace (at most 20, 512 KiB each). A cluster
     that does not share files with this machine gets them in the job's work folder under the same relative path; a
     cluster that does share them ignores this list. Larger files are not sent: say so in your reason.
+    submission_id: for CPU-limited Slurm, assign a different stable ID to each intended job, even if jobs
+    use identical scripts and settings. Reuse the same ID and payload only when retrying that job.
+    Without an ID, identical jobs within a task are treated as replays. An explicit ID must start with an
+    ASCII letter or digit and may contain up to 64 ASCII letters, digits, dots, underscores or hyphens.
     Returns JSON: {"submitted": true, "job_id": ...} or a normal PI denial.
     Operational failures are MCP tool errors; denial must not trigger resubmission.
     """
@@ -391,6 +397,9 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     if S.hpc.scheduler == "slurm" and (option := slurm_cluster_directive(script)):
         raise tool_failure(f"#SBATCH {option}: labhq tracks jobs on the default cluster only; "
                            "remove -M/--clusters and submit again")
+    if submission_id is not None and (not isinstance(submission_id, str) or not SUBMISSION_ID.fullmatch(submission_id)):
+        raise tool_failure("invalid submission_id; use 1-64 ASCII letters, digits, dots, underscores or hyphens "
+                           "and start with a letter or digit")
     if inputs is not None and (not isinstance(inputs, list) or len(inputs) > 20
                                or not all(isinstance(i, str) and i and not i.startswith("/") and ".." not in i.split("/")
                                           for i in inputs)):
@@ -410,6 +419,8 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     stamp = time.strftime("%Y%m%d-%H%M%S")
     if mode == "hpc":
         stamp += "_" + sanitize_job_name(TASK or "task")
+    if submission_id is not None:
+        stamp += "_" + uuid.uuid4().hex[:12]
     spath = WORKDIR / "jobs" / f"{name}_{stamp}.sh"
     try:
         inputs = {}
@@ -432,6 +443,7 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
         out = await _broker("/jobs/submit", {
             "task_id": TASK, "agent_id": AGENT, "script": str(spath), "name": name, "cores": cores, "mem": mem,
             "walltime": walltime, "queue": queue, "reason": reason, "inputs": upload_inputs,
+            **({"submission_id": submission_id} if submission_id is not None else {}),
         }, timeout=S.policy.approvals.timeout_s + _submit_wait_s() + 30)
     except (httpx.ConnectError, ConnectionError) as e:  # fail closed
         raise tool_failure(f"labhq broker unreachable; the job was not submitted: {e}") from e
@@ -448,13 +460,16 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     return json.dumps({
         "submitted": True, "job_id": job_id, "script": str(spath), "logs": str(logs),
         "output_dir": str(output_dir),
+        **({"replayed": True} if out.get("replayed") else {}),
         **({"remote_output_dir": SCHED.transfer().path(out["transfer"]["work"]),
             "remote_data_dir": SCHED.transfer().path(out["transfer"]["data"]),
             "retention": "Remote outputs remain in the request data folder; only small files are fetched locally."}
            if out.get("transfer", {}).get("request_id") else {}),
-        "note": "Relative job outputs are in output_dir. Do not poll in a loop; "
-                "summarize what you are waiting for and end your turn; "
-                "you will be resumed when the job finishes.",
+        "note": ("Returned the existing job ID without submitting a new job. Use a distinct submission_id "
+                 "for another intended run." if out.get("replayed") else
+                 "Relative job outputs are in output_dir. Do not poll in a loop; "
+                 "summarize what you are waiting for and end your turn; "
+                 "you will be resumed when the job finishes."),
     })
 
 

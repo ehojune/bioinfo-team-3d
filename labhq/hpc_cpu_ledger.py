@@ -16,8 +16,9 @@ from pathlib import Path
 from .test_guard import guard_test_path
 
 _FINAL = frozenset({"BOOT_FAIL", "CANCELLED", "COMPLETED", "DEADLINE", "FAILED", "NODE_FAIL",
-                    "OUT_OF_MEMORY", "PREEMPTED", "TIMEOUT"})
+                    "OUT_OF_MEMORY", "PREEMPTED", "REVOKED", "TIMEOUT"})
 _JOB_ID = re.compile(r"[0-9]+(?:[_+][0-9]+)?\Z")
+SUBMISSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _LEGACY_CLOCK_TOLERANCE_S = 120
 
 
@@ -33,6 +34,7 @@ class Submission:
     script_text: str
     receipt: dict
     legacy_identity: tuple | None = None
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,8 +111,12 @@ class CpuLedger:
         with self._transaction() as db:
             rows = list(db.execute("SELECT * FROM submissions WHERE site = ?", (self.site,)))
             existing = next((row for row in rows if row["key"] == submission.key), None)
+            if existing:
+                receipt = json.loads(existing["receipt"])
+                if receipt.pop("cpu_submission_fingerprint", None) != submission.fingerprint:
+                    raise RuntimeError("submission_id is already used with a different job payload")
             if existing and existing["job_id"]:
-                submission.receipt = json.loads(existing["receipt"])
+                submission.receipt = {**receipt, "replayed": True}
                 return existing["job_id"], existing["name"]
             legacy = self._legacy_jobs()
             if submission.legacy_identity is not None and any(
@@ -122,7 +128,7 @@ class CpuLedger:
             used, recovered = self._reconcile(db, rows, live, accounting, submission.key)
             if existing:
                 if recovered:
-                    submission.receipt = json.loads(existing["receipt"])
+                    submission.receipt = {**receipt, "replayed": True}
                     return recovered, existing["name"]
                 problem = "Slurm acceptance is unconfirmed; the CPU reservation is held and the job was not resent"
             else:
@@ -134,9 +140,12 @@ class CpuLedger:
                                "no new job was submitted")
                 else:
                     name = "labhq-" + uuid.uuid4().hex
+                    receipt = dict(submission.receipt)
+                    if submission.fingerprint is not None:
+                        receipt["cpu_submission_fingerprint"] = submission.fingerprint
                     db.execute("INSERT INTO submissions (site, key, name, cpus, reserved_at, receipt) "
                                "VALUES (?, ?, ?, ?, ?, ?)",
-                               (self.site, submission.key, name, cores, time.time(), json.dumps(submission.receipt)))
+                               (self.site, submission.key, name, cores, time.time(), json.dumps(receipt)))
                     return None, name
         raise RuntimeError(problem)
 

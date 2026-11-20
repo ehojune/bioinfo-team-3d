@@ -1,6 +1,7 @@
 """Exercise runner and init submission against a fake Slurm controller only."""
 import asyncio
 import concurrent.futures
+import json
 import subprocess
 import threading
 import time
@@ -67,8 +68,8 @@ class FakeSlurm:
         return subprocess.CompletedProcess(args, 0, "".join(
             f"{row.job_id}|{row.cpus}|{row.submitted_at}|{row.state}|{row.name}\n" for row in rows), "")
 
-    def finish(self, job_id):
-        self.accounting[job_id] = replace(self.live.pop(job_id), state="COMPLETED")
+    def finish(self, job_id, state="COMPLETED"):
+        self.accounting[job_id] = replace(self.live.pop(job_id), state=state)
 
 
 @pytest.fixture
@@ -85,7 +86,7 @@ def cluster(tmp_path, monkeypatch):
     return fake, settings
 
 
-def submit(settings, workdir, name, cores, *, task=None, timestamp="one", directive=""):
+def submit(settings, workdir, name, cores, *, task=None, timestamp="one", directive="", submission_id=None):
     jobs = workdir / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
     script = jobs / f"{name}-{timestamp}.sh"
@@ -96,7 +97,8 @@ def submit(settings, workdir, name, cores, *, task=None, timestamp="one", direct
 
     return asyncio.run(submit_job(settings, Scheduler(settings.hpc), workdir,
                                  {"script": str(script), "name": name, "cores": cores, "walltime": "00:05:00",
-                                  "task_id": task or name, "agent_id": "fixture"}, approve))
+                                  "task_id": task or name, "agent_id": "fixture",
+                                  "submission_id": submission_id}, approve))
 
 
 def trial(settings, tmp_path):
@@ -147,17 +149,76 @@ def test_parallel_calls_reserve_before_sbatch_returns(cluster, tmp_path):
 
 
 @pytest.mark.parametrize("finished", [False, True])
-def test_acceptance_response_lost_can_be_recovered_after_restart(cluster, tmp_path, finished):
+@pytest.mark.parametrize("submission_id", [None, "run-1"])
+def test_acceptance_response_lost_can_be_recovered_after_restart(cluster, tmp_path, finished, submission_id):
     fake, settings = cluster
     fake.lose_response = True
-    response = submit(settings(), tmp_path, "recover", 60)
+    response = submit(settings(), tmp_path, "recover", 60, submission_id=submission_id)
     assert "acceptance is unconfirmed" in response["error"]
     if finished:
         fake.finish("1001")
-    recovered = submit(settings(), tmp_path, "recover", 60, timestamp="new")
+    recovered = submit(settings(), tmp_path, "recover", 60, timestamp="new", submission_id=submission_id)
     assert recovered["job_id"] == "1001"
+    assert recovered["replayed"] is True
     assert recovered["script"].endswith("recover-one.sh")
     assert len(fake.submits) == 1
+
+
+def test_distinct_invocations_submit_identical_jobs_and_reused_id_refuses_changes(cluster, tmp_path):
+    fake, settings = cluster
+    first = submit(settings(), tmp_path, "replicate", 30, submission_id="run-1")
+    second = submit(settings(), tmp_path, "replicate", 30, timestamp="two", submission_id="run-2")
+    assert first["job_id"] != second["job_id"]
+    assert "60 reserved + 30 requested" in submit(
+        settings(), tmp_path, "replicate", 30, timestamp="three", submission_id="run-3")["error"]
+    fake.finish(first["job_id"])
+    assert "different job payload" in submit(
+        settings(), tmp_path, "replicate", 29, timestamp="changed", submission_id="run-1")["error"]
+    replay = submit(settings(), tmp_path, "replicate", 30, timestamp="replay", submission_id="run-1")
+    assert replay["job_id"] == first["job_id"]
+    assert replay["replayed"] is True
+    assert replay["script"] == first["script"]
+    assert len(fake.submits) == 2
+
+
+def test_revoked_in_accounting_releases_capacity(cluster, tmp_path):
+    fake, settings = cluster
+    first = submit(settings(), tmp_path, "revoked", 60)
+    fake.finish(first["job_id"], "REVOKED")
+    assert submit(settings(), tmp_path, "new", 60)["submitted"]
+    assert len(fake.submits) == 2
+
+
+async def test_mcp_passes_invocation_identity_and_returns_original_receipt(cluster, tmp_path, monkeypatch):
+    from labhq.tools import hpc_mcp
+
+    fake, settings = cluster
+    config = settings()
+    monkeypatch.setattr(hpc_mcp, "S", config)
+    monkeypatch.setattr(hpc_mcp, "SCHED", Scheduler(config.hpc))
+    monkeypatch.setattr(hpc_mcp, "SESSION_ERROR", None)
+    monkeypatch.setattr(hpc_mcp, "WORKDIR", tmp_path)
+    monkeypatch.setattr(hpc_mcp, "TASK", "task")
+    monkeypatch.setattr(hpc_mcp, "AGENT", "fixture")
+    monkeypatch.delenv("LABHQ_EXECUTION_MODE", raising=False)
+
+    async def approve(_):
+        return {"approved": True}
+
+    async def broker(path, payload, timeout):
+        assert path == "/jobs/submit"
+        return await submit_job(config, Scheduler(config.hpc), tmp_path, payload, approve)
+
+    monkeypatch.setattr(hpc_mcp, "_broker", broker)
+    first = json.loads(await hpc_mcp.hpc_submit("sleep 1", "sample", submission_id="first"))
+    second = json.loads(await hpc_mcp.hpc_submit("sleep 1", "sample", submission_id="second"))
+    replay = json.loads(await hpc_mcp.hpc_submit("sleep 1", "sample", submission_id="first"))
+    assert first["job_id"] != second["job_id"]
+    assert first["script"] != second["script"]
+    assert replay["job_id"] == first["job_id"]
+    assert replay["script"] == first["script"]
+    assert replay["replayed"] is True
+    assert len(fake.submits) == 2
 
 
 def test_absent_job_and_failed_query_hold_the_reservation(cluster, tmp_path):

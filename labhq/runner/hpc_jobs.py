@@ -13,7 +13,7 @@ import hashlib
 from pathlib import Path
 from typing import AsyncContextManager, Awaitable, Callable
 
-from ..hpc_cpu_ledger import Submission, submission_key
+from ..hpc_cpu_ledger import SUBMISSION_ID, Submission, submission_key
 from ..hpc_transfer import TransferError, job_spec, remote_script, upload_job
 from ..policy import core_hours, hpc_needs_approval
 from ..settings import Settings
@@ -109,6 +109,10 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
     queue = body.get("queue") or s.hpc.default_queue
     if queue is not None and not isinstance(queue, str):
         return {"error": f"queue must be a name: {queue!r}"}
+    invocation = body.get("submission_id")
+    if invocation is not None and (not isinstance(invocation, str) or not SUBMISSION_ID.fullmatch(invocation)):
+        return {"error": "submission_id must be 1-64 ASCII letters, digits, dots, underscores or hyphens "
+                         "and start with a letter or digit"}
     try:
         cores = int(body.get("cores", 1))
         mem, walltime = str(body.get("mem") or "4G"), str(body.get("walltime") or "04:00:00")
@@ -232,10 +236,13 @@ async def submit_job(s: Settings, scheduler: Scheduler, workdir: Path, body: dic
         kwargs = {}
         if cap_enabled:
             identity = (body.get("task_id"), body.get("agent_id"), name, script_sha256)
-            key = submission_key("runner", identity, argv[:-1], inputs or [],
-                                 (remote_data or {}).get("request_snapshot"))
+            fingerprint = submission_key("runner", identity, argv[:-1], inputs or [],
+                                         (remote_data or {}).get("request_snapshot"))
+            key = (submission_key("runner invocation", *identity[:2], invocation)
+                   if invocation is not None else fingerprint)
             result.update(cpu_submission_key=key)
-            kwargs["cpu_submission"] = Submission(key, text, result, identity)
+            kwargs["cpu_submission"] = Submission(key, text, result, identity,
+                                                   fingerprint if invocation is not None else None)
         try:
             job_id = await asyncio.to_thread(scheduler.submit, script_arg, name, cores, mem, walltime, queue,
                                              out_arg, err_arg, **kwargs)
