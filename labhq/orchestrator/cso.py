@@ -78,6 +78,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import INPUT_STEP_ID, clip, extract_json, input_relpath, output_relpath, short
 from . import execution as execution_policy
+from . import step_execution
 from .. import vocab as output_vocab
 from ..recruit import paper2agent, paper_skills, planning as recruit_planning
 from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
@@ -3297,6 +3298,7 @@ class Orchestrator:
         self.budget_outcomes: dict[str, list[dict]] = {}
         self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
         self.paper_builds: dict[str, paper_skills.ApprovedBuilds] = {}
+        self.first_step_dispatch: dict[str, step_execution.FirstDispatch] = {}
         self.paper_budget_holds: dict[str, dict[str, float]] = {}
         # #862: attempts this process reserved and is dispatching now; a restart prune never touches them.
         self.dispatch_inflight: dict[str, set[str]] = {}
@@ -3674,7 +3676,11 @@ class Orchestrator:
         """``_prepare_runner_environments`` for one request: the runners and staff it sees are the request's (#1204)."""
         self._environment_rid = rid
         try:
-            return self._prepare_runner_environments(steps)
+            bound = self._prepare_runner_environments(steps)
+            request = self.hub.requests[rid]
+            return step_execution.bind_draft(
+                {**(request.get("plan") or {}), "steps": bound}, request.get("execution_location"),
+                hub_agents(self.hub, rid), refresh_runner=True)["steps"]
         finally:
             self._environment_rid = None
 
@@ -4494,6 +4500,9 @@ class Orchestrator:
                 attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
                 self._note_inflight_cap(rid, attempt_task)
                 try:
+                    placement = self.first_step_dispatch.get(rid) if execution_step else None
+                    if placement is not None:
+                        placement.before_send(execution_req.get("execution_location"), hub_agents(self.hub, rid))
                     dispatched = (attempt_task if current.meta.get("facilities_diagnosis") else
                                   with_pi_notes(attempt_task, self.hub.requests.get(rid) or {}))
                     tracked = getattr(self.hub, 'dispatch_with_identity', None)
@@ -4503,6 +4512,13 @@ class Orchestrator:
                     else:
                         res = await self.hub.dispatch(dispatched)
                     res = paper_skills.with_preparation_outcome(res, attempt_task)
+                except step_execution.ReapprovalRequired:
+                    await self._release_dispatch_hold(rid, attempt_task.id)
+                    raise
+                except step_execution.ReplanRequired as error:
+                    await self._release_dispatch_hold(rid, attempt_task.id)
+                    return TaskResult(task_id=attempt_task.id, agent_id=current.agent_id, ok=False,
+                                      error_kind="research_stop", error=str(error), cost_usd=0.0)
                 except asyncio.CancelledError:
                     (await self._release_if_unsent(rid, attempt_task.id))
                     raise
@@ -5275,7 +5291,7 @@ class Orchestrator:
             used += len(line) + 1
         return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan),
                 # The same frozen-plan fields the CP1 card carries, so the web renders the whole plan (#654 review).
-                "detail": {"plan_canonical": canonical_plan_json(plan),
+                "detail": {"plan_canonical": canonical_plan_json(plan), **step_execution.card_detail(plan),
                            "pack_applicability": plan.get("pack_applicability") or {},
                            "warnings": plan.get("warnings") or [],
                            "protocol_revision": plan["protocol"].get("revision"), "packs": plan["protocol"].get("packs"),
@@ -5666,10 +5682,12 @@ class Orchestrator:
         problems = execution_policy.input_errors(
             {**reference_meta(request_row), "project_dirs": request_row.get("project_dirs")}, choice,
             request_row.get("hpc_input_approval"))
-        problems += execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid))
+        plan = request_row.get('plan') or {}
+        problems += execution_policy.plan_errors(steps, choice, hub_agents(self.hub, rid),
+                                                 version=plan.get('step_execution_version'))
         if problems:
             raise ValueError("; ".join(problems))
-        plan = (self.hub.requests.get(rid) or {}).get('plan') or {}
+        step_execution.require_approved_placement(plan, steps, request_row.get('research_contract') or {})
         rows = [row for step in steps if (only is None or step['id'] in only)
                 and (only is not None or not (results.get(step['id']) and results[step['id']].ok))
                 for row in paper_skills.attachments(plan, step['id'], step['agent_id'], rid)]
@@ -5909,7 +5927,7 @@ class Orchestrator:
                              if d in results and results[d].ok and results[d].workdir and results[d].outputs]
             upstream_steps = {d: results[d].workdir for d in linked
                               if d in results and results[d].ok and results[d].workdir and results[d].outputs}
-            pin = environment_runner_pin(step)
+            pin = step_execution.runner_pin((req_state or {}).get("plan") or {}, step, environment_runner_pin(step))
             if pin and (session_id or workdir):
                 origin = self._session_origin(rid, step["agent_id"], session_id)
                 if origin != pin:
@@ -6074,6 +6092,9 @@ class Orchestrator:
                                 answer = None
                             except Exception:
                                 answer = None
+                            if answer is not None and answer.error_kind == "research_stop":
+                                return original.model_copy(update={"ok": False, "error_kind": "research_stop",
+                                                                   "error": answer.error})
                             if answer is not None and answer.unreported_outputs:
                                 return original.model_copy(update={
                                     "ok": False, "error_kind": "contract",
@@ -6172,6 +6193,9 @@ class Orchestrator:
                             **({"workdir": current.workdir} if current.workdir else {})),
                     )
                     corrected = await self.run_step(correction_task)
+                    if corrected.error_kind == "research_stop":
+                        return original.model_copy(update={"ok": False, "error_kind": "research_stop",
+                                                           "error": corrected.error})
                     collect_paper_usage(corrected)
                     current = corrected.model_copy(update={
                         "tool_errors": list(dict.fromkeys([*current.tool_errors, *corrected.tool_errors])),
@@ -6238,6 +6262,13 @@ class Orchestrator:
                                                                error="unmet dependencies"))
                 break
             done, _ = await asyncio.wait(running.values(), return_when=asyncio.FIRST_COMPLETED)
+            placement = self.first_step_dispatch.get(rid)
+            if placement is not None and placement.needs_reapproval:
+                for pending in running.values():
+                    if not pending.done():
+                        pending.cancel()
+                await asyncio.gather(*running.values(), return_exceptions=True)
+                raise step_execution.ReapprovalRequired("step runners changed before dispatch; renewed CP1 required")
             for sid, t in list(running.items()):
                 if t in done:
                     running.pop(sid)
@@ -7614,7 +7645,17 @@ class Orchestrator:
                                                run_where="wsl" if req.get("wsl_pinned") else None,
                                                run_where_note=req.get("run_where_note"))
 
-            async def finish_research_plan(plan: dict[str, Any]) -> bool:
+            def step_placement_changed(plan: dict[str, Any]) -> bool:
+                return step_execution.bind_draft(
+                    plan, req.get("execution_location"), hub_agents(self.hub, rid), refresh_runner=True) != plan
+
+            async def finish_research_plan() -> bool:
+                while True:
+                    ready = await approve_research_plan(req["plan"])
+                    if ready is not None:
+                        return ready
+
+            async def approve_research_plan(plan: dict[str, Any]) -> bool | None:
                 async def end_revised(new_rid: str, note: str) -> None:
                     # Not a failure: the PI asked for another plan, which the new request writes (CP1 수정 요청).
                     req["outcome"] = "plan_revision_requested"
@@ -7622,6 +7663,13 @@ class Orchestrator:
                                  f"새 요청 {new_rid}에서 계획을 다시 세우고 새 CP1을 받습니다."
                                  + (f"\nPI 메모: {note}" if note.strip() else ""), {}, ok=True))
 
+                choice, agents = req.get("execution_location"), hub_agents(self.hub, rid)
+                plan, placement_changed = step_execution.refresh_for_approval(plan, req, choice, agents)
+                execution_policy.validate_versioned_plan(plan, choice, agents)
+                if placement_changed:
+                    for step in plan["steps"]:
+                        step_execution.runner_pin(plan, step, environment_runner_pin(step))
+                    req["plan"] = plan
                 stored = req.get("research_contract") or {}
                 previous = stored.get("approval")
                 approval = refresh_plan_approval(plan, previous)
@@ -7652,6 +7700,8 @@ class Orchestrator:
                     "approval": approval,
                 }
                 await persist_request(self.hub, rid)
+                if placement_changed:
+                    await self._emit(rid, "request.plan", {**plan, "processing": req.get("route_decision")})
                 plan_hash = req["research_contract"]["plan_sha256"]
                 carried = req["research_contract"].get("continuation") or {}
                 # Every continuation CP1/resume uses the same sealed executable reuse contract (#797).
@@ -7779,7 +7829,7 @@ class Orchestrator:
                             kind="research_plan", request_id=rid,
                             summary=f"{card[:698 - len(budget_line)]} {budget_line}",
                             detail={"gate": "research_plan", "target_sha256": plan_hash,
-                                    "plan_canonical": canonical_plan_json(plan),
+                                    "plan_canonical": canonical_plan_json(plan), **step_execution.card_detail(plan),
                                     "pack_applicability": plan.get("pack_applicability") or {},
                                     "warnings": plan.get("warnings") or [],
                                     **({"plan_warnings": req.get("plan_warnings") or [],
@@ -7833,6 +7883,9 @@ class Orchestrator:
                                 and not str(decision.get("note") or "").strip()):
                             break
                         decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
+                    # A positive reply is for the card's hash. Check again after waiting for the PI.
+                    if decision.get("approved") and step_placement_changed(plan):
+                        return None
                     approval = freeze_plan(plan, decision)
                     if from_resume:
                         approval["via"] = "resume_card"
@@ -7927,8 +7980,10 @@ class Orchestrator:
                                                       for s in req["plan"]["steps"]),
                                guard=self._external_guard(rid), tier_rules=self._tier_rules())
                 # Hiring can replace an eligible fallback; reject before CP1 freezes the final assignments.
+                choice, agents = req.get("execution_location"), hub_agents(self.hub, rid)
+                req["plan"] = step_execution.bind_draft(req["plan"], choice, agents, refresh_runner=True)
                 location_errors = execution_policy.plan_errors(
-                    req["plan"]["steps"], req.get("execution_location"), hub_agents(self.hub, rid))
+                    req["plan"]["steps"], choice, agents, version=req["plan"].get("step_execution_version"))
                 if location_errors:
                     raise ValueError("execution plan invalid after recruitment: " + "; ".join(location_errors))
                 await persist_request(self.hub, rid)
@@ -7980,7 +8035,7 @@ class Orchestrator:
                         if stored_problems:
                             raise ValueError("frozen research plan checklist invalid: " +
                                              "; ".join(stored_problems))
-                    if not await finish_research_plan(req["plan"]):
+                    if not await finish_research_plan():
                         return
                     steps = req["plan"]["steps"]
                     warnings = req["plan"].get("warnings") or []
@@ -8167,7 +8222,9 @@ class Orchestrator:
                         prompt += planning_guidance(checklist_catalog, req.get("analysis_precedents"))
                         prompt += self._lookup_usage_line(rid)
                         prompt += continuation_note
-                        schema = research_plan_schema(vocab is not None, output_types.ENTRY_SCHEMA)
+                        schema = research_plan_schema(
+                            vocab is not None, output_types.ENTRY_SCHEMA,
+                            offer_step_placement=step_execution.can_offer(req.get("execution_location"), roster))
                     else:
                         vocab = self._output_vocab()
                         topic_vocab = output_vocab.current()
@@ -8274,7 +8331,9 @@ class Orchestrator:
                             problems = [str(error)]
                         problems.extend(recruit_planning.proposal_errors(candidate))
                         drafted = candidate.get("steps") if isinstance(candidate, dict) else None
-                        problems += execution_policy.plan_errors(drafted, req.get("execution_location"), hub_agents(self.hub, rid))
+                        problems += execution_policy.plan_errors(
+                            drafted, req.get("execution_location"), hub_agents(self.hub, rid),
+                            version=candidate.get("step_execution_version") if isinstance(candidate, dict) else None)
                         bad_agents = unavailable_plan_agents(drafted, known, orchestration)
                         if bad_agents:
                             problems.append(f"research plan uses unavailable or orchestration agents: {bad_agents}; "
@@ -8376,6 +8435,7 @@ class Orchestrator:
                                 "This trace is not evidence of scientific performance gain.")
                         plan = {**plan, 'warnings': list(dict.fromkeys([*current_warnings, *fit_warnings]))}
                         req['plan_warnings'] = list(dict.fromkeys([*req['plan_warnings'], *plan['warnings']]))
+                        plan = step_execution.bind_draft(plan, req.get("execution_location"), hub_agents(self.hub, rid))
                         problems = selection_problems + output_problems + plan_problems(plan, candidate_packs)
                         problems.extend(fit_warnings)
                         if not problems:
@@ -8535,8 +8595,9 @@ class Orchestrator:
                     (await self._finish(rid, plan_res.text or "CSO returned no steps.", {}, ok=False))
                     return
                 if research_lane:
-                    if not await finish_research_plan(req["plan"]):
+                    if not await finish_research_plan():
                         return
+                    steps = req["plan"]["steps"]
                 elif req["mode"] == "plan_only":
                     req["outcome"] = "plan_only"
                     (await self._finish(rid, plan_res.text or "Plan completed.", {}, ok=True))
@@ -8800,9 +8861,29 @@ class Orchestrator:
                 # failure; only a step without a good result re-plans or ends the request (PR #378 review).
                 return any(not result.ok for result in results.values())
 
-            if remaining:
-                await self.run_dag(rid, text, steps, results, only=remaining,
-                                   feedback=resume_feedback or None)
+            while remaining:
+                # CP1 can be followed by more awaits, including the blind draft, before the first DAG call.
+                while research_lane and step_placement_changed(req["plan"]):
+                    if not await finish_research_plan():
+                        return
+                    steps = req["plan"]["steps"]
+                placement = (step_execution.FirstDispatch(req)
+                             if research_lane and req["plan"].get("step_execution_version") is not None else None)
+                if placement is not None:
+                    self.first_step_dispatch[rid] = placement
+                try:
+                    await self.run_dag(rid, text, steps, results, only=remaining,
+                                       feedback=resume_feedback or None)
+                    break
+                except step_execution.ReapprovalRequired:
+                    if placement is None or not placement.needs_reapproval:
+                        raise
+                    placement.discard_unsent_proofs(req)
+                    self._forget_step_state(rid, remaining)
+                    await self._drop_unsent_holds(rid)
+                    await persist_request(self.hub, rid)
+                finally:
+                    self.first_step_dispatch.pop(rid, None)
             def serialized_results() -> dict[str, dict]:
                 return {k: {**v.model_dump(mode="json"),
                             "status": "skipped" if (v.error or "").startswith("skipped:") else

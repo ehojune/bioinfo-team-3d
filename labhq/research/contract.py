@@ -237,6 +237,7 @@ class ResearchStep(StrictModel):
     evidence_slots: list[EvidenceSlot]
     depends_on: list[str]
     execution: Literal["local", "hpc"] | None = None
+    runner_id: str | None = Field(default=None, min_length=1, max_length=256)
     # Present only in a branched plan. Older frozen plans omit it and keep their canonical hash.
     branch: str | None = Field(default=None, min_length=1)
     # Pack rules and contract checks never read this; pack fields never fill it (no_type_inheritance).
@@ -251,8 +252,9 @@ class ResearchStep(StrictModel):
     def _drop_empty_declarations(self, handler: Any) -> dict[str, Any]:
         # An empty list is left out, so plans approved before #221 keep their canonical JSON and plan_sha256.
         data = handler(self)
-        if data.get("execution") is None:
-            data.pop("execution", None)
+        for field in ("execution", "runner_id"):
+            if data.get(field) is None:
+                data.pop(field, None)
         if not data.get("output_types"):
             data.pop("output_types", None)
         if not data.get("key_figures"):
@@ -476,6 +478,7 @@ class SelectionRecord(StrictModel):
 
 class ResearchPlan(StrictModel):
     schema_version: Literal[2]
+    step_execution_version: int | None = Field(default=None, strict=True, ge=1, le=1)
     topics: list[str] = Field(default_factory=list, max_length=24)
     intake: IntakeDecision
     brief: ResearchBrief
@@ -536,14 +539,20 @@ class ResearchPlan(StrictModel):
                       "paper_skills", "paper_skill_results", "recruit_results", "branches", "selection_record"):
             if not data.get(field):
                 data.pop(field, None)
-        if data.get("budget_usd") is None:  # plans frozen before R17 keep their plan_sha256
-            data.pop("budget_usd", None)
+        for field in ("budget_usd", "step_execution_version"):
+            if data.get(field) is None:
+                data.pop(field, None)
         return data
 
     @model_validator(mode="after")
     def research_only(self) -> "ResearchPlan":
         if self.intake.work_kind != "research":
             raise ValueError("research PLAN must classify work_kind as research")
+        for step in self.steps:
+            if self.step_execution_version is None and step.runner_id is not None:
+                raise ValueError(f"step {step.id}: runner_id requires step_execution_version")
+            if self.step_execution_version is not None and (step.execution is None or not (step.runner_id or "").strip()):
+                raise ValueError(f"step {step.id}: versioned execution requires execution and runner_id")
         ids = [step.id for step in self.steps]
         if len(ids) != len(set(ids)):
             raise ValueError("research step ids must be unique")
@@ -658,10 +667,16 @@ def _without(schema: dict[str, Any], definition: str, fields: tuple[str, ...], d
     return out
 
 
-# The engine-facing schemas stay those of main before #221: declarations are offered only when switched on.
-RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(ResearchPlan.model_json_schema(), "ResearchStep", ("output_types", "model_tier"),
-                                                ("OutputTypeEntry", "PackApplicabilityRecord"))
-for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results"):
+# Output declarations and the placement opt-in are offered only when available.
+# Runner IDs are resolved by the server before the plan is approved.
+_PLAN_MODEL_SCHEMA = ResearchPlan.model_json_schema()
+RESEARCH_PLAN_SCHEMA: dict[str, Any] = _without(
+    _PLAN_MODEL_SCHEMA,
+    "ResearchStep", ("output_types", "model_tier", "runner_id"),
+    ("OutputTypeEntry", "PackApplicabilityRecord"),
+)
+for _system_field in ("pack_applicability", "warnings", "paper_skill_results", "recruit_results",
+                      "step_execution_version"):
     RESEARCH_PLAN_SCHEMA["properties"].pop(_system_field, None)
     if _system_field in RESEARCH_PLAN_SCHEMA.get("required", []):
         RESEARCH_PLAN_SCHEMA["required"].remove(_system_field)
@@ -683,12 +698,20 @@ RESEARCH_STEP_SCHEMA["properties"]["blocking_decision"] = {
     "description": "When blocked or a plan stop condition is met: the reason, question and choices."}
 
 
-def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = None) -> dict[str, Any]:
-    """RESEARCH_PLAN_SCHEMA, or with ``declare`` a copy whose steps take optional ``output_types`` entries."""
-    if not declare:
+def research_plan_schema(declare: bool, entry_schema: dict[str, Any] | None = None, *,
+                         offer_step_placement: bool = False) -> dict[str, Any]:
+    """Offer optional output declarations and placement without exposing system-assigned runner IDs."""
+    if not declare and not offer_step_placement:
         return RESEARCH_PLAN_SCHEMA
     out = json.loads(json.dumps(RESEARCH_PLAN_SCHEMA))
-    out["$defs"]["ResearchStep"]["properties"]["output_types"] = json.loads(json.dumps(entry_schema))
+    if declare:
+        out["$defs"]["ResearchStep"]["properties"]["output_types"] = json.loads(json.dumps(entry_schema))
+    if offer_step_placement:
+        out["properties"]["step_execution_version"] = {
+            **_PLAN_MODEL_SCHEMA["properties"]["step_execution_version"],
+            "description": "Use 1 to bind each step to its worker's runner at plan approval. "
+                           "All steps still follow the request's execution location.",
+        }
     return out
 
 
