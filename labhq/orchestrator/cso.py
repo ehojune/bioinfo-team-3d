@@ -7621,6 +7621,10 @@ class Orchestrator:
                                                run_where="wsl" if req.get("wsl_pinned") else None,
                                                run_where_note=req.get("run_where_note"))
 
+            def step_placement_changed(plan: dict[str, Any]) -> bool:
+                return step_execution.bind_draft(
+                    plan, req.get("execution_location"), hub_agents(self.hub, rid), refresh_runner=True) != plan
+
             async def finish_research_plan() -> bool:
                 while True:
                     ready = await approve_research_plan(req["plan"])
@@ -7856,8 +7860,7 @@ class Orchestrator:
                             break
                         decision = await ask_cp1("수정 요청에 메모가 없어 다시 묻습니다. 고칠 점을 메모에 적어 주세요. ")
                     # A positive reply is for the card's hash. Check again after waiting for the PI.
-                    if decision.get("approved") and step_execution.bind_draft(
-                            plan, choice, hub_agents(self.hub, rid), refresh_runner=True) != plan:
+                    if decision.get("approved") and step_placement_changed(plan):
                         return None
                     approval = freeze_plan(plan, decision)
                     if from_resume:
@@ -8835,6 +8838,11 @@ class Orchestrator:
                 return any(not result.ok for result in results.values())
 
             if remaining:
+                # CP1 can be followed by more awaits, including the blind draft, before the first DAG call.
+                while research_lane and step_placement_changed(req["plan"]):
+                    if not await finish_research_plan():
+                        return
+                    steps = req["plan"]["steps"]
                 await self.run_dag(rid, text, steps, results, only=remaining,
                                    feedback=resume_feedback or None)
             def serialized_results() -> dict[str, dict]:

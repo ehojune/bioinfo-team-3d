@@ -119,9 +119,11 @@ async def test_cp1_shows_and_hashes_resolved_step_placement(monkeypatch, recruit
     assert [task.meta["kind"] for task in hub.calls] == ["plan"]
 
 
-async def test_cp1_reopens_when_a_runner_changes_while_pi_is_deciding():
+@pytest.mark.parametrize("drift_point", ["cp1", "blind_draft"])
+async def test_cp1_reopens_when_a_runner_changes_before_dispatch(drift_point):
     settings = Settings()
     settings.research.enabled = True
+    settings.research.evidence_checkpoint = drift_point == "blind_draft"
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
 
@@ -137,22 +139,39 @@ async def test_cp1_reopens_when_a_runner_changes_while_pi_is_deciding():
             if kwargs["kind"] == "research_plan":
                 offered = kwargs["detail"]["단계 실행 위치 · runner"]
                 if offered == "s1 · local · first-runner":
-                    self.agents["worker"]["runner_id"] = "second-runner"
+                    if drift_point == "cp1":
+                        self.agents["worker"]["runner_id"] = "second-runner"
                     return {**receipt, "approval_id": "old-cp1"}
             return receipt
 
-    hub = MovingRunnerHub(settings, dispatch, mode="plan_only", work_kind="research", text="compare conditions")
+    dispatched = []
+
+    class RecordingOrchestrator(Orchestrator):
+        async def _blind_draft(self, rid, req, text, refs):
+            if drift_point == "blind_draft":
+                self.hub.agents["worker"]["runner_id"] = "second-runner"
+            return True
+
+        async def _run_dag(self, rid, text, steps, results, only, feedback):
+            dispatched.extend(step["runner_id"] for step in steps)
+            assert len(self.hub.approvals) == 2
+
+        async def _research_after_steps(self, *args):
+            pass
+
+    hub = MovingRunnerHub(settings, dispatch, mode="orchestrate", work_kind="research", text="compare conditions")
     hub.agents["worker"]["runner_id"] = "first-runner"
     hub.requests["r"]["execution_location"] = {"mode": "local", "source": "PI selection", "approval_id": "route-choice"}
-    await Orchestrator(hub).run_request("r")
+    await RecordingOrchestrator(hub).run_request("r")
     request = hub.requests["r"]
-    assert request.get("outcome") == "plan_approved", request.get("report")
+    assert request.get("outcome") == ("research_running" if settings.research.evidence_checkpoint else "plan_approved")
     first, second = [card["detail"] for card in hub.approvals if card["kind"] == "research_plan"]
     assert first["target_sha256"] != second["target_sha256"]
     assert second["단계 실행 위치 · runner"] == "s1 · local · second-runner"
     approval = request["research_contract"]["approval"]
     assert approval["target_sha256"] == second["target_sha256"] == contract.plan_sha256(request["plan"])
     assert approval["approval_id"] != "old-cp1"
+    assert dispatched == (["second-runner"] if settings.research.evidence_checkpoint else [])
 
 
 @pytest.mark.parametrize("record", ["results", "reuse_tools", "pending_revisions"])
