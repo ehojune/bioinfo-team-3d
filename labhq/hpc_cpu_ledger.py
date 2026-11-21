@@ -59,7 +59,9 @@ class SlurmRow:
 
     @property
     def accounting_final(self) -> bool:
-        return self.final or self.state in _ACCOUNTING_FINAL_FLAGS
+        # sacct can append '+' when the state detail (e.g. who cancelled the job) is truncated.
+        state = self.state.split(maxsplit=1)[0].removesuffix("+")
+        return state in _FINAL or state in _ACCOUNTING_FINAL_FLAGS
 
     def matches_legacy(self, job: dict) -> bool:
         submitted_at = job.get("submitted_at")
@@ -177,6 +179,7 @@ class CpuLedger:
         by_name = defaultdict(list)
         for match in (*live, *accounting):
             by_name[match.name].append(match)
+        accounting_names = {row.name for row in accounting}
         active_cpus = defaultdict(int)
         for row in live:
             if not row.final:
@@ -189,7 +192,10 @@ class CpuLedger:
                 raise RuntimeError("conflicting Slurm IDs for one LabHQ submission")
             if matches:
                 job_id = matches[0].parent
-                finished = name not in active_cpus and all(match.accounting_final for match in matches)
+            if name in active_cpus:
+                finished = False
+            elif name in accounting_names:
+                finished = all(match.accounting_final for match in matches)
             cpus = max(reservation["cpus"], active_cpus[name])
             db.execute("UPDATE submissions SET job_id = ?, finished = ?, cpus = ? WHERE site = ? AND key = ?",
                        (job_id, finished, cpus, self.site, reservation["key"]))
@@ -211,8 +217,8 @@ class CpuLedger:
             jid = str(job.get("job_id"))
             family = live_by_id[jid]
             active = [row for row in family if not row.final]
-            matches = [row for row in (*family, *accounting_by_id[jid]) if row.matches_legacy(job)]
-            if active and matches:
+            matches = [row for row in accounting_by_id[jid] if row.matches_legacy(job)]
+            if active and (matches or any(row.matches_legacy(job) for row in family)):
                 # A heterogeneous component can have its own name. Once the parent is identified, count every
                 # live member. A changed submit time can indicate a requeue or an ID reused for a different job.
                 if any(row.cpus < 1 or abs(row.submitted_at - job["submitted_at"]) > _LEGACY_CLOCK_TOLERANCE_S

@@ -44,6 +44,7 @@ curl -X POST -H "Authorization: Bearer $LABHQ_CLIENT_TOKEN" "http://127.0.0.1:87
   직원 스크립트의 `#SBATCH`도 같은 판정으로 제출 전에 거부하고, 그래도 다른 cluster로 갔으면(`SBATCH_CLUSTERS` 등) 그 잡을 추적하지 않고 cluster와 id를 오류로 알립니다.
   **Slurm 동시 CPU 상한** (#1466). 로컬 사이트 프로필의 `max_concurrent_cpus`에 양의 정수(예: `60`)를 적습니다. 비워 두면 이 상한을 적용하지 않습니다. Slurm이 노드를 고르게 하려면 `pinned_nodes: []`를 씁니다.
   runner와 init 시험 잡은 같은 runner 상태 DB와 사이트 이름을 기준으로 실행·대기 잡과 접수 미확정 예약을 합산합니다. 새 요청을 더해 상한을 넘으면 제출을 거부합니다. 같은 계정의 다른 세션 잡은 집계에서 빠집니다. 접수 여부가 불확실하면 예약을 유지하고 재시작 뒤에도 같은 작업을 재전송하지 않습니다.
+  다음 잡을 제출하기 전에 `squeue`에 이전 잡의 종료 행이 남아 있어도 `sacct`에서 해당 잡의 종료 상태를 확인합니다. `FAILED`, `CANCELLED`, `TIMEOUT` 등 종료가 확인되면 CPU 예약을 해제합니다. `CANCELLED+`의 `+`는 표시 폭 때문에 세부 정보가 잘렸다는 뜻이므로 `CANCELLED`로 처리합니다. 대기·실행·정리 중이거나 종료를 확인할 수 없으면 예약을 유지합니다.
   상한을 켠 상태에서 같은 설정으로 잡을 여러 번 실행하려면 `hpc_submit`에 실행마다 다른 `submission_id`를 넣습니다. 한 잡의 전송을 재시도할 때는 ID와 설정을 그대로 씁니다. ID 없이 같은 작업을 다시 요청하면 기존 잡 ID와 `replayed: true`가 돌아옵니다.
   상한을 켜려면 Slurm accounting(`sacct`)이 필요합니다. `submit_prefix` 없이 표준 1노드·1태스크 옵션을 쓰고, 스케줄러 지시문이 없는 Bash 스크립트를 제출합니다. 첫 현장 제출 직전에 제출 기록을 실제 실행·대기 목록과 맞춰 보고, Slurm이 할당한 CPU가 요청량을 넘지 않는지 확인합니다.
   `hpc_status`·`hpc_cancel`은 숫자로 시작하는 job id만 받습니다. 옵션, Torque `qdel all`, SGE 잡 이름처럼 여러 잡을 고르는 값은 스케줄러에 넘기지 않습니다.

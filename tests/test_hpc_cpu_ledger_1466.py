@@ -3,9 +3,11 @@ import asyncio
 import concurrent.futures
 import hashlib
 import json
+import sqlite3
 import subprocess
 import threading
 import time
+from contextlib import closing
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -333,6 +335,65 @@ def test_live_failure_flag_still_counts_toward_capacity(cluster, tmp_path, state
     job_id = first["job_id"]
     fake.live[job_id] = replace(fake.live[job_id], state=state)
     assert "60 reserved + 1 requested" in submit(settings(), tmp_path, "next", 1)["error"]
+    assert len(fake.submits) == 1
+
+
+@pytest.mark.parametrize(("queue_state", "accounting_state"), [
+    ("FAILED", "FAILED"), ("CANCELLED", "CANCELLED+"), ("TIMEOUT", "TIMEOUT"),
+])
+def test_existing_reservation_waits_for_terminal_accounting(cluster, tmp_path, queue_state, accounting_state):
+    fake, settings = cluster
+    config = settings()
+    first = submit(config, tmp_path, "first", 60)
+    job_id = first["job_id"]
+    original = fake.live.pop(job_id)
+    fake.live[job_id] = replace(original, state=queue_state)
+    ledger_path = config.hpc._runner_state_path.with_suffix(".hpc-cpus.sqlite3")
+
+    assert "60 reserved + 1 requested" in submit(settings(), tmp_path, "next", 1)["error"]
+    assert len(fake.submits) == 1
+    fake.accounting[job_id] = replace(original, state=accounting_state, cpus=0)
+    with closing(sqlite3.connect(ledger_path)) as db:
+        assert db.execute("SELECT finished FROM submissions WHERE job_id = ?", (job_id,)).fetchone() == (0,)
+
+    assert submit(settings(), tmp_path, "full", 60)["submitted"]
+    assert len(fake.submits) == 2
+    assert fake.calls[-3:] == ["squeue", "sacct", "sbatch"]
+    with closing(sqlite3.connect(ledger_path)) as db:
+        assert db.execute("SELECT finished FROM submissions WHERE job_id = ?", (job_id,)).fetchone() == (1,)
+
+
+@pytest.mark.parametrize("state", ["RUNNING", "PENDING", "COMPLETING", "UNKNOWN", None])
+def test_live_or_missing_terminal_evidence_keeps_existing_reservation(cluster, tmp_path, state):
+    fake, settings = cluster
+    first = submit(settings(), tmp_path, "first", 60)
+    row = fake.live.pop(first["job_id"])
+    if state is not None:
+        fake.live[row.job_id] = replace(row, state=state)
+        fake.accounting[row.job_id] = replace(row, state="FAILED")
+    else:
+        fake.accounting[row.job_id] = replace(row, name="unrelated", state="FAILED")
+
+    assert "60 reserved + 1 requested" in submit(settings(), tmp_path, "next", 1)["error"]
+    assert len(fake.submits) == 1
+
+
+@pytest.mark.parametrize("state", ["FAILED", "CANCELLED+", "TIMEOUT"])
+def test_existing_pre_ledger_job_reconciles_terminal_accounting(cluster, tmp_path, state):
+    fake, settings = cluster
+    submitted_at = int(time.time())
+    store = StateStore(settings().hpc._runner_state_path)
+    try:
+        store.put("job", "7", {"job_id": "7", "name": "legacy", "scheduler": "slurm",
+                               "submitted_by_runner": True, "submitted_at": submitted_at, "terminal": False})
+    finally:
+        store.close()
+    fake.live["7"] = SlurmRow("7", 60, submitted_at, "FAILED", "legacy")
+
+    assert "previously submitted" in submit(settings(), tmp_path, "next", 1)["error"]
+    assert not fake.submits
+    fake.accounting["7"] = replace(fake.live["7"], state=state)
+    assert submit(settings(), tmp_path, "next", 60, timestamp="retry")["submitted"]
     assert len(fake.submits) == 1
 
 
