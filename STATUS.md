@@ -4,6 +4,39 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 결론
+
+HPC 작업 스크립트를 쓰는 직원에게 `pipefail`에서 `head`나 `grep -q`가 먼저 끝나면 앞 명령이 SIGPIPE로 실패할 수 있다고 안내합니다. 버전 기록 같은 부가 진단에만 실패를 허용하고 분석 오류는 그대로 전달하도록 지시합니다.
+
+한영 직원 도구 매뉴얼의 HPC 절에도 같은 주의를 추가했습니다.
+
+## 검증
+
+- 실제 배정 코드가 조립한 Team과 Research 직원 프롬프트에서 주의 문구가 한 번씩 들어가는지 확인했습니다. 기존 본문은 바이트 단위로 비교했습니다.
+- Direct 요청에서는 HPC를 고른 경우에만 같은 문구가 들어가는지 확인했습니다.
+- Research 프롬프트에서 `pipefail` 안내 한 줄을 빼면 기존 SHA256과 일치합니다. 전체 프롬프트의 기대 해시를 갱신하고 결과 필드 단언을 유지했습니다.
+- 관련 로컬 테스트는 209건 통과, 10건 건너뜀입니다. 공개 저장소 검사를 통과했습니다. HPC 접속·제출과 배포는 검증 범위 밖입니다.
+
+Closes #1474
+
+## 결론
+
+새 Slurm 잡을 보내기 전에 실패·취소·시간 초과를 accounting에서 확인하면 CPU 예약을 풉니다. 기존 CPU 원장과 원장 도입 전 runner 기록에도 적용합니다.
+
+## 바뀐 것
+
+- 큐에 종료 행이 남아 있어도 accounting을 조회합니다. 대기·실행·정리 중이거나 종료를 확인하지 못한 잡의 예약은 유지합니다. `CANCELLED+`도 취소로 읽습니다. [squeue](https://slurm.schedmd.com/squeue.html) · [sacct](https://slurm.schedmd.com/sacct.html#SECTION_JOB-STATE-CODES)
+- 한영 설정 매뉴얼의 Slurm 동시 CPU 상한 절에 예약 해제 조건과 `CANCELLED+` 처리를 적었습니다.
+
+## 실행한 것
+
+- 가짜 Slurm과 관련 회귀 387 passed, 2 skipped. 세 가지 종료 상태, 조회 불명 상태, 다음 제출 전 원장 갱신을 확인했습니다.
+- r2 매뉴얼 수정 뒤 `tests/test_hpc_cpu_ledger_1466.py` 50건이 통과했습니다.
+
+## 미확인
+
+- 실제 HPC 접속·제출·배포는 검증 범위 밖입니다. 기존 현장 실행에서 다음 제출 시점의 accounting 대조는 관측되지 않았습니다. [검증 기록](https://github.com/ehojune/bioinfo-team-3d/issues/1447#issuecomment-7065043971)
+
 # #1445 — 요청별 자동 승인 목록
 
 ## 결론

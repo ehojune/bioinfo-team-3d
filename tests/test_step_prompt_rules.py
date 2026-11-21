@@ -9,6 +9,12 @@ from labhq.orchestrator import cso
 from labhq.orchestrator.cso import STEP_PROMPT
 
 
+HPC_PIPEFAIL_LINE = (
+    "With `pipefail` in HPC job scripts, `head` or `grep -q` can exit early and make the producer fail with SIGPIPE. "
+    "Allow failure only for optional diagnostics such as version logging and let analysis failures propagate."
+)
+
+
 def _render() -> str:
     return " ".join(STEP_PROMPT.format(request="REQ", step_id="s1", instruction="INSTR").split())
 
@@ -51,9 +57,49 @@ async def test_walltime_guidance_reaches_dispatched_plan_and_worker():
     assert all(cso.HPC_WALLTIME_RULE in t.prompt for t in plan_and_steps)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("research", [False, True], ids=["team", "research"])
+async def test_hpc_pipefail_guidance_reaches_the_dispatched_step(research):
+    from tests.test_cso import FakeHub, result
+
+    async def dispatch(task):
+        return result(task, ok=False, error="worker exited with code 1")
+
+    hub = FakeHub(dispatch)
+    step = {"id": "s1", "agent_id": "worker", "instruction": "Prepare a job script", "depends_on": []}
+    if research:
+        hub.requests["r"].update(plan={"steps": [step]}, research_contract={"execution_enabled": True})
+    await cso.Orchestrator(hub).run_dag("r", "Run analysis", [step], {})
+
+    task, = hub.calls
+    assert task.meta["kind"] == "step"
+    assert (task.output_schema is not None) is research
+    assert task.prompt.splitlines().count(HPC_PIPEFAIL_LINE) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["hpc", "local"])
+async def test_hpc_pipefail_guidance_reaches_only_the_hpc_direct_request(mode):
+    from tests.test_cso import result
+    from tests.test_hpc_whole_request import hub_for
+
+    async def dispatch(task):
+        return result(task, ok=False, error="worker exited with code 1")
+
+    hub = hub_for(dispatch)
+    location = {"mode": mode, "runner_id": "cluster"} if mode == "hpc" else {"mode": mode}
+    hub.requests["r"].update(mode="direct", agent_id="worker", execution_location=location)
+    await cso.Orchestrator(hub).run_request("r")
+
+    task, = hub.calls
+    assert task.meta["kind"] == "direct"
+    assert task.meta["execution_location"] == location
+    assert task.prompt.splitlines().count(HPC_PIPEFAIL_LINE) == (1 if mode == "hpc" else 0)
+
+
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
-    # #1413 adds HPC runtime guidance; #690 and #669 figure and install/read contracts remain.
-    assert hashlib.sha256(STEP_PROMPT.encode()).hexdigest() == (
+    # #1475 adds one line; keep the rest byte-for-byte, including the #1413 runtime guidance.
+    assert hashlib.sha256(STEP_PROMPT.replace(HPC_PIPEFAIL_LINE + "\n", "").encode()).hexdigest() == (
         "0d16889dad570a8670acfb67dfdfe9320ceccc03dfc702d28605da5ea2e8b168")
     assert "If an HPC job runs the analysis" in STEP_PROMPT
 
@@ -76,8 +122,8 @@ def test_step_prompts_keep_reproducibility_artifacts_out_of_tmp():
 
 
 def test_research_step_prompt_bytes_stay_at_the_previous_baseline():
-    # #1413 adds HPC runtime guidance; the frozen lane keeps the figure and install/read contracts.
-    assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
+    # #1475 adds one line to the frozen research prompt too.
+    assert hashlib.sha256(cso.RESEARCH_STEP_PROMPT.replace(HPC_PIPEFAIL_LINE + "\n", "").encode()).hexdigest() == (
         "797be69d0ebac6dbf47b5a1d3e5fd14709b95f527c70012a515421eb17f0a903")
     assert "If an HPC job runs the analysis" in cso.RESEARCH_STEP_PROMPT
 

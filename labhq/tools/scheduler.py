@@ -717,10 +717,12 @@ class Scheduler:
             return [], []
 
         live = read(["squeue", "--local", "--all", "--me", "-h", "-r", "-t", "all", "-o", "%i|%C|%V|%T|%j"])
-        names_in_queue = {row.name for row in live}
-        missing = [row for row in reservations if not row["finished"] and row["name"] not in names_in_queue]
+        # squeue -t all can still list ended jobs. Ask accounting for their final state too.
+        active = [row for row in live if not row.final]
+        active_names = {row.name for row in active}
+        missing = [row for row in reservations if not row["finished"] and row["name"] not in active_names]
         legacy_ids = [str(job["job_id"]) for job in legacy if re.fullmatch(r"[0-9]+", str(job.get("job_id", "")))
-                      and not any(row.matches_legacy(job) for row in live) and not terminal_legacy(job)]
+                      and not any(row.matches_legacy(job) for row in active) and not terminal_legacy(job)]
         accounting = []
         if missing:
             # UTC day minus one avoids missing records at the site's local midnight.

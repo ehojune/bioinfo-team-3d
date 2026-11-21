@@ -10,10 +10,23 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-22
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 01:15 | [`97eb588`](https://github.com/ehojune/bioinfo-team-3d/commit/97eb588) | **새 스크립트 안내를 반영해 Research 프롬프트의 회귀 테스트를 갱신합니다.**<br>pipefail 안내 한 줄을 뺀 본문이 이전과 일치하는지 확인하고 전체 SHA256 기대값을 갱신했다. 결과 필드 단언은 유지했다. |
+| 00:59 | [`0dade97`](https://github.com/ehojune/bioinfo-team-3d/commit/0dade97) | **HPC 작업 스크립트에서 버전 기록이 분석을 멈출 수 있는 경우를 매뉴얼에 설명합니다.**<br>한영 직원 도구 매뉴얼에 pipefail과 SIGPIPE 주의를 추가하고 부가 진단에만 실패를 허용한다고 명시했다. |
+| 00:58 | [`195c11b`](https://github.com/ehojune/bioinfo-team-3d/commit/195c11b) | **설정 매뉴얼에 Slurm 잡의 CPU 예약이 풀리는 시점을 적었습니다.**<br>한영 매뉴얼에 sacct 종료 확인 조건과 CANCELLED+ 처리를 설명했다. |
+| 00:53 | [`685712b`](https://github.com/ehojune/bioinfo-team-3d/commit/685712b) | **직원에게 직접 보낸 요청도 HPC로 실행하면 같은 스크립트 주의를 받습니다.**<br>Direct HPC 배정 프롬프트에 공통 pipefail 지시를 추가하고 HPC와 PC 경로를 비교했다. |
+| 00:48 | [`dec81d0`](https://github.com/ehojune/bioinfo-team-3d/commit/dec81d0) | **실패하거나 취소된 Slurm 잡과 시간 초과 잡의 CPU를 다음 제출 전에 반환합니다.**<br>accounting의 종료 기록을 대조하고 조회 결과가 불명확한 잡의 예약은 유지한다. |
+| 00:46 | [`5ce4554`](https://github.com/ehojune/bioinfo-team-3d/commit/5ce4554) | **버전 기록 중 파이프가 일찍 닫혀 분석을 멈출 수 있다고 직원에게 안내합니다.**<br>공통 HPC 스크립트 지시에 pipefail과 SIGPIPE 주의를 추가하고 부가 진단에만 실패를 허용하도록 명시했다. |
+
 ## 2026-11-21
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:43 | [`df436e4`](https://github.com/ehojune/bioinfo-team-3d/commit/df436e4) | **HPC 산출을 PC로 넘길 때 쓸 파일별 수신 검증을 준비했습니다.**<br>향후 PC 전달에 쓸 검증에서 원격 목록에 없는 산출을 거절하도록 준비한다. 매뉴얼에는 현재 저장하는 수신 기록만 설명한다. |
+| 06:35 | [`d50818c`](https://github.com/ehojune/bioinfo-team-3d/commit/d50818c) | **HPC 단계가 끝나면 PC에서 받은 파일과 생략 사유를 작업 기록에 남깁니다.**<br>HPC 단계의 PC 수신 기록을 저장하고 단계 간 전달에 쓸 검사를 준비한다. |
 | 06:10 | [`4614883`](https://github.com/ehojune/bioinfo-team-3d/commit/4614883) | **결과를 다듬기 전에 담당 runner가 바뀌면 원래 산출물을 남기고 새 계획을 요청합니다.**<br>결과 교정과 증거 칸 보완 전에도 CP1 배정을 확인하고 변경 시 원래 산출 기록을 보존한다. |
 | 06:04 | [`4a751e6`](https://github.com/ehojune/bioinfo-team-3d/commit/4a751e6) | **재개 중 담당 runner가 바뀌면 이미 얻은 결과를 보존하고 새 계획을 요청합니다.**<br>실행 기록이 있는 재개·이어 가기에서도 dispatch 직전에 runner를 확인하고 변경 시 연구 중단으로 넘긴다. |
 | 05:57 | [`4431f3e`](https://github.com/ehojune/bioinfo-team-3d/commit/4431f3e) | **준비를 기다리는 동안 담당 runner가 바뀌면 연구 단계를 보내기 전에 새 승인을 받습니다.**<br>논문 스킬 준비와 예산 예약 뒤 첫 gateway dispatch 경계까지 CP1의 runner 배정을 대조한다. |
