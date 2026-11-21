@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-22
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 00:58 | [`195c11b`](https://github.com/ehojune/bioinfo-team-3d/commit/195c11b) | **설정 매뉴얼에 Slurm 잡의 CPU 예약이 풀리는 시점을 적었습니다.**<br>한영 매뉴얼에 sacct 종료 확인 조건과 CANCELLED+ 처리를 설명했다. |
+| 00:48 | [`dec81d0`](https://github.com/ehojune/bioinfo-team-3d/commit/dec81d0) | **실패하거나 취소된 Slurm 잡과 시간 초과 잡의 CPU를 다음 제출 전에 반환합니다.**<br>accounting의 종료 기록을 대조하고 조회 결과가 불명확한 잡의 예약은 유지한다. |
+
 ## 2026-11-21
 
 | 시간 | 커밋 | 주요 변경사항 |
