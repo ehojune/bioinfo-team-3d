@@ -137,9 +137,9 @@ async def test_general_report_warns_without_copying_long_tool_output():
 
 
 def test_research_prompt_hash_and_empty_research_result_fields_stay_fixed():
-    # #1413 adds HPC runtime guidance; #690 figure and #669 install/read contracts remain.
+    # #1475 adds a single HPC pipefail line to the existing Research prompt.
     assert hashlib.sha256(RESEARCH_STEP_PROMPT.encode()).hexdigest() == (
-        "797be69d0ebac6dbf47b5a1d3e5fd14709b95f527c70012a515421eb17f0a903")
+        "f639a0e2ffc4fb8ea1bb12c89ae9c5f085567494d5570df8aca3c25c7bd1a45a")
     dumped = TaskResult(task_id="t", agent_id="worker", ok=True, structured={"version": 2}).model_dump(mode="json")
     assert "general_sections" not in dumped and "evidence_path_warnings" not in dumped and "tool_errors" not in dumped
 
