@@ -77,6 +77,26 @@ async def test_hpc_pipefail_guidance_reaches_the_dispatched_step(research):
     assert task.prompt.splitlines().count(HPC_PIPEFAIL_LINE) == 1
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["hpc", "local"])
+async def test_hpc_pipefail_guidance_reaches_only_the_hpc_direct_request(mode):
+    from tests.test_cso import result
+    from tests.test_hpc_whole_request import hub_for
+
+    async def dispatch(task):
+        return result(task, ok=False, error="worker exited with code 1")
+
+    hub = hub_for(dispatch)
+    location = {"mode": mode, "runner_id": "cluster"} if mode == "hpc" else {"mode": mode}
+    hub.requests["r"].update(mode="direct", agent_id="worker", execution_location=location)
+    await cso.Orchestrator(hub).run_request("r")
+
+    task, = hub.calls
+    assert task.meta["kind"] == "direct"
+    assert task.meta["execution_location"] == location
+    assert task.prompt.splitlines().count(HPC_PIPEFAIL_LINE) == (1 if mode == "hpc" else 0)
+
+
 def test_generic_step_prompt_bytes_stay_at_the_main_baseline():
     # #1475 adds one line; keep the rest byte-for-byte, including the #1413 runtime guidance.
     assert hashlib.sha256(STEP_PROMPT.replace(HPC_PIPEFAIL_LINE + "\n", "").encode()).hexdigest() == (

@@ -765,6 +765,10 @@ HPC_WALLTIME_RULE = (
     "propose splitting the work or ask for a decision; never silently clip it. Existing approval and resubmission "
     "protections still apply.")
 
+HPC_PIPEFAIL_RULE = (
+    "With `pipefail` in HPC job scripts, `head` or `grep -q` can exit early and make the producer fail with SIGPIPE. "
+    "Allow failure only for optional diagnostics such as version logging and let analysis failures propagate.")
+
 PLAN_PROMPT = BIOINFO_ASSIGNMENT_RULE + "\n\n" + HPC_WALLTIME_RULE + "\n\n" + """Decompose the PI's request into steps for your team. You do not analyze anything yourself.
 
 Team roster (use these agent ids exactly):
@@ -972,7 +976,7 @@ earlier environment step's lock covers exactly what you used; packages you insta
 ./.pylib) always go in your own record.
 If an HPC job runs the analysis, put the same version and package-list commands inside its job script so the compute
 environment, not only the runner login environment, writes the record under outputs/env/.
-With `pipefail` in HPC job scripts, `head` or `grep -q` can exit early and make the producer fail with SIGPIPE. Allow failure only for optional diagnostics such as version logging and let analysis failures propagate.
+""" + HPC_PIPEFAIL_RULE + """
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions.
 """ + FIGURE_OUTPUT_RULE + "\n\n" + HPC_WALLTIME_RULE
 
@@ -4299,7 +4303,10 @@ class Orchestrator:
                 if problems:
                     raise ValueError("; ".join(problems))
                 if location["mode"] == "hpc":
-                    task = task.model_copy(update={"prompt": task.prompt + execution_policy.plan_rule(location)})
+                    prompt = task.prompt + execution_policy.plan_rule(location)
+                    if task.meta.get("kind") == "direct":
+                        prompt += "\n\n" + HPC_PIPEFAIL_RULE
+                    task = task.model_copy(update={"prompt": prompt})
         initial_attempt = first_attempt
         engine = str((hub_agents(self.hub, rid).get(task.agent_id) or {}).get("engine") or "")
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
