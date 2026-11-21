@@ -44,9 +44,16 @@ def selection(note):
     return next(iter(choices)) if len(choices) == 1 else None
 
 
-def plan_rule(choice):
+def plan_rule(choice, *, offer_step_placement=False):
     mode = choice["mode"]
     if mode == "local":
+        if offer_step_placement and choice.get('mixed_hpc_runner_id'):
+            return ("\n\nThe PI selected this PC as the default. For a mixed research plan set "
+                    "step_execution_version=1 and declare execution=hpc for HPC steps and execution=local for PC steps. "
+                    f"Use HPC-eligible workers on runner {choice['mixed_hpc_runner_id']} for HPC steps. "
+                    "Keep dependent PC steps on that same runner. HPC steps cannot depend on PC steps or read "
+                    "reference or project directories. PC steps can read those directories and verified HPC outputs. "
+                    "Without version 1 every step must run on this PC.")
         return "\n\nExecution location fixed by this request: local. Every step execution=local. No HPC jobs."
     return ("\n\nExecution location fixed by the PI: HPC for the WHOLE request. Every DAG step must declare "
             "execution=hpc and use a worker with built-in hpc tools on runner " + choice["runner_id"] + ". "
@@ -78,12 +85,14 @@ def input_errors(metadata, choice, approved_input=None):
 
 
 def plan_errors(steps, choice, agents, *, version=None):
+    mixed = False
     if version is not None:
         if type(version) is not int or version != 1:
             return ["unsupported step_execution_version"]
         errors = step_execution.placement_errors(steps, choice, agents)
         if errors:
             return errors
+        mixed = step_execution.is_mixed({'step_execution_version': version, 'steps': steps}, choice)
     if not choice:
         return []  # historical plans keep their frozen hash and execution contract
     errors = []
@@ -94,9 +103,10 @@ def plan_errors(steps, choice, agents, *, version=None):
             errors.append("execution plan step must be an object")
             continue
         mode = step.get("execution") or "local"
-        if mode != choice["mode"]:
+        if mode != choice["mode"] and not mixed:
             errors.append(f"{step.get('id')}: execution must be {choice['mode']}; mixed plans are refused")
-        if choice["mode"] == "hpc":
+        step_mode = mode if mixed else choice['mode']
+        if step_mode == "hpc":
             outputs = []
             if (step.get("environment_binding") or step.get("environment_bindings")
                     or any(output_relpath(path) == "outputs/env/requirements.lock.txt"
@@ -104,7 +114,8 @@ def plan_errors(steps, choice, agents, *, version=None):
                 errors.append(f"{step.get('id')}: HPC environment bindings require a verified scheduler-readable "
                               "environment snapshot; plan refused before dispatch")
             agent = agents.get(step.get("agent_id"), {})
-            if (agent.get("runner_id") != choice["runner_id"] or not agent.get("hpc_tools")
+            runner = choice['mixed_hpc_runner_id'] if mixed else choice['runner_id']
+            if (agent.get("runner_id") != runner or not agent.get("hpc_tools")
                     or agent.get("whole_request_hpc") is not True
                     or "hpc" not in agent.get("builtin_mcp", [])):
                 errors.append(f"{step.get('id')}: requires whole-request HPC eligibility and built-in tools on the selected runner")
@@ -128,6 +139,22 @@ def validate_versioned_plan(plan, choice, agents):
             raise ValueError("; ".join(problems))
 
 
-def record_line(choice):
+def prepare_dispatch(task, request, agents):
+    """Check the live HPC worker before a mixed turn is sent, including wakes and retries."""
+    location = task.meta.get('execution_location') or {}
+    if location.get('scope') != 'step':
+        return task
+    step_execution.task_location(request, task)
+    if step_execution.mixed_hpc(location):
+        problems = plan_errors([{'id': task.meta.get('step_id'), 'agent_id': task.agent_id,
+                                 'execution': 'hpc'}], location, agents)
+        if problems:
+            raise ValueError('; '.join(problems))
+    return step_execution.isolate_hpc_task(task, request)
+
+
+def record_line(choice, plan=None):
+    if step_execution.is_mixed(plan or {}, choice):
+        return "실행 위치: 단계별 HPC·PC · 기본값: 이 PC · 선택 근거: " + choice['source']
     label = "HPC" if choice["mode"] == "hpc" else "이 PC"
     return f"실행 위치: {label} · 요청 전체에 적용 · 선택 근거: {choice['source']}"

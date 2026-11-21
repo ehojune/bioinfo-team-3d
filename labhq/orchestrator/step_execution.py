@@ -1,6 +1,15 @@
-"""Bind versioned research steps to the existing request-wide execution route."""
+"""Bind versioned research steps to the runners approved at CP1."""
 
+import json
+import re
+from dataclasses import replace
+
+from ..intake import reference_dirs
+from ..research import continuation
 from ..research.contract import plan_sha256
+from ..research.input_proof import capture
+from ..wsl_paths import shared_path
+from . import transfer_preflight
 
 
 _PRE_DISPATCH_PROOFS = ("reuse_tools", "reuse_no_request_inputs", "reuse_input_proof")
@@ -62,24 +71,165 @@ def bind_draft(plan, choice, agents, *, refresh_runner=False):
 
 
 def placement_errors(steps, choice, agents):
-    """A versioned plan must use the request's mode and each worker's current runner."""
+    """Validate the step routes and the workspace boundary for mixed dependencies."""
     if not choice:
         return ["versioned step execution requires a request execution location"]
     if not isinstance(steps, list):
         return ["execution plan steps must be a list"]
     errors = []
+    mixed = is_mixed({'step_execution_version': 1, 'steps': steps}, choice)
     for step in steps:
         if not isinstance(step, dict):
             errors.append("execution plan step must be an object")
             continue
         sid, runner, agent = step.get("id"), step.get("runner_id"), step.get("agent_id")
-        if step.get("execution") != choice["mode"]:
+        mode = step.get("execution")
+        if mode != choice["mode"] and not (mixed and mode == 'hpc'):
             errors.append(f"{sid}: execution must be {choice['mode']}; mixed plans are refused")
         if not isinstance(runner, str) or not runner.strip():
             errors.append(f"{sid}: versioned step execution requires runner_id")
         elif not isinstance(agent, str) or agents.get(agent, {}).get("runner_id") != runner:
             errors.append(f"{sid}: runner_id differs from the assigned worker's runner")
+    if errors or not mixed:
+        return errors
+    if not any(step['execution'] == 'local' for step in steps):
+        return ['A PC-default mixed plan must include a PC step']
+    if any(not isinstance(step.get('id'), str) or not isinstance(step.get('depends_on', []), list)
+           or any(not isinstance(parent, str) for parent in step.get('depends_on', [])) for step in steps):
+        return ['invalid mixed execution dependency graph']
+    by_id = {step['id']: step for step in steps}
+    for sid, step in by_id.items():
+        pending = list(step.get('depends_on') or [])
+        visited = set()
+        while pending:
+            parent = pending.pop()
+            if parent in visited or parent not in by_id:
+                continue  # graph validation reports missing steps and cycles
+            visited.add(parent)
+            ancestor = by_id[parent]
+            if step['execution'] == 'hpc' and ancestor['execution'] == 'local':
+                errors.append(f'{sid}: PC-to-HPC dependency on {parent} is unsupported')
+            if step['execution'] == 'local' and ancestor['execution'] == 'hpc' and (
+                    step['runner_id'] != ancestor['runner_id']):
+                errors.append(f'{sid}: HPC-to-PC dependency on {parent} requires the same runner')
+            pending.extend(ancestor.get('depends_on') or [])
     return errors
+
+
+def is_mixed(plan, choice):
+    steps = plan.get('steps')
+    return bool(plan.get('step_execution_version') == 1 and choice and choice.get('mode') == 'local'
+                and choice.get('approval_id') and choice.get('mixed_hpc_runner_id') and isinstance(steps, list)
+                and any(isinstance(step, dict) and step.get('execution') == 'hpc'
+                        for step in steps))
+
+
+def step_location(choice, plan, step, request_id):
+    if not is_mixed(plan, choice):
+        return choice
+    return {'mode': step['execution'], 'scope': 'step', 'runner_id': step['runner_id'], 'workspace': request_id}
+
+
+def task_location(request, task):
+    choice, plan = request.get('execution_location'), request.get('plan') or {}
+    submitted = task.meta.get('execution_location') or {}
+    if task.meta.get('kind') not in {'step', 'result_correction', 'slot_repair', 'wrap_up'} or not is_mixed(plan, choice):
+        if submitted.get('scope') == 'step':
+            raise ValueError('mixed task has no approved mixed plan')
+        return choice
+    require_approved_placement(plan, plan['steps'], request.get('research_contract') or {})
+    step = next((step for step in plan['steps'] if step['id'] == task.meta.get('step_id')), None)
+    if not step or step['agent_id'] != task.agent_id or step['runner_id'] != task.meta.get('session_runner'):
+        raise ValueError('task does not match its approved step and runner')
+    location = step_location(choice, plan, step, task.request_id)
+    if location != task.meta.get('execution_location'):
+        raise ValueError('task execution location differs from the approved step')
+    return location
+
+
+def reuse_location(choice, plan, request_id):
+    if is_mixed(plan, choice):
+        return {'mode': 'hpc', 'runner_id': choice['mixed_hpc_runner_id'], 'workspace': request_id}
+    return choice or {}
+
+
+def mixed_hpc(location):
+    return bool(location and location.get('scope') == 'step' and location.get('mode') == 'hpc')
+
+
+def hpc_ancestor_meta(location, linked, by_id, results):
+    if not location or location.get('scope') != 'step' or location.get('mode') != 'local':
+        return {}
+    revisions = {sid: results[sid].provenance.get('hpc_step_revision') for sid in linked
+                 if by_id[sid]['execution'] == 'hpc' and sid in results and results[sid].ok
+                 and (results[sid].outputs or by_id[sid].get('outputs'))}
+    return {'hpc_ancestor_revisions': revisions} if revisions else {}
+
+
+def reuse_input_request(task, request):
+    if mixed_hpc(task.meta.get('execution_location')):
+        return {}
+    return request
+
+
+def capture_reuse_inputs(request, plan, settings):
+    """Observe the two input scopes used at dispatch for the continuation check."""
+    local_proof = capture(request, settings, allow_request_projects=True)
+    mixed = is_mixed(plan, request.get('execution_location'))
+    # A citation can still reach the HPC prompt. An empty path proof cannot attest to that citation.
+    paths_only = all(isinstance(ref, dict) and ref.get('kind') == 'path' for ref in request.get('references') or [])
+    hpc_proof = capture({}, settings, allow_request_projects=True) if mixed and paths_only else None
+    return local_proof, hpc_proof
+
+
+def continuation_proof_problems(previous, plan, carry, tools, request, proofs):
+    local_proof, hpc_proof = proofs
+    if not is_mixed(plan, request.get('execution_location')):
+        return continuation.proof_problems(previous, plan, carry, tools, request, local_proof)
+    hpc_steps = {step['id'] for step in plan['steps'] if step['execution'] == 'hpc'}
+    hpc = replace(carry, reuse=[sid for sid in carry.reuse if sid in hpc_steps])
+    local = replace(carry, reuse=[sid for sid in carry.reuse if sid not in hpc_steps])
+    return {**continuation.proof_problems(previous, plan, local, tools, request, local_proof),
+            **continuation.proof_problems(previous, plan, hpc, tools, request, hpc_proof)}
+
+
+def isolate_hpc_task(task, request):
+    """Keep PC path inputs out of the wire metadata and the text sent to a mixed HPC step."""
+    if not mixed_hpc(task.meta.get('execution_location')):
+        return task
+    paths = set()
+    for path in (*reference_dirs(request.get('references')), *(request.get('project_dirs') or []),
+                 *(task.meta.get('reference_dirs') or []), *(task.meta.get('project_dirs') or [])):
+        if not isinstance(path, str) or not path:
+            continue
+        aliases = {path, path.replace('\\', '/')}
+        try:
+            canonical = shared_path(path, 'windows')
+        except ValueError:
+            pass
+        else:
+            aliases.update((canonical, canonical.replace('/', '\\'), shared_path(path, 'wsl')))
+        paths.update(aliases)
+        paths.update(json.dumps(alias)[1:-1] for alias in aliases)
+    ordered = sorted(paths, key=lambda path: (-len(path), path))
+    pattern = re.compile('|'.join(map(re.escape, ordered)), re.I) if paths else None
+
+    def scrub(value):
+        return pattern.sub('[PC input withheld]', value) if pattern and isinstance(value, str) else value
+
+    excluded = {'reference_dirs', 'project_dirs', 'precedent_texts', 'hpc_input_approval', 'references'}
+    text_fields = {'request', 'instruction', 'title'}
+    meta = {key: scrub(value) if key in text_fields else value for key, value in task.meta.items()
+            if key not in excluded}
+    return task.model_copy(update={'meta': meta, 'prompt': scrub(task.prompt), 'context': scrub(task.context)})
+
+
+def describe_schema(schema, choice):
+    option = schema.get('properties', {}).get('step_execution_version')
+    if option and choice and choice.get('mixed_hpc_runner_id'):
+        # research_plan_schema returns a fresh option only when offering versioned placement.
+        option['description'] = 'Use 1 to bind each step to its approved location and runner, including in mixed plans.'
+    return schema
 
 
 def refresh_for_approval(plan, request, choice, agents):
@@ -110,9 +260,14 @@ def runner_pin(plan, step, environment_pin):
     return runner
 
 
-def card_detail(plan):
+def card_detail(plan, request=None, settings=None):
     if plan.get("step_execution_version") is None:
         return {}
-    return {"단계 실행 위치 · runner": "\n".join(
+    detail = {"단계 실행 위치 · runner": "\n".join(
         f"{step['id']} · {step['execution']} · {step['runner_id']}" for step in plan["steps"]
     )}
+    if request and settings and is_mixed(plan, request.get("execution_location")):
+        warning = transfer_preflight.warning(plan["steps"], request, settings)
+        if warning:
+            detail["hpc_transfer_warning"] = warning
+    return detail

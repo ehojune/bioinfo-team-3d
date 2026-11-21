@@ -6,7 +6,11 @@ When only a step's result JSON is corrected, the runner retains its collected ou
 
 When a consult is confirmed to have failed before process start because a file was not found, an employee can repeat the same question and refs with `replaces_ask_id` and wait for an answer. PI denial, cancellation, timeout, protection violations, and failures of unknown cause still block continuation. HPC fetches do not overlap, and existing manifest checks remain in force.
 
-**Checking each step's runner at CP1.** When the PI explicitly chooses an execution location for the request and a worker is available on that route, the research planner can opt in with `step_execution_version: 1`. For version 1, check **단계 실행 위치 · runner** (step execution location and runner) on the CP1 card. The approval hash includes both values for each step. Every step follows the request's selected location. Plans that mix HPC and this PC are refused.
+**Checking each step's runner at CP1.** An explicit execution choice lets the research planner use `step_execution_version: 1` to bind each step's location and runner. Check both values under **단계 실행 위치 · runner** on the CP1 card. Steps without a location follow the request's default.
+
+**Running HPC and PC steps in one request.** When HPC is available, choose this PC as the default and approve a version 1 plan with both locations at CP1. PC steps that read HPC outputs run on the same runner. `--ref` opens read-only for PC steps. A missing receipt or mismatched checksum stops the dependent PC step. A plan that sends PC outputs to an HPC step is refused.
+
+When this PC can verify that a `--ref` file listed as an HPC step input exceeds the built-in transfer limit (512 KiB per file), CP1 and any resume card that serves as CP1 show the file size and how far it exceeds the limit. Before approving, revise the plan to split the file into pieces within the limit or fetch it directly on HPC using a method the site permits.
 
 When a completed HPC step has a verified remote inventory, the runner saves it with the checksums of the received files and reasons for omitted declared outputs.
 
