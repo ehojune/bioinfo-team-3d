@@ -1,5 +1,9 @@
 pr: null
 rows:
+  - sha: '195c11b'
+    at: '2026-11-22 00:58'
+    summary: 설정 매뉴얼에 Slurm 잡의 CPU 예약이 풀리는 시점을 적었습니다.
+    text: 한영 매뉴얼에 sacct 종료 확인 조건과 CANCELLED+ 처리를 설명했다.
   - sha: 'dec81d0'
     at: '2026-11-22 00:48'
     summary: 실패하거나 취소된 Slurm 잡과 시간 초과 잡의 CPU를 다음 제출 전에 반환합니다.
