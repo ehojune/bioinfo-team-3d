@@ -972,6 +972,7 @@ earlier environment step's lock covers exactly what you used; packages you insta
 ./.pylib) always go in your own record.
 If an HPC job runs the analysis, put the same version and package-list commands inside its job script so the compute
 environment, not only the runner login environment, writes the record under outputs/env/.
+With `pipefail` in HPC job scripts, `head` or `grep -q` can exit early and make the producer fail with SIGPIPE. Allow failure only for optional diagnostics such as version logging and let analysis failures propagate.
 Use .tmp only for disposable temporary files. In the method details, record the seed and tool and data versions.
 """ + FIGURE_OUTPUT_RULE + "\n\n" + HPC_WALLTIME_RULE
 
