@@ -630,11 +630,12 @@ const DETAIL_LABELS = {
   research_evidence: { ...EVIDENCE_LABELS, plan_sha256: 'plan hash',
     unreported_outputs: '보고하지 않은 산출',
     artifact_sha256: '산출 파일 hash', continuation: '이어 가기 차수' },
-  research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수' },
+  research_plan: { target_sha256: 'plan hash', scope_status: '범위 판정', continuation: '이어 가기 차수',
+    hpc_transfer_warning: 'HPC 파일 전송 경고' },
   recruit_plan: { recruits: '논문·채용 이유·담당 단계', activate_on_pass: '수습 통과하면 바로 투입', target_sha256: '채용 묶음 hash' },
   research_continue: { round: '이어 가기 차수', limit: '이어 가기 상한', plan_sha256: '지난 계획 plan hash' },
   question: { why_blocked: '막힌 이유', from: '묻는 직원' },
-  resume: { created_at: '접수 시각', steps: '남은 단계' },
+  resume: { created_at: '접수 시각', steps: '남은 단계', hpc_transfer_warning: 'HPC 파일 전송 경고' },
   result_publish: { pdf: '보고서 PDF' },
   disk_space: { free_gib: '여유(GiB)', floor_gib: '시작 기준(GiB)', path: '작업 폴더' },
   literature_pdf: { papers: '필요한 논문', inbox: 'PDF를 둘 폴더', wait_seconds: '대기 시간(초)',
@@ -672,10 +673,10 @@ export function renderDetail(container, kind, detail, approval = null) {
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
     kind === 'facilities_fix' ? ['action', 'reason', 'signature_id', 'command'] :
     kind === 'research_evidence' ? ['refused_rows', 'refused_evidence', 'unsupported_claims', 'results', 'plan_sha256'] :
-    kind === 'research_plan' ? ['plan_canonical', 'continuation', 'target_sha256', 'scope_status'] :
+    kind === 'research_plan' ? ['hpc_transfer_warning', 'plan_canonical', 'continuation', 'target_sha256', 'scope_status'] :
     kind === 'research_continue' ? ['p1_issues', 'round', 'limit', 'plan_sha256'] :
     kind === 'question' ? ['why_blocked', 'from'] :
-    kind === 'resume' ? ['steps', 'created_at', 'plan_canonical', 'cp1_target_sha256', 'scope_status'] : [];
+    kind === 'resume' ? ['hpc_transfer_warning', 'steps', 'created_at', 'plan_canonical', 'cp1_target_sha256', 'scope_status'] : [];
   // Keys drawn elsewhere on the card, or repeated inside the frozen plan view (CP1, R18).
   const shown = kind === 'clarify' && Array.isArray(detail?.questions) ? ['questions', 'assumptions'] :
     kind === 'research_evidence' ? ['choices', 'gate', 'revise_continues'] :
@@ -714,7 +715,9 @@ export function renderDetail(container, kind, detail, approval = null) {
         const label = `${name} · ${(size / 1024 / 1024).toFixed(1)} MB · ${String(item?.path || '')}`;
         detailEntry(list, name, label, {raw:true});
       }
-    } else if ((kind === 'research_plan' || kind === 'resume') && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
+    } else if ((kind === 'research_plan' || kind === 'resume') && key === 'hpc_transfer_warning')
+      detailEntry(list, labels[key], value, {raw: true, open: true});
+    else if ((kind === 'research_plan' || kind === 'resume') && key === 'plan_canonical') renderResearchPlan(list, detail.plan_canonical);
     else if (kind === 'research_continue' && key === 'p1_issues') renderReviewIssues(list, detail.p1_issues);
     else if (kind === 'resume' && key === 'created_at') detailEntry(list, labels[key], receivedAt(detail.created_at), {raw: true});
     else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))

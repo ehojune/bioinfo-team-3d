@@ -5295,7 +5295,8 @@ class Orchestrator:
             used += len(line) + 1
         return {"text": f"\n연구 계획 {len(steps)}단계:" + body + tail, "target_sha256": research_plan_sha256(plan),
                 # The same frozen-plan fields the CP1 card carries, so the web renders the whole plan (#654 review).
-                "detail": {"plan_canonical": canonical_plan_json(plan), **step_execution.card_detail(plan),
+                "detail": {"plan_canonical": canonical_plan_json(plan),
+                           **step_execution.card_detail(plan, req, self.hub.s),
                            "pack_applicability": plan.get("pack_applicability") or {},
                            "warnings": plan.get("warnings") or [],
                            "protocol_revision": plan["protocol"].get("revision"), "packs": plan["protocol"].get("packs"),
@@ -7834,7 +7835,8 @@ class Orchestrator:
                             kind="research_plan", request_id=rid,
                             summary=f"{card[:698 - len(budget_line)]} {budget_line}",
                             detail={"gate": "research_plan", "target_sha256": plan_hash,
-                                    "plan_canonical": canonical_plan_json(plan), **step_execution.card_detail(plan),
+                                    "plan_canonical": canonical_plan_json(plan),
+                                    **step_execution.card_detail(plan, req, self.hub.s),
                                     "pack_applicability": plan.get("pack_applicability") or {},
                                     "warnings": plan.get("warnings") or [],
                                     **({"plan_warnings": req.get("plan_warnings") or [],

@@ -9,6 +9,7 @@ from ..research import continuation
 from ..research.contract import plan_sha256
 from ..research.input_proof import capture
 from ..wsl_paths import shared_path
+from . import transfer_preflight
 
 
 _PRE_DISPATCH_PROOFS = ("reuse_tools", "reuse_no_request_inputs", "reuse_input_proof")
@@ -259,9 +260,14 @@ def runner_pin(plan, step, environment_pin):
     return runner
 
 
-def card_detail(plan):
+def card_detail(plan, request=None, settings=None):
     if plan.get("step_execution_version") is None:
         return {}
-    return {"단계 실행 위치 · runner": "\n".join(
+    detail = {"단계 실행 위치 · runner": "\n".join(
         f"{step['id']} · {step['execution']} · {step['runner_id']}" for step in plan["steps"]
     )}
+    if request and settings and is_mixed(plan, request.get("execution_location")):
+        warning = transfer_preflight.warning(plan["steps"], request, settings)
+        if warning:
+            detail["hpc_transfer_warning"] = warning
+    return detail

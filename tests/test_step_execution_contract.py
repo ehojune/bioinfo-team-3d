@@ -7,14 +7,16 @@ import json
 import pytest
 from pydantic import ValidationError
 
+from labhq.hpc_transfer import Limits
 from labhq.models import TaskResult
 from labhq.orchestrator.execution import plan_errors
 from labhq.orchestrator.cso import ENV_LOCK_OUTPUT, Orchestrator
-from labhq.orchestrator.step_execution import refresh_for_approval
+from labhq.orchestrator.step_execution import card_detail, refresh_for_approval
 from labhq.recruit import paper_skills, planning as recruit_planning
 from labhq.research import contract, continuation
 from labhq.settings import Settings
 from tests.test_cso import FakeHub, result
+from tests.test_research_cp1_revise import _gateway
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 
 
@@ -29,6 +31,55 @@ def placed_plan(mode="local", runner="mock-runner", *, count=1):
 def approved(plan):
     receipt = contract.freeze_plan(plan, {"approved": True, "approval_id": "mock-cp1"})
     return {"plan_sha256": receipt["target_sha256"], "approval": receipt}
+
+
+def test_mixed_card_warns_only_for_named_hpc_inputs_above_the_upload_limit(tmp_path):
+    settings = Settings()
+    settings.runner.reference_roots = [str(tmp_path)]
+    limit = Limits().upload_max_bytes
+    sizes = {"input.fastq.gz": limit + 7, "at-limit.tsv": limit, "pc-only.tsv": limit + 1,
+             "not-input.fastq.gz": limit + 1}
+    for name, size in sizes.items():
+        with (tmp_path / name).open("wb") as stream:
+            stream.truncate(size)
+    plan = placed_plan(count=2)
+    plan["steps"][0].update(execution="hpc", input_refs=["Transfer the PC copy of input.fastq.gz (gzip)",
+                                                         "at-limit.tsv", "missing.tsv"])
+    plan["steps"][1]["input_refs"] = ["pc-only.tsv"]
+    references = [{"kind": "path", "value": str(tmp_path / name)} for name in [*sizes, "missing.tsv"]]
+    request = {"references": references, "execution_location": {
+        "mode": "local", "approval_id": "choice", "mixed_hpc_runner_id": "mock-runner"}}
+    plan_hash = contract.plan_sha256(plan)
+    detail = card_detail(plan, request, settings)
+    warning = detail["hpc_transfer_warning"]
+    assert "input.fastq.gz (s1) · 524,295 byte · 7 byte" in warning
+    assert all(name not in warning for name in ["pc-only.tsv", "at-limit.tsv", "missing.tsv", "not-input.fastq.gz"])
+    assert "512 KiB" in warning and str(tmp_path) not in warning
+    assert "\ub098\ub220" in warning and "HPC\uc5d0\uc11c \uc9c1\uc811" in warning
+    assert contract.plan_sha256(plan) == plan_hash
+
+    plan["steps"][0]["execution"] = "local"
+    assert "hpc_transfer_warning" not in card_detail(plan, request, settings)
+
+
+def test_mixed_card_does_not_include_restricted_or_unapproved_paths(tmp_path):
+    allowed = tmp_path / "references"
+    allowed.mkdir()
+    limit = Limits().upload_max_bytes
+    paths = [allowed / "sensitive.tsv", tmp_path / "outside.tsv", allowed / ".env"]
+    for path in paths:
+        with path.open("wb") as stream:
+            stream.truncate(limit + 1)
+    settings = Settings.model_validate({
+        "runner": {"reference_roots": [str(allowed)]},
+        "policy": {"data_zones": [{"path": str(paths[0]), "level": "restricted"}]},
+    })
+    plan = placed_plan(count=2)
+    plan["steps"][0].update(execution="hpc", input_refs=[path.name for path in paths])
+    request = {"references": [{"kind": "path", "value": str(path)} for path in paths], "execution_location": {
+        "mode": "local", "approval_id": "choice", "mixed_hpc_runner_id": "mock-runner"}}
+
+    assert "hpc_transfer_warning" not in card_detail(plan, request, settings)
 
 
 @pytest.mark.parametrize(("mode", "sha"), [
@@ -409,11 +460,16 @@ async def test_dag_dispatch_uses_the_approved_runner_pin(mode):
     assert task.meta["execution_location"]["mode"] == mode
 
 
-async def test_pc_choice_offers_a_mixed_plan_and_cp1_binds_both_locations():
+async def test_pc_choice_offers_a_mixed_plan_and_both_cards_warn_about_uploads(tmp_path, monkeypatch):
     settings = Settings()
     settings.research.enabled = True
     settings.orchestrator.chief_of_staff_agent = None
     settings.orchestrator.reviewer_agent = None
+    settings.runner.reference_roots = [str(tmp_path)]
+    reference = tmp_path / 'input.tsv'
+    with reference.open('wb') as stream:
+        stream.truncate(Limits().upload_max_bytes + 7)
+    references = [{'kind': 'path', 'value': str(reference)}]
 
     async def dispatch(task):
         assert task.meta['kind'] == 'plan'
@@ -422,6 +478,7 @@ async def test_pc_choice_offers_a_mixed_plan_and_cp1_binds_both_locations():
         plan = valid_plan(steps=2)
         plan['step_execution_version'] = 1
         plan['steps'][0]['execution'] = 'hpc'
+        plan['steps'][0]['input_refs'] = [reference.name]
         plan['steps'][1]['depends_on'] = ['s1']
         return result(task, structured=plan)
 
@@ -435,6 +492,7 @@ async def test_pc_choice_offers_a_mixed_plan_and_cp1_binds_both_locations():
                                builtin_mcp=['hpc'])
     hub.runners = {'mock-runner': object()}
     hub.runner_capabilities = {'mock-runner': {'scheduler': 'mock'}}
+    hub.requests['r']['references'] = references
     await Orchestrator(hub).run_request('r')
     row = hub.requests['r']
     assert row['outcome'] == 'plan_approved', row.get('report')
@@ -443,7 +501,24 @@ async def test_pc_choice_offers_a_mixed_plan_and_cp1_binds_both_locations():
     assert '단계별 HPC·PC' in card['summary']
     assert card['detail']['단계 실행 위치 · runner'] == 's1 · hpc · mock-runner\ns2 · local · mock-runner'
     assert card['detail']['target_sha256'] == contract.plan_sha256(row['plan'])
+    warning = card['detail']['hpc_transfer_warning']
+    assert 'input.tsv (s1) · 524,295 byte · 7 byte' in warning
+    assert str(tmp_path) not in warning
+    assert 'hpc_transfer_warning' not in json.loads(card['detail']['plan_canonical'])
     assert [task.meta['kind'] for task in hub.calls] == ['plan']
+
+    # Model a restart after the plan was saved, before the first CP1 decision was saved.
+    restarted = _gateway(tmp_path, monkeypatch)
+    restarted.s.runner.reference_roots = settings.runner.reference_roots
+    restarted.requests['r'] = {
+        'id': 'r', 'text': row['text'], 'mode': 'plan_only', 'status': 'running',
+        'plan': row['plan'], 'execution_location': row['execution_location'], 'references': references,
+    }
+    restarted.interrupt_request('r')
+    [resume] = [entry['approval'] for entry in restarted.approvals.values()
+                if entry['approval']['kind'] == 'resume']
+    assert resume['detail']['hpc_transfer_warning'] == warning
+    assert resume['detail']['cp1_target_sha256'] == card['detail']['target_sha256']
 
 
 async def test_resume_cannot_dispatch_on_new_runner_under_an_old_cp1_or_mix_locations():
