@@ -141,3 +141,13 @@ def test_workspace_root_task_folders_are_not_personal_paths(layout, command, ver
 ])
 def test_loose_words_in_inline_code_are_not_path_evidence(layout, command):
     assert _verdict(layout, command, workspace_root="{tmp}/runs") == ("allow", "")
+
+
+def test_bare_credential_file_and_unchecked_tools(layout):
+    tmp_path, policy, scope = layout
+    (tmp_path / "runs" / "day" / "task" / ".env").write_text("K=1\n", encoding="utf-8")
+    assert _verdict(layout, "cat .env > outputs/e.txt", workspace_root="{tmp}/runs")[0] == "deny"
+    command = {"command": "sudo rm -rf /"}
+    trace = []
+    category = classify("Monitor", command, policy, trace=trace, **scope)
+    assert trusted_verdict(category, trace, "Monitor", command, policy, **scope)[0] == "card"

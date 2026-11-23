@@ -642,8 +642,13 @@ def _path_evidence(command: str, tool: str, workdir: str, roots: list[str], kw: 
         return any(not any(_inside(path, _real(r) or _norm(r)) for r in roots)
                    for t in targets for path in located(t if re.search(r"[/\\]", t) else "./" + t))
     zones = [z for p in kw.get("private_paths") or () for z in {_norm(p), _real(p)} if z]
-    return any(credential_path(t) or credential_path(path) or any(_inside(path, z) for z in zones)
-               for t in _candidate_paths(command) for path in located(t))
+    if any(credential_path(t) or credential_path(path) or any(_inside(path, z) for z in zones)
+           for t in _candidate_paths(command) for path in located(t)):
+        return True
+    # A bare credential name counts when that file exists (`cat .env`), not as a word in code (`token`).
+    return reason == "credential" and any(
+        credential_path(t) and os.path.lexists(posixpath.join(_norm(base), t))
+        for t in _candidate_paths(command) for base in bases)
 
 
 _OUTSIDE_WRITE = ("write outside", "shell write outside allowed roots", "write path has no known workdir",
@@ -686,6 +691,8 @@ def trusted_verdict(category: str | None, trace: list[str], tool: str, tool_inpu
         return "deny", "디스크 여유 부족: " + (policy_reason or "내려받을 공간이 모자랍니다")
     if decision.action == "deny":
         return "deny", reason
+    if "is neither a shell, file nor MCP tool" in reason:
+        return "card", ""  # a tool labhq does not check (Monitor runs its own commands) keeps its card
     if "internal data zone read requires approval" in reason:
         return "card", ""
     if decision.private_kind == "matched" and _path_evidence(command, tool, workdir, roots, kw, "other_private_path"):
