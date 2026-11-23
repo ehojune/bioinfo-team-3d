@@ -25,18 +25,24 @@ def read(path):
     return path.read_text(encoding="utf-8-sig")
 
 
-def unfenced(text):
-    fence = ""
+def unfenced(text, *, include_quotes=False):
+    fence, fence_depth = "", 0
     for line in text.splitlines():
+        quote = re.match(r"^(?: {0,3}>[ \t]?)+", line) if include_quotes else None
+        depth = quote[0].count(">") if quote else 0
+        if depth < fence_depth:
+            fence, fence_depth = "", 0
+        if quote:
+            line = line[quote.end():]
         marker = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
         if not fence:
             if marker:
-                fence = marker[1]
+                fence, fence_depth = marker[1], depth
                 yield ""
             else:
                 yield line
-        elif marker and marker[1].startswith(fence) and not marker[2].strip():
-            fence = ""
+        elif depth == fence_depth and marker and marker[1].startswith(fence) and not marker[2].strip():
+            fence, fence_depth = "", 0
 
 
 def rows(text, header):
@@ -193,8 +199,8 @@ def existing_checks(args):
 
 
 def plain_report(text):
-    body = re.sub(r"(?ms)\A---[ \t]*\n(?=[\w-]+:).*?^(?:---|\.\.\.)[ \t]*(?:\n|\Z)", "", text)
-    body = re.sub(r"(?s)<!--.*?(?:-->|\Z)", "", "\n".join(unfenced(body)))
+    body = re.sub(r"(?ms)\A---[ \t]*\n.*?^(?:---|\.\.\.)[ \t]*(?:\n|\Z)", "", text)
+    body = re.sub(r"(?s)<!--.*?(?:-->|\Z)", "", "\n".join(unfenced(body, include_quotes=True)))
     # Indented code can start at a block boundary, not inside a running paragraph.
     body = re.sub(r"(?m)(\A|^[ \t]*\n|^ {0,3}#{1,6}(?:[ \t][^\n]*)?\n)"
                   r"(?:(?: {4}| {0,3}\t)[^\n]*(?:\n|\Z))+", r"\1", body)
