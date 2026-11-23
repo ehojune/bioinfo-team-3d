@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:10 | [`3e20b84`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/3e20b84) | **작업 폴더 밖 파일 하나를 지우는 명령도 trusted\_local에서 거부됩니다.**<br>리뷰 P1 수정. trusted_local에서 재귀가 아닌 삭제(rm, unlink, Remove-Item 등)도 그 명령 구간의 피연산자를 링크까지 풀어 허용 폴더 밖이면 거부한다 |
+| 10:20 | [`6430a5b`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/6430a5b) | **credential 파일 읽기와 검사 밖 도구는 trusted\_local에서도 자동 허용되지 않습니다.**<br>리뷰 P1 수정. trusted_local에서 작업 폴더에 실제로 있는 credential 파일 이름(cat .env)은 경로 구분자가 없어도 거부하고, labhq가 검사하지 않는 도구(Monitor처럼 자기 명령을 실행하는 도구)는 자동 허용하지 않고 카드로 남긴다 |
+| 09:30 | [`3efae9d`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/3efae9d) | **작업 폴더 안 링크를 타고 밖을 지우는 명령은 trusted\_local에서도 거부됩니다.**<br>리뷰 P1 수정. trusted_local의 재귀 삭제 판정에서 상대 경로 피연산자도 모두 링크까지 풀어, 작업 폴더 안 링크를 타고 밖을 지우는 명령(rm -rf link/file)을 거부한다 |
+| 01:30 | [`0658746`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/0658746) | **PI 인스턴스에서 trusted\_local을 켜면 도구 카드 대부분이 사람 손 없이 허용되고 위험한 것만 이유와 함께 거부됩니다.**<br>policy.approvals.trusted_local(기본 꺼짐)을 켜면 runner가 Claude 직원의 도구 카드를 사람에게 보내지 않고 approval_grants.classify 결과로 허용하거나 사유를 붙여 거부한다. 거부는 진짜 개인 경로·credential·제한 구역·허용 폴더 밖 쓰기와 삭제·관리자 권한·스케줄러 직접 호출·디스크 부족 내려받기만이고, 내부 자료 구역 읽기는 요청마다 한 번 묻는다. 기록 재생에서 |
 | 00:52 | [`ae7ef91`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/ae7ef91) | **가림본에서 HTML로 작성한 코드 블록도 지웠습니다.**<br>HTML 태그를 벗기기 전에 pre 블록을 내용까지 제거한다. |
 | 00:45 | [`18e5625`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/18e5625) | **가림본에서 인용문 속 코드와 보고서 머리말을 지웠습니다.**<br>인용·중첩 인용의 fenced code와 첫 구분자로 감싼 front matter를 제거한다. |
 | 00:38 | [`4a132ed`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/4a132ed) | **대조군 관측값을 숫자로 확인하고 가림본에 남는 주소와 코드를 줄였습니다.**<br>평가한 대조군의 관측값에 유한한 수를 요구하고, 가림본에서 일반 HTTP(S) 주소와 들여쓴 코드 블록을 지운다. |
