@@ -376,6 +376,10 @@ class ApprovalRules(_SettingsModel):
     bash_ask_patterns: list[str] = Field(default_factory=_default_bash_ask)
     auto_allow_tools: list[str] = Field(default_factory=_default_auto_allow)
     timeout_s: int = 3600  # gate cards: tool permission, HPC submit, download
+    # #1482: the runner answers Claude staff tool cards itself: allow, or deny with a named reason (private paths,
+    # credentials, restricted zones, writes/deletes outside the allowed folders, admin or scheduler commands, a short
+    # disk). Internal-zone reads still ask once per request. Off by default.
+    trusted_local: StrictBool = False
     # Cards that decide the request itself (clarify, question, scope, budget, CP1, CP2, continue, resume). The request
     # waits as waiting_pi meanwhile; an unanswered card ends as *_timed_out, never as a deny (PI 점검 R5).
     pi_decision_timeout_s: int = Field(default=7 * 86400, ge=1)

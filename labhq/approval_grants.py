@@ -612,3 +612,98 @@ async def commit_grant(self, approval_id, entry, category, decision, delivery, c
             except RunnerUnavailable:
                 pass
     return approved, note
+
+
+# trusted_local (#1482): a card is allowed unless one of these named reasons applies. Internal-zone reads keep
+# their once-per-request card. Commands the classification cannot settle are allowed when no reason applies.
+_TRUSTED_DENY = {
+    "credential": "credential 경로", "restricted_zone": "제한 구역", "registry": "개인 설정(레지스트리)",
+    "home_spelling": "홈 폴더 경로", "other_private_path": "개인 경로", "other_private_or_registry": "개인 경로",
+    "resolved_private_path": "링크로 이어진 개인 경로", "private_scan_capped": "개인 경로를 다 확인하지 못함",
+    "outside_write_target": "허용 폴더 밖 쓰기", "shell_startup_environment": "셸 시작 환경 변경",
+}
+_PATH_REASONS = {"credential", "other_private_path", "other_private_or_registry", "resolved_private_path",
+                 "outside_write_target"}
+
+
+def _path_evidence(command: str, tool: str, workdir: str, roots: list[str], kw: dict, reason: str) -> bool:
+    """Whether a path-shaped word (a separator in it) backs a private, credential or outside-write reason."""
+    bases = [workdir, *(shell_cd_bases(command, workdir, environ=kw.get("environ")) or [])]
+
+    def located(word: str) -> list[str]:
+        if not re.search(r"[/\\]", word) or ":" in re.sub(r"^[A-Za-z]:(?=[/\\])", "", word):
+            return []  # a bare word, or a colon no file name has (`d:`, `x>1:` in inline code)
+        return [p for p in ([_real(word)] if _absolute(word) else
+                            [_real(posixpath.join(_norm(base), word)) for base in bases]) if p]
+
+    if reason == "outside_write_target":
+        powershell = tool == "PowerShell"
+        targets = [*_shell_write_targets(command, powershell=powershell), *_move_edit_targets(command, powershell)[0]]
+        return any(not any(_inside(path, _real(r) or _norm(r)) for r in roots)
+                   for t in targets for path in located(t if re.search(r"[/\\]", t) else "./" + t))
+    zones = [z for p in kw.get("private_paths") or () for z in {_norm(p), _real(p)} if z]
+    return any(credential_path(t) or credential_path(path) or any(_inside(path, z) for z in zones)
+               for t in _candidate_paths(command) for path in located(t))
+
+
+_OUTSIDE_WRITE = ("write outside", "shell write outside allowed roots", "write path has no known workdir",
+                  "drive-relative", "the gate cannot expand")
+
+
+def trusted_verdict(category: str | None, trace: list[str], tool: str, tool_input: dict[str, Any], policy: Any, *,
+                    workdir: str, extra_dirs: tuple[str, ...] = (), policy_reason: str = "",
+                    workspace_root: str = "", **kw: Any) -> tuple[str, str]:
+    """("allow" | "deny" | "card", reason) for a tool card under trusted_local, from `classify`'s result.
+
+    The workspace root and the task folders in it (`inputs/` links to earlier steps) are labhq's own data, not the
+    PI's personal files: a private-path reason that only they explain is judged again without them."""
+    from .settings import SCHEDULER_JOB_COMMANDS
+
+    if category == "internal_read" or (trace and trace[0] == "unproven_internal_read"):
+        return "card", ""
+    if category:
+        return "allow", ""
+    private = tuple(kw.get("private_paths") or ())
+    own = [p for p in private if workspace_root and _inside(_norm(p), _norm(workspace_root))]
+    if own:
+        kw = {**kw, "private_paths": tuple(p for p in private if p not in own)}
+        if trace and trace[0] in _TRUSTED_DENY and trace[0] not in {"credential", "restricted_zone", "registry",
+                                                                    "outside_write_target"}:
+            trace = []
+            category = classify(tool, tool_input, policy, workdir=workdir, extra_dirs=extra_dirs, trace=trace, **kw)
+            return trusted_verdict(category, trace, tool, tool_input, policy, workdir=workdir, extra_dirs=extra_dirs,
+                                   policy_reason=policy_reason, **kw)
+    roots = [workdir, *extra_dirs]
+    command = str((tool_input or {}).get("command") or "")
+    if trace and trace[0] in _TRUSTED_DENY:
+        if trace[0] not in _PATH_REASONS or _path_evidence(command, tool, workdir, roots, kw, trace[0]):
+            return "deny", _TRUSTED_DENY[trace[0]]
+        return "allow", ""  # only loose words in inline code (`d:`, `token`, `x>1:`) matched
+    decision = evaluate_tool(tool, tool_input, policy, allowed_roots=roots, workdir=workdir, **kw)
+    reason = decision.reason
+    if decision.action == "allow":
+        # The runner's policy allows it, so the card came from the disk check on a download.
+        return "deny", "디스크 여유 부족: " + (policy_reason or "내려받을 공간이 모자랍니다")
+    if decision.action == "deny":
+        return "deny", reason
+    if "internal data zone read requires approval" in reason:
+        return "card", ""
+    if decision.private_kind == "matched" and _path_evidence(command, tool, workdir, roots, kw, "other_private_path"):
+        return "deny", "개인 경로"
+    if "restricted zone" in reason:
+        return "deny", "제한 구역"
+    if "위험 명령 확인 필요" in reason:
+        if re.search(SCHEDULER_JOB_COMMANDS, command, re.I):
+            return "deny", "스케줄러 직접 호출: HPC 도구(hpc_submit)로 제출하세요"
+        return "deny", "관리자 권한·위험 명령"
+    if any(text in reason for text in _OUTSIDE_WRITE):
+        return "deny", "허용 폴더 밖 쓰기"
+    if "재귀 삭제 확인 필요" in reason:
+        for token in _candidate_paths(command):
+            if not (_absolute(token) or token.startswith("~") or ".." in token.replace("\\", "/").split("/")):
+                continue
+            path = token if _absolute(token) else posixpath.join(_norm(workdir), token)
+            real = _real(path)
+            if not real or not any(_inside(real, _real(root) or _norm(root)) for root in roots):
+                return "deny", "허용 폴더 밖 삭제"
+    return "allow", ""

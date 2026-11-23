@@ -3674,23 +3674,41 @@ class Runner:
         if (req.kind == 'tool_permission' and ws and ctx and req.request_id
                 and self.task_req.get(req.task_id or '') == req.request_id
                 and req.task_id in self.active_roots and ctx.agent.engine == Engine.claude_code):
-            from ..approval_grants import classify
+            from ..approval_grants import classify, trusted_verdict
             from ..environment_install import shared_environment_install_denial
             tool_input = req.detail.get('tool_input')
+            verdict = ('card', '')
             try:
                 tool = str(req.detail.get('tool_name') or '')
                 denied = shared_environment_install_denial(
                     tool, tool_input or {}, protected=ctx.shared_environment_protected,
                     environment_step=ctx.environment_step, workdir=str(ws.dir))
                 staff_env = getattr(ctx, '_approval_grant_env', None)
-                category = None if denied or not isinstance(staff_env, dict) else classify(tool, tool_input, self.s.policy,
-                                    workdir=str(ws.dir), extra_dirs=tuple(ctx.extra_dirs),
-                                    private_paths=tuple(ctx.private_paths), private_enabled=ctx.private_enabled,
-                                    private_open_reads=tuple(ctx.private_open_reads), read_only=ctx.read_only,
-                                    environ=staff_env)
+                scope = dict(workdir=str(ws.dir), extra_dirs=tuple(ctx.extra_dirs),
+                             private_paths=tuple(ctx.private_paths), private_enabled=ctx.private_enabled,
+                             private_open_reads=tuple(ctx.private_open_reads), read_only=ctx.read_only,
+                             environ=staff_env)
+                trace: list[str] = []
+                category = None if denied or not isinstance(staff_env, dict) else classify(
+                    tool, tool_input, self.s.policy, trace=trace, **scope)
+                if self.s.policy.approvals.trusted_local and isinstance(staff_env, dict):
+                    # One classification serves both the request grant and trusted_local (#1482).
+                    verdict = ('deny', denied) if denied else trusted_verdict(
+                        category, trace, tool, tool_input or {}, self.s.policy,
+                        policy_reason=str(req.detail.get('policy_reason') or ''),
+                        workspace_root=str(self.s.path(self.s.runner.workspace_root)), **scope)
             except Exception:
                 log.exception('request grant classification failed; keeping individual approval')
                 category = None
+            if verdict[0] != 'card' and self.broker.resolve(req.id, verdict[0] == 'allow',
+                                                           f"trusted_local: {verdict[1] or '허용'}"):
+                await self.emit(Event(type='agent.log', task_id=req.task_id, agent_id=req.agent_id,
+                                      request_id=req.request_id, data={
+                                          'level': 'info' if verdict[0] == 'allow' else 'warn',
+                                          'text': f"도구 카드 자동 {'허용' if verdict[0] == 'allow' else '거부'}"
+                                                  f"(trusted_local){': ' + verdict[1] if verdict[1] else ''}",
+                                          'tool_name': tool}))
+                return
             if category:
                 req.detail['grant_category'] = category
                 req.detail['grant_process'] = self.process
