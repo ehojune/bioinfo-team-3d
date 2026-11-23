@@ -1,0 +1,39 @@
+{
+  "registered_at_utc": "",
+  "hypothesis": "",
+  "dataset_version": "",
+  "analysis_unit": "",
+  "eligibility": "",
+  "primary_metric": {
+    "name": "",
+    "definition": "",
+    "unit": "",
+    "contrast": "",
+    "decrease_at_or_below": null,
+    "increase_at_or_above": null
+  },
+  "known_confounders": [
+    {
+      "factor": "",
+      "planned_handling": ""
+    }
+  ],
+  "controls": [
+    {
+      "control_id": "positive-1",
+      "kind": "positive",
+      "planned_check": "",
+      "metric_and_unit": "",
+      "expected_direction": "",
+      "pass_rule": ""
+    },
+    {
+      "control_id": "negative-1",
+      "kind": "negative",
+      "planned_check": "",
+      "metric_and_unit": "",
+      "expected_direction": "",
+      "pass_rule": ""
+    }
+  ]
+}
