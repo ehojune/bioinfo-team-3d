@@ -1,0 +1,18 @@
+pr: 1488
+rows:
+  - sha: '0658746'
+    at: 2026-11-24 01:30
+    text: policy.approvals.trusted_local(기본 꺼짐)을 켜면 runner가 Claude 직원의 도구 카드를 사람에게 보내지 않고 approval_grants.classify 결과로 허용하거나 사유를 붙여 거부한다. 거부는 진짜 개인 경로·credential·제한 구역·허용 폴더 밖 쓰기와 삭제·관리자 권한·스케줄러 직접 호출·디스크 부족 내려받기만이고, 내부 자료 구역 읽기는 요청마다 한 번 묻는다. 기록 재생에서 #1445 205장은 허용 183·카드 22(내부 자료 읽기)·거부 0, 요청 A 98장은 허용 98, B 33장은 허용 31·거부 2
+    summary: PI 인스턴스에서 trusted_local을 켜면 도구 카드 대부분이 사람 손 없이 허용되고 위험한 것만 이유와 함께 거부됩니다.
+  - sha: '3efae9d'
+    at: 2026-11-24 09:30
+    text: 리뷰 P1 수정. trusted_local의 재귀 삭제 판정에서 상대 경로 피연산자도 모두 링크까지 풀어, 작업 폴더 안 링크를 타고 밖을 지우는 명령(rm -rf link/file)을 거부한다
+    summary: 작업 폴더 안 링크를 타고 밖을 지우는 명령은 trusted_local에서도 거부됩니다.
+  - sha: '6430a5b'
+    at: 2026-11-24 10:20
+    text: 리뷰 P1 수정. trusted_local에서 작업 폴더에 실제로 있는 credential 파일 이름(cat .env)은 경로 구분자가 없어도 거부하고, labhq가 검사하지 않는 도구(Monitor처럼 자기 명령을 실행하는 도구)는 자동 허용하지 않고 카드로 남긴다
+    summary: credential 파일 읽기와 검사 밖 도구는 trusted_local에서도 자동 허용되지 않습니다.
+  - sha: '3e20b84'
+    at: 2026-11-24 11:10
+    text: 리뷰 P1 수정. trusted_local에서 재귀가 아닌 삭제(rm, unlink, Remove-Item 등)도 그 명령 구간의 피연산자를 링크까지 풀어 허용 폴더 밖이면 거부한다
+    summary: 작업 폴더 밖 파일 하나를 지우는 명령도 trusted_local에서 거부됩니다.
