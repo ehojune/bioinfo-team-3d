@@ -4,6 +4,11 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# 위협 모형과 PR 크기 규칙
+
+- [#1479 결정](https://github.com/ehojune/bioinfo-team-3d/issues/1479#issuecomment-7104465599)의 위협 모형을 원문 그대로 옮겼습니다.
+- PR 하나당 제품 코드 순증 300줄과 커밋 10개를 상한으로 두고, PR 본문에 제품 코드 순증을 적도록 했습니다. 이 PR의 제품 코드 순증은 0줄입니다.
+
 ## 결론
 
 [#1483](https://github.com/ehojune/bioinfo-team-3d/issues/1483)의 첫 PR입니다. `tools/prereg_kit/`에 사전등록, 시료·기록 점검표, 대조군 결과표와 작성 지침을 넣었습니다. 폴더 하나를 복사해 단일 세션에서 씁니다.
