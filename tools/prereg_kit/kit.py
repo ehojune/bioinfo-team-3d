@@ -204,7 +204,7 @@ def plain_report(text):
     # Indented code can start at a block boundary, not inside a running paragraph.
     body = re.sub(r"(?m)(\A|^[ \t]*\n|^ {0,3}#{1,6}(?:[ \t][^\n]*)?\n)"
                   r"(?:(?: {4}| {0,3}\t)[^\n]*(?:\n|\Z))+", r"\1", body)
-    body = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1\s*>", "", body)
+    body = re.sub(r"(?is)<(script|style|pre)\b[^>]*>.*?</\1\s*>", "", body)
     body = re.sub(r"(?i)\[\[\s*claim\s*:[^\]\n]*\]\]", "", body)
     body = re.sub(r"(?m)^ {0,3}\[[^\]\n]+\]:[^\n]*$", "", body)
     body = re.sub(r"(!?)\[([^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])",
