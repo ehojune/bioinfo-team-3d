@@ -55,6 +55,7 @@ def test_ordinary_analysis_cards_are_allowed(layout, tool, command):
     ("Bash", "echo x > {tmp}/elsewhere.txt", "허용 폴더 밖 쓰기"),
     ("PowerShell", "Set-Content link/a.txt x", None),  # a link out of the task folder
     ("Bash", "rm -rf {tmp}/elsewhere", "허용 폴더 밖 삭제"),
+    ("Bash", "rm -rf link/file", "허용 폴더 밖 삭제"),  # a link in the task folder leads out
     ("Bash", "sudo apt-get install -y samtools", "관리자 권한·위험 명령"),
     ("Bash", "sbatch outputs/job.sh", "스케줄러 직접 호출: HPC 도구(hpc_submit)로 제출하세요"),
 ])

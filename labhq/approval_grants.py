@@ -699,9 +699,10 @@ def trusted_verdict(category: str | None, trace: list[str], tool: str, tool_inpu
     if any(text in reason for text in _OUTSIDE_WRITE):
         return "deny", "허용 폴더 밖 쓰기"
     if "재귀 삭제 확인 필요" in reason:
+        # Every operand is resolved through links: `rm -rf link/file` follows `link` out of the folder.
         for token in _candidate_paths(command):
-            if not (_absolute(token) or token.startswith("~") or ".." in token.replace("\\", "/").split("/")):
-                continue
+            if ":" in re.sub(r"^[A-Za-z]:(?=[/\\])", "", token):
+                continue  # not a file name (`d:` in inline code)
             path = token if _absolute(token) else posixpath.join(_norm(workdir), token)
             real = _real(path)
             if not real or not any(_inside(real, _real(root) or _norm(root)) for root in roots):
