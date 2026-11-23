@@ -89,6 +89,11 @@ def control_problem(row):
         return "missing observation or evidence"
     if result not in {"pass", "fail", "not_evaluable"} or (observed == "NA") != (result == "not_evaluable"):
         return "use pass/fail with an observation, or not_evaluable with NA"
+    if observed != "NA":
+        try:
+            decimal(observed)
+        except ValueError:
+            return "observation must be a finite number"
     return None
 
 
@@ -190,6 +195,9 @@ def existing_checks(args):
 def plain_report(text):
     body = re.sub(r"(?ms)\A---[ \t]*\n(?=[\w-]+:).*?^(?:---|\.\.\.)[ \t]*(?:\n|\Z)", "", text)
     body = re.sub(r"(?s)<!--.*?(?:-->|\Z)", "", "\n".join(unfenced(body)))
+    # Indented code can start at a block boundary, not inside a running paragraph.
+    body = re.sub(r"(?m)(\A|^[ \t]*\n|^ {0,3}#{1,6}(?:[ \t][^\n]*)?\n)"
+                  r"(?:(?: {4}| {0,3}\t)[^\n]*(?:\n|\Z))+", r"\1", body)
     body = re.sub(r"(?is)<(script|style)\b[^>]*>.*?</\1\s*>", "", body)
     body = re.sub(r"(?i)\[\[\s*claim\s*:[^\]\n]*\]\]", "", body)
     body = re.sub(r"(?m)^ {0,3}\[[^\]\n]+\]:[^\n]*$", "", body)
@@ -200,7 +208,8 @@ def plain_report(text):
     body = re.sub(r"(?m)^ {0,3}(?:#{1,6}[ \t]+|> ?|[-*+] +|[0-9]+[.)] +)", "", body)
     body = re.sub(r"(?m)^ {0,3}(?:={2,}|-{3,}|\*{3,}|_{3,})[ \t]*$", "", body)
     body = re.sub(r"(?<!\w)(\*{1,3}|_{1,3}|`+)(?=\S)([^\n]+?)(?<=\S)\1(?!\w)", r"\2", body)
-    lines = [" ".join(html.unescape(line).split()) for line in body.splitlines()]
+    body = re.sub(r"(?i)\bhttps?://[^\s<>]+", "", html.unescape(body))
+    lines = [" ".join(line.split()) for line in body.splitlines()]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines).strip()) + "\n"
 
 
