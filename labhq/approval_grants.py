@@ -651,6 +651,7 @@ def _path_evidence(command: str, tool: str, workdir: str, roots: list[str], kw: 
         for t in _candidate_paths(command) for base in bases)
 
 
+_DELETERS = {"rm", "rmdir", "unlink", "shred", "del", "erase", "rd", "ri", "remove-item"}
 _OUTSIDE_WRITE = ("write outside", "shell write outside allowed roots", "write path has no known workdir",
                   "drive-relative", "the gate cannot expand")
 
@@ -705,9 +706,12 @@ def trusted_verdict(category: str | None, trace: list[str], tool: str, tool_inpu
         return "deny", "관리자 권한·위험 명령"
     if any(text in reason for text in _OUTSIDE_WRITE):
         return "deny", "허용 폴더 밖 쓰기"
-    if "재귀 삭제 확인 필요" in reason:
-        # Every operand is resolved through links: `rm -rf link/file` follows `link` out of the folder.
-        for token in _candidate_paths(command):
+    powershell = tool == "PowerShell"
+    deletes = [word for words in shell_segments(command, powershell) for word in [_word_value(w) for w in words][1:]
+               if words and _word_value(words[0]).casefold() in _DELETERS and not word.startswith("-")]
+    if "재귀 삭제 확인 필요" in reason or deletes:
+        # Every operand of a delete is resolved through links: `rm -rf link/file` follows `link` out of the folder.
+        for token in (_candidate_paths(command) if "재귀 삭제 확인 필요" in reason else deletes):
             if ":" in re.sub(r"^[A-Za-z]:(?=[/\\])", "", token):
                 continue  # not a file name (`d:` in inline code)
             path = token if _absolute(token) else posixpath.join(_norm(workdir), token)
