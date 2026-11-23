@@ -12,3 +12,7 @@ rows:
     at: 2026-11-24 10:20
     text: 리뷰 P1 수정. trusted_local에서 작업 폴더에 실제로 있는 credential 파일 이름(cat .env)은 경로 구분자가 없어도 거부하고, labhq가 검사하지 않는 도구(Monitor처럼 자기 명령을 실행하는 도구)는 자동 허용하지 않고 카드로 남긴다
     summary: credential 파일 읽기와 검사 밖 도구는 trusted_local에서도 자동 허용되지 않습니다.
+  - sha: '3e20b84'
+    at: 2026-11-24 11:10
+    text: 리뷰 P1 수정. trusted_local에서 재귀가 아닌 삭제(rm, unlink, Remove-Item 등)도 그 명령 구간의 피연산자를 링크까지 풀어 허용 폴더 밖이면 거부한다
+    summary: 작업 폴더 밖 파일 하나를 지우는 명령도 trusted_local에서 거부됩니다.
