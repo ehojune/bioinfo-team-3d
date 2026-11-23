@@ -14,6 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 00:52 | [`ae7ef91`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/ae7ef91) | **가림본에서 HTML로 작성한 코드 블록도 지웠습니다.**<br>HTML 태그를 벗기기 전에 pre 블록을 내용까지 제거한다. |
+| 00:45 | [`18e5625`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/18e5625) | **가림본에서 인용문 속 코드와 보고서 머리말을 지웠습니다.**<br>인용·중첩 인용의 fenced code와 첫 구분자로 감싼 front matter를 제거한다. |
+| 00:38 | [`4a132ed`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/4a132ed) | **대조군 관측값을 숫자로 확인하고 가림본에 남는 주소와 코드를 줄였습니다.**<br>평가한 대조군의 관측값에 유한한 수를 요구하고, 가림본에서 일반 HTTP(S) 주소와 들여쓴 코드 블록을 지운다. |
+| 00:30 | [`e38e5e2`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/e38e5e2) | **매뉴얼에 사전등록 검사와 가림 보고서 사용법을 연결했습니다.**<br>연구 lane과 검증 장에서 점검표·대조군 누락과 주 판정을 확인하는 도구의 사용법을 찾을 수 있다. |
+| 00:24 | [`4a0ac14`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/4a0ac14) | **시료 점검 누락과 보고서의 판정을 확인하고 채점용 보고서를 가리는 도구를 추가했습니다.**<br>사전등록 양식의 고정 ID와 숫자 기준을 검사하고, 산출 묶음에서 본문·표 대조와 인용 감사를 실행하며, 가림 대응표를 별도 파일로 저장한다. |
 | 00:00 | [`decc926`](https://github.com/ehojune/bioinfo-team-3d/commit/decc926) | **개발자가 리뷰에서 먼저 해결할 문제와 변경 요청의 크기 기준을 문서에 적었습니다.**<br>AGENTS.md에 단일 사용자 연구 PC의 위협 모형과 P1 범위를 명시하고 PR당 제품 코드 순증 300줄과 커밋 10개 상한을 기록했습니다. |
 | 00:00 | [`86cd02d`](https://github.com/ehojune/bioinfo-team-3d/commit/86cd02d) | **분석 전에 판정 기준을 정하고 시료 점검과 대조군 결과를 남기는 양식을 추가했습니다.**<br>tools/prereg_kit 폴더만 복사해 가상 자료로 세 양식과 보고서를 작성하고 사전등록 파일의 SHA-256 보존을 확인했다. |
 
