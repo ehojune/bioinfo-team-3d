@@ -2,10 +2,14 @@
 
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import PurePosixPath
 
-from ..evidence.literal_check import _source_bytes
+from ..evidence import report_consistency
+from ..evidence.literal_check import MAX_SOURCE_BYTES, _source_bytes
 from ..models import Task, TaskResult
+from ..recruit.provenance import restricted_input_steps
 from ..report_format import PAPER_RULE
+from ..runner import report_artifacts
 from . import compact_workflow
 from .continuation import _ancestors
 from .contract import plan_sha256
@@ -38,13 +42,15 @@ class AnalysisDraft:
             + PAPER_RULE
         )
 
-    def followup(self, rid: str, analyst: TaskResult, context: str, runner: str | None, restricted: bool) -> Task:
+    def followup(self, rid: str, analyst: TaskResult, context: str, runner: str | None, restricted: bool,
+                 *, transfer: bool = False) -> Task:
         """Resume the analyst in a fresh workspace once the complete result set exists."""
         return Task(agent_id=analyst.agent_id, request_id=rid, resume_session_id=analyst.session_id,
                     prompt=self.prompt(), context=context,
                     meta={"kind": "analysis_draft", "parent_task": analyst.task_id, "outputs": [self.path],
                           "title": "분석 보고서 초안", "restricted_inputs": restricted,
-                          **({"session_runner": runner} if runner else {})})
+                          **({"session_runner": runner} if runner else {}),
+                          **transfer_meta(self, transfer)})
 
     def restored(self, receipt: dict, analyst: TaskResult | None) -> TaskResult | None:
         if (self.inline or not analyst or not analyst.ok or receipt.get("path") != self.path
@@ -60,24 +66,63 @@ class AnalysisDraft:
         return {"path": self.path, "parent_task": analyst.task_id,
                 "result": result.model_dump(mode="json", include=fields)}
 
-    def read(self, result: TaskResult | None) -> str:
+    def read(self, result: TaskResult | None, load=None) -> str:
         if not result or not result.ok or self.path not in result.outputs:
             raise ValueError("the analysis step did not deliver the draft")
         digest = result.output_sha256.get(self.path)
         if not digest:
             raise ValueError("the draft has no collected SHA-256")
-        if not result.workdir:
-            raise ValueError("the draft workspace is unavailable")
-        try:
-            data = _source_bytes(result.workdir, self.path)
-            body = data.decode("utf-8-sig")
-        except (OSError, TypeError, ValueError):
-            raise ValueError("the collected draft is unreadable as UTF-8 Markdown") from None
-        if sha256(data).hexdigest() != digest:
-            raise ValueError("the draft differs from the collected SHA-256")
+        if load:
+            body = report_artifacts.verified_text(load(result.task_id) or {}, self.path, digest, MAX_SOURCE_BYTES)
+        else:
+            if not result.workdir:
+                raise ValueError("the draft workspace is unavailable")
+            try:
+                data = _source_bytes(result.workdir, self.path)
+                body = data.decode("utf-8-sig")
+            except (OSError, TypeError, ValueError):
+                raise ValueError("the collected draft is unreadable as UTF-8 Markdown") from None
+            if sha256(data).hexdigest() != digest:
+                raise ValueError("the draft differs from the collected SHA-256")
         if not body.strip():
             raise ValueError("the collected draft is empty")
         return body
+
+
+def artifact_loader(hub, request: dict):
+    """Use the private receiver only where the gateway and data policy allow it."""
+    load = getattr(hub, "report_artifacts", None)
+    if callable(load):
+        from ..result_storage import controlled_request
+
+        steps = (request.get("plan") or {}).get("steps") or []
+        if not controlled_request(request, hub.s) and not restricted_input_steps(steps, [], [], hub.s):
+            return load
+    return None
+
+
+def transfer_meta(draft: AnalysisDraft | None, transfer: bool) -> dict:
+    return {report_artifacts.RESULT_FIELD: draft.path if draft else True} if transfer else {}
+
+
+def tables_for(report: str, results: dict, load) -> dict[str, str | None]:
+    if load is None:
+        return report_consistency.tables_for(report, results)
+    wanted = {link.replace("\\", "/").removeprefix("./") for link in report_consistency._targets(report)
+              if PurePosixPath(link).suffix.casefold() in report_consistency.TABLE_SUFFIXES and "://" not in link}
+    tables = dict.fromkeys(sorted(wanted))
+    for sid, result in results.items():
+        matches = {link: path for path in result.get("outputs", []) if (link := f"steps/{sid}/{path}") in wanted}
+        if not matches or not result.get("ok"):
+            continue
+        payload = load(result.get("task_id")) or {}
+        for link, path in matches.items():
+            try:
+                tables[link] = report_artifacts.verified_text(
+                    payload, path, result.get("output_sha256", {}).get(path), report_consistency.MAX_TABLE_BYTES)
+            except ValueError:
+                pass
+    return tables
 
 
 def for_request(request: dict, plan: dict | None = None) -> AnalysisDraft | None:

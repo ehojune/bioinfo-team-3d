@@ -5734,6 +5734,7 @@ class Orchestrator:
         branch_topology = branch_plan_topology((research_plan or {}).get("branches") or [], steps)
         branch_ids = branch_topology["branch_ids"]
         draft = analysis_draft.for_request(req_state, research_plan) if research_plan else None
+        transfer = bool(draft and analysis_draft.artifact_loader(self.hub, req_state))
         branch_by_step = branch_topology["branch_by_step"]
         branch_terminals = branch_topology["terminals"]
         shared_environment_protected = any(
@@ -5972,6 +5973,7 @@ class Orchestrator:
                               "outputs": [*step.get("outputs", []), *optional_outputs],
                               "required_outputs": step.get("outputs", []),
                               "optional_outputs": optional_outputs,
+                              **analysis_draft.transfer_meta(step_draft, transfer),
                               "environment_step": ENV_LOCK_OUTPUT in [*step.get("outputs", []),
                                                                         *step.get("optional_outputs", [])],
                               **({"session_runner": pin} if pin else {}),
@@ -6818,6 +6820,7 @@ class Orchestrator:
         draft = analysis_draft.for_request(req)
         if draft:
             try:
+                load = analysis_draft.artifact_loader(self.hub, req)
                 analyst = results.get(draft.step_id)
                 saved = draft.restored(contract.get("analysis_draft") or {}, analyst)
                 author = saved or analyst
@@ -6835,13 +6838,13 @@ class Orchestrator:
                     context = (self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)
                                + "\n\n" + cp2_report
                                + approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE))
-                    author = await self.run_step(draft.followup(rid, author, context, origin, restricted))
+                    author = await self.run_step(draft.followup(rid, author, context, origin, restricted, transfer=bool(load)))
                     if rid in self.budget_denials:
                         await budget_denied("analysis draft", None)
                         return
                     if author.ok and author.session_id != session:
                         raise ValueError("the draft did not come from the original analysis session")
-                draft_body = await asyncio.to_thread(draft.read, author)
+                draft_body = await asyncio.to_thread(draft.read, author, load)
                 if not draft.inline and saved is None:
                     contract["analysis_draft"] = draft.receipt(analyst, author)
                     await persist_request(self.hub, rid)
@@ -9427,8 +9430,10 @@ class Orchestrator:
         if style_note:
             req["execution_record"] += "\n\n" + style_note
         # What is left after the writer's one correction: the report front shows it as an unverified draft (#1374).
-        consistency = req["report_consistency"] = report_consistency.check(
-            report, report_consistency.tables_for(report, results))
+        draft = req.get("outcome") == "research_reported" and analysis_draft.for_request(req)
+        loader = analysis_draft.artifact_loader(self.hub, req) if draft else None
+        tables = await asyncio.to_thread(analysis_draft.tables_for, report, results, loader)
+        consistency = req["report_consistency"] = report_consistency.check(report, tables)
         if left := report_consistency.record_lines(consistency):
             req["execution_record"] += "\n\n" + left
         package = build_report_package(req, report, results)
@@ -9442,7 +9447,7 @@ class Orchestrator:
         if contract_check["problems"]:
             lines = "\n".join(f"- {problem['message']}" for problem in contract_check["problems"])
             req["execution_record"] += "\n\n## 공통 보고 계약 경고\n\n" + lines
-        if req.get("outcome") == "research_reported" and analysis_draft.for_request(req):
+        if draft:
             req["research_contract"]["report_consistency"] = consistency
             if consistency["findings"] or consistency["checked"]["unread_tables"] or contract_check["problems"]:
                 req["outcome"], ok = "report_incomplete", False
