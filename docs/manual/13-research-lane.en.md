@@ -123,6 +123,8 @@ A card note is not a decision and is passed to whoever takes the next work (PI c
 
 With `research.live_source_check` enabled, `labhq verify` also checks identifiers in the report, scientific appendix and ledgers. Label a human gene symbol as `HGNC symbol: TP53`. The check also reads GO IDs and DOIs. A registry-confirmed miss is a problem. A network error or lookup limit leaves the item unverified. Registry presence and claim support are separate checks.
 
+The report replaces local path text and artifact registration diagnostics with reader-facing wording. Table and figure links and evidence markers are kept.
+
 ### Final draft acceptance (CP4)
 
 `research.final_checkpoint: true` applies only to new research execution requests (default `false`). CP1-only, `plan_only`, simple and direct are excluded, and the value fixed at creation and the contract version do not change by a config change or restart.

@@ -26,6 +26,61 @@ _CODE_BLOCKS = {"code_block", "fence"}
 RENDERED_MARKERS = ("**", "__", "[[")
 READER_FILENAMES = {"readme.md", "report.md", "result.md"}
 
+_ARTIFACT_WARNING = re.compile(
+    r"(?im)^(?P<bullet> {0,3}(?:[-*+] +)?)"
+    r"(?:[\w./-]+: +)?(?:evidence +)?[\w.-]+ cites artifact [^\r\n]+? missing from artifact_refs"
+    r"[ .]*(?P<anchor> +\[\[\s*claim\s*:[^\]\r\n]+\]\])?[ \t]*(?=\r?$)"
+)
+_PATH_CHAR = r"""[^\s/\\<>"'`|\[\](){},;!?]"""
+_PATH_CHUNK = (rf"(?:(?!\.(?=\s|$)){_PATH_CHAR}|"
+               r"\([^/\\\r\n()<>]*\)|\[(?!\[)[^/\\\r\n[\]<>]+\](?!\()|\{[^/\\\r\n{}<>]+\})")
+_PATH_WORD = rf"{_PATH_CHUNK}+(?:[',;!?]{_PATH_CHUNK}+)*"
+_SUBJECT_TOKEN = r"[A-Za-z0-9α-ωΑ-Ω][A-Za-z0-9α-ωΑ-Ω-]*[+−⁺⁻]?"
+_LINE_SUFFIX = r":L\d+(?:-L\d+)?(?=\s|\[\[|[.,;](?=\s|$)|[)\]>]|$)"
+_PATH_EXTENSION = rf"\.[A-Z][A-Z0-9]{{0,9}}(?![A-Z0-9_-]|(?!{_LINE_SUFFIX}):[^\s])"
+_PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
+_PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|no)|[A-Z][A-Z0-9-]+)[ \t]+[a-z][a-z-]*[ \t]+\w"
+                rf"|{_SUBJECT_TOKEN}(?:/{_SUBJECT_TOKEN})*(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)(?:[a-z][A-Za-z0-9-]*|[A-Z]))*"
+                r"[ \t]+(?:(?:am|is|are|was|were|has|have|had|do|does|did|can|could|may|might|must|shall|should|will|would)(?:n't)?"
+                r"|can't|won't|(?:differ|indicate|increase|decrease|remain|show|suggest)s?|fell|rose|[a-z]{2,}ed)"
+                r"(?=[ \t]+[a-z0-9]|[.!?]?(?:[ \t]*\[\[|[ \t]*$))"
+                r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w))"
+                r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])")
+_TAIL_GAP = rf"[ \t]+(?!(?:{_PROSE_START})[^\r\n]*\[\[\s*claim\s*:|(?:(?i:and|or)[ \t]+)?!?\[[^\]\r\n]*\]\()"
+_PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
+_PATH_COMPONENT = rf"{_PATH_WORD}(?:{_TAIL_GAP}{_PATH_WORD})*"
+_PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
+_PATH_ROOT = (rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\(?:[?.]\\(?:[A-Z]:[/\\])?)?"
+              rf"|\\(?={_PATH_COMPONENT}[/\\]|{_PATH_FILE}|{_PATH_SPACED_FILE})|~[A-Z0-9_.+-]*[/\\]|/{{2,}}|/(?={_PATH_COMPONENT}/)|(?<!<)/)")
+_PATH_TEXT = re.compile(
+    rf"""(?ix) https?://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
+        | (?<![\\$])(?:\$\$(?:\\.|[^\\$]|\$(?!\$))+?\$\$|\$(?![\s$])(?:\\.|[^\\$\r\n])+?(?<!\s)\$(?![\d$]))
+        | (?<!\\)\\(?:\([^\r\n]*?\\\)|\[[\s\S]*?\\\])
+        | (?<![\w./\\:-]) (?<!\w[+−⁺⁻%]) (?:(?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)(?![A-Za-z0-9_])
+            | (?P<bare>{_PATH_ROOT}{_PATH_DIRS}(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_COMPONENT})[/\\]?(?:{_LINE_SUFFIX})?) )""")
+
+
+def clean_report_prose(text: str) -> str:
+    """Redact local paths. Quotes set an exact boundary, and bare paths use clause syntax near claims."""
+    def replace(match: re.Match[str]) -> str:
+        quoted, bare = match.group("quoted", "bare")
+        if quoted:
+            return f"{match['quote']}로컬 경로{match['quote']}"
+        if bare:
+            return "로컬 경로" + re.search(rf"(?:{_LINE_SUFFIX})?[.]*$", bare).group()
+        return match.group()
+
+    return _PATH_TEXT.sub(replace, text)
+
+
+def translate_report_warnings(text: str) -> str:
+    """Replace known engine diagnostics with the scientific limitation they report."""
+    def translate(match: re.Match[str]) -> str:
+        return (match["bullet"] + "일부 근거가 가리키는 산출물이 원장에 등록되지 않았습니다. 실행 기록 참고."
+                + (match["anchor"] or ""))
+
+    return replace_markdown_body(text, lambda body: _ARTIFACT_WARNING.sub(translate, body))
+
 
 @dataclass(frozen=True)
 class MarkdownRegion:
