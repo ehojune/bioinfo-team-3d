@@ -12,7 +12,8 @@ The abstract summarizes the question and findings; the introduction states the b
 Methods include seeds, tool/data versions and assumptions; results contain evidence, figures and tables.
 Discussion covers interpretation, reviewer concerns, limitations and what would change the conclusion.
 The conclusion gives the answer and concrete next steps. References name only supplied data accessions,
-PMIDs and DOIs, never invented citations. The scientific appendix contains only checklist tables, review
+PMIDs and DOIs, never invented citations. Label human gene symbols for registry checks (e.g. "HGNC symbol: TP53")
+and spell out GO identifiers. The scientific appendix contains only checklist tables, review
 verdict/issues and assumptions. Execution details, costs, warnings and bundle conversion belong to the
 separate operation record. Keep easy Korean (#569), about 4,000 characters unless results need more;
 state each result statistic once, in the results. Format comes first; do not invent background or findings.
