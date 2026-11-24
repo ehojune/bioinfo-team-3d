@@ -8,7 +8,7 @@ Closes #1492
 - 리뷰에서 지적한 원장 DOI URL을 조회하도록 고쳤습니다. 경로 바로 뒤에 붙은 근거 표식도 유지합니다. [리뷰 P2](https://github.com/ehojune/bioinfo-team-3d/pull/1493#discussion_r4681495822)
 - 공백이 든 PC 경로는 통째로 가립니다. 뒤 문장과 근거 표식, 재현 묶음의 상대경로 치환을 확인했습니다. [리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1493#discussion_r4681606390)
 - 새 보고서는 절대경로 링크에서 표시 문구만 남깁니다. 아포스트로피·쉼표·괄호가 든 경로도 가립니다. [링크 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1493#discussion_r4681795888) · [경로 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1493#discussion_r4681796027)
-- 확장자가 없는 경로도 마지막 폴더명까지 가립니다. 경로 끝을 구분할 수 없으면 구분 기호나 근거 표식 전까지 가립니다. [폴더명 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1493#discussion_r4681925885)
+- 확장자가 없는 경로도 마지막 폴더명까지 가립니다. 문장 경계와 근거 표식을 보존합니다. [폴더명 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1493#discussion_r4681925885) · [문장 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1493#discussion_r4682019957)
 
 ## 확인
 
@@ -19,6 +19,6 @@ Closes #1492
 |---|---:|---:|---:|---:|---:|
 | PR 5 | 0 | 0 | 0 | +18 | 82 |
 
-제품 코드 순증 279줄. ID 검사 모듈 163줄.
+제품 코드 순증 280줄. ID 검사 모듈 163줄.
 
 🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
