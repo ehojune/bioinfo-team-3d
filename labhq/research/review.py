@@ -6,8 +6,8 @@ observation sentence, so a search that found nothing, written as ``observed`` wi
 shape: every claim gets every check, a defect states its severity, using absence as evidence is always
 major, and a review that leaves a major defect cannot accept.
 
-Not on the execution path yet: research steps stay off until #90 PR 3. The general REVIEW_SCHEMA in
-``orchestrator/cso.py`` is unchanged.
+The request-level audit after CP2 uses its own schema in ``independent_review.py``. This per-step schema is
+not on that execution path.
 """
 
 from __future__ import annotations

@@ -66,8 +66,14 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
-from ..research import analysis_draft, compact_workflow
+from ..research import analysis_draft, compact_workflow, independent_review
 from ..research import precedent_texts
+from ..research.approval_notes import APPROVAL_NOTE_CHARS, approval_note, approval_note_block
+from ..research.independent_review import (RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_PROMPT, REVIEW_SCHEMA,
+                                           lenient_review, plan_digest as _research_plan_digest, valid_review,
+                                           with_p1_verdict)
+from ..research.review_checklist import (CHECKLIST_REVIEW_RULE, analysis_precedents_text, plan_review_context,
+                                         required_checklist_items, review_with_checklist)
 from ..research import continuation as research_continuation
 from ..research import input_fit
 from ..research import semantic_devices
@@ -75,7 +81,7 @@ from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
                                   probation_refusal, restricted_input_steps, touches_restricted)
 from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
-                              pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
+                              pack_snapshot, packs_for_snapshot, render_pack_catalog,
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import INPUT_STEP_ID, clip, extract_json, input_relpath, output_relpath, short
 from . import execution as execution_policy
@@ -344,57 +350,9 @@ def with_scope_coverage_warning(plan: Any, request: str) -> Any:
         kept.append(SCOPE_COVERAGE_WARNING + ", ".join(missing))
     return {**plan, "warnings": kept}
 
-# The reviewer's answer to each declared checklist item and required precedent item (#586). Optional in both review
-# schemas: a review saved before it existed, or one from a request with no checklist, stays valid.
-CHECKLIST_REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "array", "items": {
-        "type": "object", "additionalProperties": False,
-        "properties": {"id": {"type": "string"},
-                       "status": {"type": "string", "enum": list(topic_checklists.REVIEW_STATUSES)},
-                       "evidence": {"type": "string"}},
-        "required": ["id", "status", "evidence"]}}
 
-REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "object", "additionalProperties": False,
-    "properties": {
-        "verdict": {"type": "string", "enum": ["accept", "revise"]},
-        "scores": {"type": "object", "additionalProperties": False,
-                   "properties": {"addresses_question": {"type": "integer", "minimum": 1, "maximum": 5},
-                                  "evidence": {"type": "integer", "minimum": 1, "maximum": 5},
-                                  "thoroughness": {"type": "integer", "minimum": 1, "maximum": 5}},
-                   "required": ["addresses_question", "evidence", "thoroughness"]},
-        "issues": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False,
-            "properties": {"step_id": {"type": "string"},
-                           "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
-                           "problem": {"type": "string"}, "request": {"type": "string"}},
-            "required": ["step_id", "priority", "problem", "request"]}},
-        "checklist": CHECKLIST_REVIEW_SCHEMA,
-    },
-    "required": ["verdict", "scores", "issues"],
-}
 
-# The research lane's one review after CP2 approval (#58 ⑤). REVIEW_SCHEMA above stays the generic review, and
-# labhq/research/review.py keeps its per-step REVIEW v2 schema (RESEARCH_REVIEW_SCHEMA), not on this path yet.
-RESEARCH_REVIEW_CATEGORIES = ("overgeneralization", "cherry_picking", "no_comparator", "undefined_scale",
-                              "speculation_as_fact", "unsupported_by_artifact", "method_change_unstated", "other")
-RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "object", "additionalProperties": False,
-    "properties": {
-        "verdict": {"type": "string", "enum": ["accept", "revise"]},
-        "issues": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False,
-            "properties": {"step_id": {"type": "string"}, "claim_id": {"type": "string"},
-                           "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
-                           "category": {"type": "string", "enum": list(RESEARCH_REVIEW_CATEGORIES)},
-                           "evidence_quote": {"type": "string"}, "problem": {"type": "string"},
-                           "request": {"type": "string"}},
-            "required": ["step_id", "claim_id", "priority", "category", "evidence_quote", "problem", "request"]}},
-        "checklist": CHECKLIST_REVIEW_SCHEMA,
-        "blind_comparison": blind_draft.COMPARISON_SCHEMA,
-    },
-    "required": ["verdict", "issues"],
-}
+
 
 BRIEFING_PROMPT = """Prepare a briefing (≤400 words) for the CSO on this research request:
 field context, recent developments (search the web if available), which datasets exist and how they can be
@@ -1107,17 +1065,6 @@ RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_
     "workspace, and refuses a row the file does not bear out or when it cannot read it. Never edit that file or "
     "write a locator or freshness the tool did not return.")
 
-# What both reviews are asked about the declared checklist (#586). The context block that follows the prompt lists
-# the ids (plan_review_context); labhq reads the answers in review_with_checklist and checklist_appendix.
-CHECKLIST_REVIEW_RULE = (
-    "When the declared topic checklist or Analysis precedents below list items, also fill `checklist` with one\n"
-    "entry for every listed checklist item and required precedent item, using its id exactly as listed (a check\n"
-    "listed once per topic as `topic.id` gets one entry per listed id). Each entry\n"
-    "has `status` (done, partly or not_done) and `evidence`: the step id or output path in the results that shows\n"
-    "it, or a short reason when not_done. One line each. Judge from the results, not from the plan's answer.\n"
-    "For an item the plan answered step:<id> that you mark partly or not_done, labhq adds a P2 issue unless you\n"
-    "already filed a P1 or P2 issue that names the item id; name the id when you file one.")
-
 REVIEW_PROMPT = """Write only in your own outputs/ and .tmp/; never edit reviewed files or inputs.
 Save the final JSON to outputs/review.json and return the same JSON as your final answer.
 You are the scientific reviewer. Evaluate the team's work on the request below with three
@@ -1226,60 +1173,6 @@ UNRESOLVED_REVIEW_NOTE = (
 REVIEW_REFERENCE_NOTE = (
     "\n\nThe remaining P2 and P3 issues do not change the conclusion. LabHQ appends a \"리뷰 참고\" section with "
     "one line per P2 issue and the P3 count, so do not write that section or repeat those issues elsewhere.")
-
-# The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
-RESEARCH_REVIEW_PROMPT = """Write only in your own outputs/ and .tmp/; never edit reviewed files or inputs.
-Save the final JSON to outputs/review.json and return the same JSON as your final answer.
-You are the scientific reviewer of a research request that ran under a frozen,
-PI-approved plan; the PI approved its evidence at CP2. Check every claim against its evidence ledger. Where the
-readable files below can be opened, read them and compare what they contain with what each claim says.
-
-Return one issue per problem with:
-- step_id, and claim_id ("" when the issue is not about one claim)
-- priority: P1 if fixing it would change a conclusion, P2 if it weakens a conclusion, P3 if it is wording only
-- category: overgeneralization, cherry_picking, no_comparator, undefined_scale, speculation_as_fact,
-  unsupported_by_artifact, method_change_unstated, or other
-- evidence_quote: the exact text, from the ledger or from a file you read, that shows the problem
-- problem, and request: the specific fix
-Answer the domain pack reviewer questions below as issues where they find a problem.
-Use verdict "revise" only when there is at least one P1 issue; otherwise "accept". labhq does not re-run the frozen
-plan: after a revise the PI may continue through a new plan, approved at a new CP1, that carries your P1 issues.
-Check the declared topic checklist, its plan answers and Analysis precedents supplied below. File an issue for
-anything omitted or handled incorrectly; it is P1 when fixing it would change a conclusion.
-A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
-issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
-merely because it was skipped.
-Check that analysis steps declared key figures, the report embeds them under results or gives a one-line reason,
-and every figure follows the SVG, Korean <text>, raster-fallback, and no-capture rules.
-For a branched plan, WARN (as a P2 issue whose problem starts with "WARN:") when a branch has an analysis-result table
-in its step artifacts but that branch's actual analysis and result are absent from the summary or conclusion.
-WARN the same way when the reported reference category is on the same exposure side as the hypothesis's focal
-group. The primary contrast should be the focal group versus all others or the least-exposed group; a largest-group
-reference is valid only when the hypothesis is unrelated to exposure ordering.
-""" + CHECKLIST_REVIEW_RULE + """
-
-Request: {request}
-
-Frozen plan (plan_sha256 {plan_sha256}):
-{plan}
-
-Domain packs (reviewer questions and rules):
-{packs}
-
-Evidence ledgers per step: claims, evidence, links, artifact_refs with the artifact_sha256 labhq recorded, evidence
-refused and claims left unsupported at CP2, not_established, failures and method_changes.
-{ledgers}"""
-
-RESEARCH_REVIEW_RETRY = ('\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise" and issues, each '
-                         'issue with every field. Do not add prose.')
-
-def with_p1_verdict(review: dict) -> dict:
-    """Set revise exactly for P1 issues; old stored issues without priority remain P1-compatible."""
-    verdict = "revise" if any(issue.get("priority", "P1") == "P1"
-                              for issue in review.get("issues") or []) else "accept"
-    if review.get("verdict") == verdict:
-        return review
-    return {**review, "verdict": verdict, "reviewer_verdict": review.get("verdict")}
 
 
 def issues_at_priority(review: dict, priority: str) -> list[dict]:
@@ -1443,36 +1336,9 @@ def with_pi_notes(task: Task, request: dict) -> Task:
     return task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(lines)})
 
 
-# The longest card note one prompt carries (PI 점검 R11). The CP receipts and the audit appendix keep the whole note.
-APPROVAL_NOTE_CHARS = 2000
-
-
-def approval_note(note: Any) -> str:
-    """A note the PI typed on an approved research card, bounded for a prompt."""
-    text = str(note or "").strip()
-    if len(text) <= APPROVAL_NOTE_CHARS:
-        return text
-    return (text[:APPROVAL_NOTE_CHARS].rstrip() +
-            f" …(메모가 길어 {APPROVAL_NOTE_CHARS}자에서 잘랐습니다. 전문은 승인 기록에 있습니다.)")
-
-
-def approval_note_block(gate: str, notes: list[tuple[str, str]], rule: str) -> str:
-    """A prompt section with the PI's notes from approved ``gate`` cards ((label, note) pairs); "" without a note.
-
-    A note is read by the people who act next, never as a decision: the gate's structured choice decided."""
-    lines = [f"- {label}: {text}" if label else text
-             for label, text in ((label, approval_note(note)) for label, note in notes) if text]
-    if not lines:
-        return ""
-    return f"\n\n## PI 승인 메모 ({gate})\n" + "\n".join(lines) + "\n" + rule
-
-
 CP1_NOTE_RULE = ("The PI wrote this note when approving the frozen plan at CP1. Follow it where the frozen plan "
                  "allows. It does not change the frozen plan: if it asks for something the plan does not allow, do "
                  "the plan's work and name the conflict in `failures`.")
-CP2_REVIEW_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Check each point it raises against the "
-                        "ledgers and files and file an issue where one holds. It does not change the CP2 decision or "
-                        "the frozen plan.")
 CP2_REPORT_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Cover every point it asks of the report; "
                         "a point the evidence cannot support goes under \"한계\" with the reason. It never makes an "
                         "uncitable claim citable and does not change the frozen plan.")
@@ -2097,25 +1963,6 @@ def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | d
     return "## 보고서 경고\n" + "\n".join(lines) if lines else ""
 
 
-def _research_plan_digest(plan: dict) -> str:
-    """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps.
-    Only the step list is clipped: a real plan runs past 20,000 characters, and clipping the whole JSON cut the
-    middle of the protocol the reviewer judges against (PR #358 review)."""
-    steps = plan.get("steps") or []
-    step_table = [{key: step.get(key) for key in ("id", "branch", "depends_on", "phase")} for step in steps]
-    step_details = [{key: step.get(key) for key in ("id", "agent_id", "instruction", "claim_ids", "outputs",
-                                                    "optional_outputs", "evidence_slots")}
-                    for step in steps]
-    frozen = {"brief": plan.get("brief"),
-              "branches": plan.get("branches") or [],
-              "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
-              "pack_values": plan.get("pack_values") or {}}
-    return (json.dumps(frozen, ensure_ascii=False) +
-            "\nStep table (complete): " + json.dumps(step_table, ensure_ascii=False) +
-            "\nStep details (instructions may be clipped): " +
-            clip(json.dumps(step_details, ensure_ascii=False), 8000))
-
-
 def _branch_terminal_states(topology: dict[str, Any], steps: list[dict],
                             results: dict[str, TaskResult]) -> list[dict[str, Any]]:
     """Summarize execution against the terminal sets from the shared branch topology."""
@@ -2163,13 +2010,7 @@ def _research_issue_lines(issues: list[dict]) -> list[str]:
             for issue in sorted(issues, key=lambda issue: issue["priority"])]
 
 
-def _without_empty(value: Any) -> Any:
-    """A ledger row without its null or empty optional fields, so the reviewer prompt carries what was stated."""
-    if isinstance(value, dict):
-        return {key: _without_empty(item) for key, item in value.items() if item not in (None, [], {}, "")}
-    if isinstance(value, list):
-        return [_without_empty(item) for item in value]
-    return value
+
 
 
 def _citable_claim_line(row: dict) -> str:
@@ -2703,36 +2544,6 @@ def _usd_amount(value: Any) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and value > 0
 
 
-def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
-    """Check every required field of ``schema`` (REVIEW_SCHEMA unless given) without a new JSON Schema dependency."""
-    def matches(item: Any, schema: dict) -> bool:
-        typ = schema.get("type")
-        if isinstance(typ, list):
-            return any(matches(item, {**schema, "type": choice}) for choice in typ)
-        if typ == "null":
-            return item is None
-        if typ == "object":
-            if not isinstance(item, dict):
-                return False
-            props = schema["properties"]
-            if not set(schema.get("required", [])).issubset(item):
-                return False
-            if schema.get("additionalProperties") is False and set(item) - set(props):
-                return False
-            return all(matches(v, props[k]) for k, v in item.items())
-        if typ == "array":
-            return isinstance(item, list) and all(matches(v, schema["items"]) for v in item)
-        if typ == "boolean":
-            return type(item) is bool
-        if typ == "integer":
-            return (type(item) is int and schema.get("minimum", item) <= item <= schema.get("maximum", item))
-        if typ == "string":
-            return isinstance(item, str) and item in schema.get("enum", [item])
-        return False
-
-    return matches(value, schema)
-
-
 def normalize_precedents(value: Any) -> dict[str, Any] | None:
     """Bound a valid literature-scout result and give its required analyses stable checklist ids."""
     if not valid_review(value, PRECEDENT_SCHEMA):
@@ -2755,51 +2566,6 @@ PRECEDENT_CANCEL_GRACE_S = 10.0
 def precedent_warning(code: str) -> dict[str, Any]:
     return {"status": "warning", "warning": f"analysis precedents unavailable ({code})",
             "papers": [], "required": [], "recommended": [], "limitations": []}
-
-
-def _citations(row: dict[str, Any]) -> str:
-    return "; ".join(str(item) for item in row.get("citations") or []) or "citation unavailable"
-
-
-def analysis_precedents_text(record: Any) -> str:
-    """Compact context shared by planning, solo execution, review and report prompts."""
-    if not isinstance(record, dict):
-        return ""
-    if record.get("status") != "ok":
-        return "Analysis precedents:\n- unavailable; continue without precedent requirements."
-    lines = ["Analysis precedents:",
-             "Paper access/receipt declarations are unverified until artifact hash/ranges are checked after approval. "
-             "Do not invent method/QC parameters; request missing evidence.", "Papers:"]
-    lines.extend(f"- {row.get('title')}: {_citations(row)}" +
-                 "".join(f"; {key}: {row[key]}" for key in ("repo", "data_url", "fulltext_receipt") if row.get(key))
-                 for row in record.get("papers") or [])
-    lines.append("Required analyses (answer each id in `checklist`; if one cannot be done, say why):")
-    lines.extend(f"- {row.get('id')}: {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
-                 for row in record.get("required") or [])
-    lines.append("Recommended analyses:")
-    lines.extend(f"- {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
-                 for row in record.get("recommended") or [])
-    if record.get("limitations"):
-        lines.append("Search limitations: " + "; ".join(map(str, record["limitations"])))
-    return "\n".join(lines)
-
-
-def _precedent_items(record: Any) -> list[topic_checklists.ChecklistItem]:
-    if not isinstance(record, dict) or record.get("status") != "ok":
-        return []
-    return [topic_checklists.ChecklistItem(str(row["id"]), str(row.get("analysis") or ""),
-                                           str(row.get("why") or ""), "precedent")
-            for row in record.get("required") or [] if row.get("id")]
-
-
-def required_checklist_items(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
-                             precedents: Any) -> list[topic_checklists.ChecklistItem]:
-    body = plan if isinstance(plan, dict) else {}
-    items = topic_checklists.requirements(body.get("topics"), catalog)
-    by_id = {item.id: item for item in items}
-    for item in _precedent_items(precedents):
-        by_id.setdefault(item.id, item)
-    return list(by_id.values())
 
 
 def checklist_errors(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
@@ -2876,26 +2642,6 @@ def planning_guidance(catalog: dict[str, list[topic_checklists.ChecklistItem]], 
     return "\n".join(lines)
 
 
-def plan_review_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
-    body = plan if isinstance(plan, dict) else {}
-    required = required_checklist_items(body, catalog, precedents)
-    rendered = (analysis_precedents_text(precedents)
-                if isinstance(precedents, dict) and precedents.get("status") == "ok" else "")
-    if not required and not rendered:
-        return ""
-    lines = ["\n\nDeclared topic checklist and plan answers:"]
-    answers = body.get("checklist") if isinstance(body.get("checklist"), dict) else {}
-    # A shared id the plan answered per topic is listed once per topic as topic.id, with the plan's answer, so the
-    # reviewer's rows say which topic's step missed the check (PR #602 review).
-    lines.extend(f"- {entry.id}: {entry.check} Why: {entry.why}" + (f" — 계획 답: {entry.answer or '없음'}"
-                                                                  if entry.topic else "")
-                 for entry in topic_checklists.review_entries(answers, required, catalog))
-    lines.append("Answers: " + json.dumps(answers, ensure_ascii=False, sort_keys=True))
-    if rendered:
-        lines += ["", rendered]
-    return "\n".join(lines)
-
-
 def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
     body = plan if isinstance(plan, dict) else {}
     limits = topic_checklists.limitations(body.get("checklist"))
@@ -2920,79 +2666,8 @@ def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.Chec
     return "\n".join(lines)
 
 
-def lenient_review(value: Any, schema: dict[str, Any]) -> dict | None:
-    """``value`` when it is a valid review, or valid once an unreadable optional ``checklist`` is dropped (#586).
-
-    A malformed verdict row must not cost the whole review: it gets two parse attempts, then ends review_unparsed."""
-    if valid_review(value, schema):
-        return value
-    if isinstance(value, dict):
-        # An unreadable optional field costs only itself (#586 checklist, #889 blind_comparison).
-        for dropped in (("checklist",), ("blind_comparison",), ("checklist", "blind_comparison")):
-            if any(key in value for key in dropped):
-                rest = {key: item for key, item in value.items() if key not in dropped}
-                if valid_review(rest, schema):
-                    return rest
-    return None
-
-
-def _names_check(issue: dict, miss: topic_checklists.ReviewMiss) -> bool:
-    """Whether a review issue names the check the miss is about. ASCII boundaries: a Korean particle may follow the id.
-
-    When the check is shared by several topics, an issue about another topic's ``topic/id`` or ``topic.id`` does not
-    stand in for this topic's miss (PR #600 review)."""
-    text = " ".join(str(issue.get(key) or "") for key in ("problem", "request", "evidence_quote"))
-
-    def named(spelling: str) -> bool:
-        return re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(spelling)}(?![A-Za-z0-9_-])", text) is not None
-
-    qualified = {topic: named(f"{topic}/{miss.item.id}") or named(f"{topic}.{miss.item.id}")
-                 for topic in miss.item.topic.split(",")}
-    if any(qualified[topic] for topic in miss.topics or qualified):
-        return True
-    return not any(qualified.values()) and named(miss.item.id)
-
-
 # The solo route reviews one direct result, not the plan's steps: those are only the fallback (route_decision).
 SOLO_OWNER = "단독 처리"
-
-
-def review_with_checklist(review: dict, plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
-                          precedents: Any, *, research: bool = False, owner: str | None = None) -> dict:
-    """The review plus a P2 issue for each check the plan answered with a step that the reviewer found partly or not
-    done (#586). In the 10-13 trial the reviewers got the checklist and cited it in no finding.
-
-    A P1 or P2 issue that already names the check's id stands in for it; a P3 one does not. assumption and
-    not_applicable answers add nothing: the plan stated why, and the review already files a wrong reason. A check
-    several topics share, answered per topic, gets one issue per topic on that topic's own step. The research lane's
-    issues carry its extra fields (claim_id, category, evidence_quote).
-
-    ``owner`` is the result a solo review judged (SOLO_OWNER). The plan's steps never ran then, so the issue goes
-    to that result: it is neither filed on a plan step nor tells the PI to fix one (PR #600 review)."""
-    body = plan if isinstance(plan, dict) else {}
-    required = required_checklist_items(body, catalog, precedents)
-    issues = [issue for issue in review.get("issues") or [] if isinstance(issue, dict)]
-    added: list[dict] = []
-    for miss in topic_checklists.review_misses(body.get("checklist"), required, review.get("checklist")):
-        if any(issue.get("priority") in ("P1", "P2") and _names_check(issue, miss) for issue in [*issues, *added]):
-            continue
-        verdict = "일부만 했다" if miss.status == "partly" else "하지 않았다"
-        if owner:
-            issue = {"step_id": owner, "priority": "P2",
-                     "problem": f"점검 {miss.name}: {owner} 결과에서 리뷰어는 {verdict}고 판정했습니다. "
-                                f"근거: {miss.evidence or '없음'}",
-                     "request": f"{owner} 결과에서 점검 {miss.name}을(를) 끝내거나, 못 하는 이유를 한계에 남기세요."}
-        else:
-            steps = ", ".join(miss.steps)
-            issue = {"step_id": miss.steps[0], "priority": "P2",
-                     "problem": f"점검 {miss.name}: 계획은 {steps} 단계로 답했지만 리뷰어는 {verdict}고 "
-                                f"판정했습니다. 근거: {miss.evidence or '없음'}",
-                     "request": f"{steps} 단계에서 점검 {miss.name}을(를) 끝내거나, 못 하는 이유를 계획에 "
-                                "assumption으로 남기세요."}
-        if research:
-            issue.update(claim_id="", category="other", evidence_quote=miss.evidence)
-        added.append(issue)
-    return {**review, "issues": [*issues, *added]} if added else review
 
 
 def checklist_appendix(plan: Any, review: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
@@ -6808,8 +6483,8 @@ class Orchestrator:
                     restricted = bool(self._external_guard(rid) and
                                       restricted_input_steps(req["plan"]["steps"], *self._request_inputs(rid),
                                                              self.hub.s))
-                    context = (self._research_ledgers(steps, results, ledgers, refused, unsupported,
-                                                       artifact_sha256, n, staged=True)
+                    context = (independent_review.render_ledgers(steps, results, ledgers, refused, unsupported,
+                                                                   artifact_sha256, n, staged=True)
                                + "\n\n" + cp2_report
                                + approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE))
                     inputs = step_execution.upstream_inputs(results, results)
@@ -6830,52 +6505,19 @@ class Orchestrator:
                           False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc))
                 return
 
-        stored = contract.get("review") or {}
-        review: dict = {}
-        if stored.get("plan_sha256") == plan_hash:
-            saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues"),
-                     **{key: stored[key] for key in ("checklist", "blind_comparison") if key in stored}}
-            review = lenient_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) or {}
+        review, reason = await independent_review.run_after_cp2(
+            self.hub, rid, text, reviewer=reviewer, refs=refs, packs=packs, cp2_notes=cp2_notes,
+            run_step=self.run_step, budget_denials=self.budget_denials,
+            render_evidence=lambda: independent_review.render_ledgers(
+                steps, results, ledgers, refused, unsupported, artifact_sha256, n),
+            spending_cap=lambda: self._spending_cap_line(rid))
         if not review:
-            catalog = topic_checklists.load()
-            prompt = RESEARCH_REVIEW_PROMPT.format(
-                request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
-                packs=render_pack_review(packs),
-                ledgers=self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)) + \
-                plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents"))
-            carried = contract.get("continuation") or {}
-            if carried.get("plan_sha256") == plan_hash:
-                prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
-                                                              approval_note(carried.get("pi_request")),
-                                                              trigger=carried.get("trigger") or "")
-            prompt += blind_draft.review_block(contract.get(blind_draft.KEY))
-            prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
-            if contract.get("result_warnings"):
-                prompt += "\nCP2 result limitations:\n" + "\n".join(contract["result_warnings"])
-            reply: TaskResult | None = None
-            for parse_attempt in (1, 2):
-                reply = await self.run_step(Task(
-                    agent_id=reviewer, request_id=rid, output_schema=RESEARCH_LANE_REVIEW_SCHEMA,
-                    prompt=prompt if parse_attempt == 1 else prompt + RESEARCH_REVIEW_RETRY,
-                    meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "parse_attempt": parse_attempt, "request": text,
-                          "title": "연구 리뷰"}))
-                if rid in self.budget_denials:
-                    (await budget_denied("review", None))
-                    return
-                parsed = (lenient_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
-                          or lenient_review(extract_json(reply.text), RESEARCH_LANE_REVIEW_SCHEMA))
-                if reply.ok and parsed:
-                    review = blind_draft.without_unfounded_comparison(with_p1_verdict(review_with_checklist(
-                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True)),
-                        contract.get(blind_draft.KEY))
-                    break
-            if not review:
-                reason = (reply.error if reply else None) or "missing or invalid research review"
-                (await end("research_review_unparsed", cp2_report + f"\n\nResearch review: unparsed ({reason}).", False,
-                    {"status": "review_unparsed", "reason": reason}))
-                return
-            contract["review"] = {"plan_sha256": plan_hash, "reviewer": reviewer, **review}
-            await persist_request(self.hub, rid)
+            if reason is None:
+                await budget_denied("review", None)
+            else:
+                await end("research_review_unparsed", cp2_report + f"\n\nResearch review: unparsed ({reason}).", False,
+                          {"status": "review_unparsed", "reason": reason})
+            return
         issues = _research_issue_lines(review["issues"])
         if review["verdict"] == "revise":
             note = await self._research_continue(rid, review, results)
@@ -7299,29 +6941,6 @@ class Orchestrator:
             if problems:
                 unbound[step["id"]] = problems
         return unbound
-
-    def _research_ledgers(self, steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
-                          refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
-                          n: int, *, staged: bool = False) -> str:
-        """Each step's CP2-approved ledger for the research reviewer, with recorded hashes and readable files."""
-        parts = []
-        for step in steps:
-            sid, result = step["id"], results[step["id"]]
-            ledger = dict(ledgers.get(sid) or {})
-            ledger["artifact_refs"] = [
-                {**ref, "artifact_sha256": artifact_sha256.get(f"{sid}/{ref.get('artifact_id')}")}
-                for ref in ledger.get("artifact_refs") or []]
-            ledger["refused_at_cp2"] = [row for row in refused if row.get("step_id") == sid]
-            ledger["unsupported_at_cp2"] = [row for row in unsupported if row.get("step_id") == sid]
-            # Claim, evidence and link rows lose their empty optional fields. Everything else stays as is, so an
-            # artifact without a recorded hash still reads "artifact_sha256": null.
-            ledger = {key: [_without_empty(row) for row in value] if key in {"claims", "evidence", "links"}
-                      and isinstance(value, list) else value for key, value in ledger.items()}
-            files = "\n".join((input_relpath(sid, path) or "") if staged else str(Path(result.workdir) / path)
-                              for path in result.outputs) if result.workdir else ""
-            parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n"
-                         f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), n)}")
-        return "\n\n".join(parts)
 
     @staticmethod
     def format_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
