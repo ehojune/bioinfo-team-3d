@@ -124,6 +124,15 @@ def test_local_path_before_relative_link_keeps_label_and_target():
     assert add_references(report, "", []) == "See 로컬 경로 and [result](steps/s1/outputs/a.tsv) [[claim:s1/c1]]"
 
 
+@pytest.mark.parametrize("path", ["/home/example/private.tsv", "C:/Users/Example/data.tsv",
+                                 r"C:\Users\Example\data.tsv", r"\Users\Example\data.tsv",
+                                 "file:///home/example/private.tsv"])
+def test_generated_report_redacts_paths_immediately_after_a_label_colon(path):
+    links = "HTTPS:https://example.org/Users/public.\nFTP:ftp://example.org/pub/data.tsv."
+    source = f"Source:{path}. [[claim:s1/c1]]\n{links}"
+    assert add_references(source, "", []) == f"Source:로컬 경로. [[claim:s1/c1]]\n{links}"
+
+
 @pytest.mark.parametrize("ratio", ["CD4+/CD8+", "CD4⁺/CD8⁺"])
 def test_reader_report_preserves_slash_in_biological_ratio(ratio):
     report = f"{ratio} ratio increased [[claim:s1/c1]]."
@@ -206,6 +215,8 @@ def test_generated_report_redacts_extensionless_local_tail(path):
     ("/home/results/run", "16S rRNA abundance increased"),
     ("/home/results/run", "5hmC levels increased"),
     ("/home/results/run", "CD4+/CD8+ ratio increased"),
+    ("/home/results/run", "CD4+ / CD8+ ratio increased"),
+    ("/home/results/run", "CD4⁺  / CD8⁺ ratio increased"),
     ("/home/Example User/Project phase two", "Treatment produced lower counts"),
     ("/home/Example User/Project Alpha", "Both groups had similar expression"),
     ("/home/Example User/Project Alpha", "We found no evidence of treatment response"),
@@ -224,7 +235,7 @@ def test_generated_report_keeps_unpunctuated_conclusion_after_local_path(path, c
     assert f"{conclusion} [근거 1]" in rendered
     assert "s1/c1" in rendered
     front = build_report_package({}, f"# 연구 보고서\n\n## 요약\n\n{source}")
-    assert front.answer == f"작업 위치 로컬 경로 {conclusion}"
+    assert front.answer == "작업 위치 로컬 경로 " + " ".join(conclusion.split())
     assert front.evidence_notes == ["s1/c1"]
 
 @pytest.mark.parametrize("name", ["Project contains Private Data", "Project Results indicate Private Data"])

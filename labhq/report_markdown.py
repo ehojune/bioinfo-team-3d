@@ -40,7 +40,7 @@ _LINE_SUFFIX = r":L\d+(?:-L\d+)?(?=\s|\[\[|[.,;](?=\s|$)|[)\]>]|$)"
 _PATH_EXTENSION = rf"\.[A-Z][A-Z0-9]{{0,9}}(?![A-Z0-9_-]|(?!{_LINE_SUFFIX}):[^\s])"
 _PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
 _PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|no)|[A-Z][A-Z0-9-]+)[ \t]+[a-z][a-z-]*[ \t]+\w"
-                rf"|{_SUBJECT_TOKEN}(?:/{_SUBJECT_TOKEN})*(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)(?:[a-z][A-Za-z0-9-]*|[A-Z]))*"
+                rf"|{_SUBJECT_TOKEN}(?:[ \t]*/[ \t]*{_SUBJECT_TOKEN})*(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)(?:[a-z][A-Za-z0-9-]*|[A-Z]))*"
                 r"[ \t]+(?:(?:am|is|are|was|were|has|have|had|do|does|did|can|could|may|might|must|shall|should|will|would)(?:n't)?"
                 r"|can't|won't|(?:differ|indicate|increase|decrease|remain|show|suggest)s?|fell|rose|[a-z]{2,}ed)"
                 r"(?=[ \t]+[a-z0-9]|[.!?]?(?:[ \t]*\[\[|[ \t]*$))"
@@ -53,10 +53,10 @@ _PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT
 _PATH_ROOT = (rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\(?:[?.]\\(?:[A-Z]:[/\\])?)?"
               rf"|\\(?={_PATH_COMPONENT}[/\\]|{_PATH_FILE}|{_PATH_SPACED_FILE})|~[A-Z0-9_.+-]*[/\\]|/{{2,}}|/(?={_PATH_COMPONENT}/)|(?<!<)/)")
 _PATH_TEXT = re.compile(
-    rf"""(?ix) https?://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
+    rf"""(?ix) (?<![\w+.-])(?!file:)[a-z][a-z0-9+.-]+://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
         | (?<![\\$])(?:\$\$(?:\\.|[^\\$]|\$(?!\$))+?\$\$|\$(?![\s$])(?:\\.|[^\\$\r\n])+?(?<!\s)\$(?![\d$]))
         | (?<!\\)\\(?:\([^\r\n]*?\\\)|\[[\s\S]*?\\\])
-        | (?<![\w./\\:-]) (?<!\w[+−⁺⁻%]) (?:(?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)(?![A-Za-z0-9_])
+        | (?<![\w./\\-]) (?<!\w[+−⁺⁻%]) (?:(?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)(?![A-Za-z0-9_])
             | (?P<bare>{_PATH_ROOT}{_PATH_DIRS}(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_COMPONENT})[/\\]?(?:{_LINE_SUFFIX})?) )""")
 
 
