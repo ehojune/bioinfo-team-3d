@@ -32,6 +32,8 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
                 {"id": "GO:0008150", "isObsolete": False}]})
         if path.endswith("10.1000/1"):
             return httpx.Response(200, json={"responseCode": 1, "handle": "10.1000/1"})
+        if path.endswith("10.1000/a(study)"):
+            return httpx.Response(200, json={"responseCode": 1, "handle": "10.1000/A(study)"})
         if path.endswith("10.1000/missing"):
             return httpx.Response(404, json={"responseCode": 100, "handle": "10.1000/missing"})
         if path.endswith("10.1000/proxy"):
@@ -51,7 +53,9 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
         "~~~\nHGNC symbol: CODE\nGO:0000001\n~~~\n\n"
         "<!-- GO:0000002 -->\n"
     )}
-    ledgers = {"s1": {"claims": [{"statement": "GO:9999999 and DOI:10.1000/1"}]}}
+    ledgers = {"s1": {"claims": [{"statement": "GO:9999999 and DOI:10.1000/1"}], "evidence": [
+        {"status": "observed", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/A%28study%29"}},
+    ]}}
     monkeypatch.setattr(audit, "research_ledgers", lambda _: ledgers)
     monkeypatch.setattr(audit, "_run_live_source_reports", lambda *_: [])
     assert audit.verify_request(req, settings)["identifier_check"] is None
@@ -61,7 +65,8 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
     result = audit.verify_request(req, settings)
     check = result["identifier_check"]
     by_id = {row["value"]: row for row in check["items"]}
-    assert len(seen) == 8 and seen.count("/api/handles/10.1000/1") == 1
+    assert len(seen) == 9 and seen.count("/api/handles/10.1000/1") == 1
+    assert by_id["10.1000/a(study)"]["status"] == "found"
     assert by_id["P53"]["matches"] == ["TP53"] and by_id["P53"]["detail"] == "alias_symbol"
     assert by_id["GO:0000004"]["matches"] == ["GO:0008150"]
     assert by_id["GO:9999999"]["status"] == "not_found"

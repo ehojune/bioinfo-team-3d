@@ -33,10 +33,10 @@ _ARTIFACT_WARNING = re.compile(
 )
 _PATH_ROOT = r"(?:file:/+|[A-Z]:[/\\]|\\\\|~[/\\]|/(?=[\w.-]+/))"
 _PATH_TEXT = re.compile(
-    rf"""(?ix) https?://[^\s<>"'`]+
+    rf"""(?ix) https?://[^\s<>"'`|]+
         | (?<![\w./\\:-]) (?:
             (?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)
-            | (?P<bare>{_PATH_ROOT}[^\s<>"'`|\])}},;!?]+) )"""
+            | (?P<bare>{_PATH_ROOT}[^\s<>"'`|\[\])}},;!?]+) )"""
 )
 
 

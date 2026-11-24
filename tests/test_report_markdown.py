@@ -70,7 +70,7 @@ def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_
         "- 표본 짝을 확인하지 못한 점은 해석에 남습니다.\n\n"
         "![그림](/tmp/labhq/outputs/fig.svg)\n"
         "[표](steps/s1/outputs/stats.tsv) · https://example.org/Users/public · <b>라벨</b>\n"
-        "위치 /home/person/result.tsv:L10-L12\n"
+        "위치 /home/person/result.tsv:L10-L12[[claim:s1/c2]]\n"
     )
     stored = add_references(source, "", [])
     rendered = reader_markdown(stored)
@@ -81,9 +81,9 @@ def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_
     assert "![그림](/tmp/labhq/outputs/fig.svg)" in rendered  # bundle maps the declared target
     assert "[표](steps/s1/outputs/stats.tsv)" in rendered
     assert "https://example.org/Users/public" in rendered and "<b>라벨</b>" in rendered
-    assert "로컬 경로:L10-L12" in rendered
+    assert "로컬 경로:L10-L12[근거 2]" in rendered and "s1/c2" in rendered
     package = build_report_package({}, stored)
-    assert "test name" not in package.answer and package.evidence_notes == ["s1/c1"]
+    assert "test name" not in package.answer and package.evidence_notes == ["s1/c1", "s1/c2"]
 
 
 def test_scientific_appendix_keeps_review_but_masks_machine_path():

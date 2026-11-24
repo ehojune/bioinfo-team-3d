@@ -61,8 +61,11 @@ def _identifiers(texts: Iterable[str], ledgers: Mapping) -> Iterable[tuple[str, 
                 if row.get("status") not in (None, "observed") or not isinstance(source, Mapping):
                     continue
                 scheme, value = source.get("id_scheme"), str(source.get("id_value") or "")
-                if scheme == "doi" and _DOI_VALUE.fullmatch(value):
-                    yield "doi", value.lower()
+                if scheme == "doi":
+                    if _DOI_VALUE.fullmatch(value):
+                        yield "doi", value.lower()
+                    else:
+                        yield from (candidate for candidate in _candidates(value) if candidate[0] == "doi")
                 elif scheme in {"go", "go_id"} and _GO.fullmatch(value):
                     yield "go", value.upper()
                 elif scheme == "hgnc_symbol" and re.fullmatch(_SYMBOL, value):
