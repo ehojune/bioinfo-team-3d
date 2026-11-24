@@ -32,14 +32,15 @@ _ARTIFACT_WARNING = re.compile(
     r"[ .]*(?P<anchor> +\[\[\s*claim\s*:[^\]\r\n]+\]\])?[ \t]*(?=\r?$)"
 )
 _PATH_CHAR = r"""[^\s/\\<>"'`|\[\](){},:;!?]"""
-_PATH_CHUNK = rf"(?:{_PATH_CHAR}|\([^/\\\r\n()<>]*\))"
-_PATH_WORD = rf"{_PATH_CHUNK}+(?:[',]{_PATH_CHUNK}+)*"
+_PATH_CHUNK = (rf"(?:(?!\.(?=\s|$)){_PATH_CHAR}|"
+               r"\([^/\\\r\n()<>]*\)|\[(?!\[)[^/\\\r\n[\]<>]+\]|\{[^/\\\r\n{}<>]+\})")
+_PATH_WORD = rf"{_PATH_CHUNK}+(?:[',;!?]{_PATH_CHUNK}+)*"
 _PATH_COMPONENT = rf"{_PATH_WORD}(?:[ \t]+{_PATH_WORD})*"
 _PATH_EXTENSION = r"\.[A-Z][A-Z0-9]{0,9}(?![A-Z0-9_-])"
 _PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
 _PATH_SPACED_FILE = rf"(?:{_PATH_WORD}[ \t]+)+?{_PATH_FILE}"
-# Spaces can occur inside a directory or filename. Stop at a complete filename before resuming prose.
-_PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_WORD})"
+# Stop at a complete filename when recognizable. With no extension, mask the whole ambiguous component.
+_PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_COMPONENT})"
 _PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
 _PATH_ROOT = rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\|~[/\\]|/(?={_PATH_COMPONENT}/))"
 _PATH_TEXT = re.compile(

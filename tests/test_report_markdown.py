@@ -120,3 +120,19 @@ def test_generated_report_masks_local_link_target_and_preserves_its_label(target
     assert add_references(report, "", []) == (
         "표 (로컬 경로)와 [결과표](steps/s1/outputs/results.tsv)를 읽었습니다. [[claim:s1/c1]]"
     )
+
+
+@pytest.mark.parametrize("path", [
+    "/home/results/Jane Doe",
+    "C:/Users/Jane Doe/Project Alpha",
+    "/home/results/Jane Doe/Project [phase 2]",
+])
+def test_generated_report_redacts_extensionless_local_tail(path):
+    report = f"작업 폴더 {path}; 표본을 확인했습니다. [[claim:s1/c1]]"
+    assert add_references(report, "", []) == "작업 폴더 로컬 경로; 표본을 확인했습니다. [[claim:s1/c1]]"
+    assert add_references(f"작업 폴더 {path}. [[claim:s1/c1]]", "", []) == (
+        "작업 폴더 로컬 경로. [[claim:s1/c1]]"
+    )
+    assert add_references(f"작업 폴더 {path}. Case/control 발현은 증가했습니다. [[claim:s1/c1]]", "", []) == (
+        "작업 폴더 로컬 경로. Case/control 발현은 증가했습니다. [[claim:s1/c1]]"
+    )
