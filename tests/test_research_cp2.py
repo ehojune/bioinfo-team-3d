@@ -4,6 +4,8 @@ import asyncio
 import copy
 import json
 from hashlib import sha256
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -1691,6 +1693,139 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
 
     hub.reply = reply
     return hub
+
+
+@pytest.mark.parametrize(("case", "attempts", "status"), [
+    ("resolved", 1, "resolved"), ("limit", 2, "limit"), ("no_session", 0, "session_unavailable"),
+    ("new_session", 1, "session_unavailable"), ("bad_ledger", 1, "invalid_result"),
+    ("interrupted", 1, "interrupted"), ("budget", 1, "budget_exceeded"),
+    ("no_engine_cap", 0, "budget_unavailable"),
+    ("design", 0, "ineligible"), ("off", 0, None), ("unset", 0, None), ("audit_off", 0, None),
+])
+async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, status):
+    from labhq.research.contract import validate_research_result
+    from labhq.runner.step_handoff import artifact_contract_for
+    from labhq.runner.step_inputs import stage_inputs
+    from tests.test_research_report import ACCEPT, REVISE, REPORT, _kinds
+
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "0" if case == "audit_off" else "1")
+    monkeypatch.delenv("LABHQ_AUDIT_REPAIR_BEFORE_CP2", raising=False)
+    if case != "unset":
+        monkeypatch.setenv("LABHQ_AUDIT_REPAIR_BEFORE_CP2", "0" if case == "off" else "1")
+    original = tmp_path / "original"
+    original.mkdir()
+    hub = _draft_hub(original)
+    hub.s.runner.workspace_root = str(tmp_path)
+    hub.supports_resume = lambda agent_id: case != "no_session" and agent_id == "worker"
+    if case == "no_engine_cap":
+        hub.agents["worker"]["engine"] = "codex"
+    req = hub.requests["r"]
+    if case == "budget":
+        req["budget_usd"] = 4
+    base_reply = hub.reply
+    generations = []
+    audits = []
+
+    def save_manifest(task, result):
+        manifest = {"task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}}}
+        (Path(result.workdir) / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return (await base_reply(task)).model_copy(update={"cost_usd": 0})
+        if kind == "step":
+            result = (await base_reply(task)).model_copy(update={"session_id": "original-session",
+                                                                 "workdir_id": original.name, "cost_usd": 0})
+            result.structured = validate_research_result(result.structured, plan=req["plan"]).model_dump(mode="json")
+            save_manifest(task, result)
+            generations.append(result)
+            return result
+        if kind == "review":
+            latest = generations[-1]
+            audits.append(latest)
+            if case != "audit_off":
+                assert latest.workdir in task.meta["upstream_dirs"]
+            if len(generations) > 1:
+                assert "review" not in req["research_contract"]
+                assert task.meta["parent_task"] == latest.task_id
+                assert latest.output_sha256[latest.outputs[0]] in task.prompt
+            findings = ACCEPT if case == "resolved" and len(generations) == 2 else REVISE
+            issues = [*findings["issues"]] if findings == ACCEPT else [*findings["issues"], *ACCEPT["issues"]]
+            if "requires_plan_change" in task.output_schema["properties"]["issues"]["items"]["properties"]:
+                issues = [{**row, "requires_plan_change": case == "design"} for row in issues]
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={**findings, "issues": issues}, cost_usd=0)
+
+        assert kind == "audit_repair" and task.agent_id == "worker"
+        assert task.resume_session_id == "original-session" and task.budget_usd == (4 if case == "budget" else 5)
+        assert task.meta["parent_task"] == generations[-1].task_id and not task.meta.get("workdir")
+        assert "add the column" in task.prompt and "no external cohort" not in task.prompt
+        assert "say donor-level" not in task.prompt and artifact_contract_for(task)
+        assert req["research_contract"]["audit_repair"]["status"] == "pending"
+        assert [item["kind"] for item in hub.approvals] == ["research_plan"]
+        if case == "interrupted":
+            req["results"] = {"s1": generations[0].model_dump(mode="json")}
+            raise asyncio.CancelledError
+        last = generations[-1]
+        folder = tmp_path / f"repair{len(generations)}"
+        folder.mkdir()
+        ws = SimpleNamespace(dir=folder, task=task)
+        _, unavailable = stage_inputs(ws, task.meta["upstream_artifacts"], tmp_path, [], [], 1_000_000, 1_000_000)
+        assert not unavailable
+        path, draft_path = task.meta["required_outputs"]
+        assert (folder / "inputs" / "s1" / path.removeprefix("outputs/")).is_file()
+        data = {path: f"effect\n0.{len(generations)}\n".encode(),
+                draft_path: (REPORT + f"\n\nRevision {len(generations)}.").encode()}
+        (folder / "outputs").mkdir()
+        for name, body in data.items():
+            (folder / name).write_bytes(body)
+        ledger = copy.deepcopy(last.structured)
+        ledger["claims"][0]["statement"] = f"Donor-level effect confirmed in revision {len(generations)}."
+        if case == "bad_ledger":
+            ledger["plan_sha256"] = "b" * 64
+        result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                            session_id="other-session" if case == "new_session" else last.session_id,
+                            workdir=str(folder), workdir_id=folder.name, outputs=list(data),
+                            output_sha256={name: sha256(body).hexdigest() for name, body in data.items()},
+                            cost_usd=4.01 if case == "budget" else 1)
+        save_manifest(task, result)
+        if case not in {"new_session", "bad_ledger", "budget"}:
+            generations.append(result)
+        return result
+
+    hub.reply = reply
+    if case == "interrupted":
+        with pytest.raises(asyncio.CancelledError):
+            await Orchestrator(hub).run_request("r")
+        _interrupt(hub)
+        await Orchestrator(hub).run_request("r", resume=True)
+    else:
+        await Orchestrator(hub).run_request("r")
+
+    contract = req["research_contract"]
+    assert contract["plan_sha256"] == plan_sha256(req["plan"])
+    assert _kinds(hub).count("audit_repair") == attempts
+    assert len(audits) == len(generations)
+    latest = generations[-1]
+    assert req["results"]["s1"]["task_id"] == latest.task_id
+    approved = hub.approvals[1]
+    assert approved["kind"] == "research_evidence"
+    detail = approved["detail"]
+    audit = detail.get("independent_audit", {})
+    assert audit.get("repair") == ({"attempts": attempts, "status": status} if status else None)
+    if case != "audit_off":
+        assert audit == contract["checkpoints"]["cp2"]["independent_audit"]
+        assert audit["draft_sha256"] == sha256(detail["analysis_draft"].encode()).hexdigest()
+        assert detail["results"]["s1"]["claims"][0]["statement"] == latest.structured["claims"][0]["statement"]
+        assert [x["priority"] for x in audit["issues"]] == (["P2"] if case == "resolved" else ["P3", "P1", "P2"])
+        assert detail["analysis_draft"].endswith(f"Revision {attempts}.") == (case in {"resolved", "limit"})
+    assert (original / generations[0].outputs[0]).read_bytes() == b"effect\n0.25\n"
+    if case in {"resolved", "limit"}:
+        calls, approvals = len(hub.calls), len(hub.approvals)
+        _interrupt(hub)
+        await Orchestrator(hub).run_request("r", resume=True)
+        assert hub.calls[calls:] == [] and hub.approvals[approvals:] == []
 
 
 @pytest.mark.parametrize("option", [None, False, True])

@@ -2695,7 +2695,7 @@ class Runner:
                 unavailable.update({sid: f"inputs/{sid} unavailable (HPC ancestor missing)"
                                     for sid in hpc_revisions if sid not in artifacts})
                 require_hpc_snapshots(hpc_revisions, unavailable)
-                if task.meta.get("kind") == "analysis_draft" and artifacts.keys() & unavailable.keys():
+                if task.meta.get("kind") in {"analysis_draft", "audit_repair"} and artifacts.keys() & unavailable.keys():
                     raise ValueError("A collected report input is unavailable")
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
                         "These copies are read-only; do not read sibling workspaces. "

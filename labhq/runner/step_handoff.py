@@ -8,7 +8,7 @@ from ..util import INPUT_STEP_ID, output_relpath
 
 
 def artifact_contract_for(task):
-    return (task.meta.get("kind") in {"step", "result_correction", "slot_repair", "analysis_draft"}
+    return (task.meta.get("kind") in {"step", "result_correction", "slot_repair", "analysis_draft", "audit_repair"}
             and isinstance(task.meta.get("upstream_artifacts"), dict))
 
 
