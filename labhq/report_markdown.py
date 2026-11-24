@@ -31,8 +31,7 @@ _ARTIFACT_WARNING = re.compile(
     r"(?:[\w./-]+: +)?(?:evidence +)?[\w.-]+ cites artifact [^\r\n]+? missing from artifact_refs"
     r"[ .]*(?P<anchor> +\[\[\s*claim\s*:[^\]\r\n]+\]\])?[ \t]*(?=\r?$)"
 )
-_PATH_CHAR = r"""[^\s/\\<>"'`|\[\](){},;!?]"""
-_PATH_CHUNK = (rf"(?:(?!\.(?=\s|$)){_PATH_CHAR}|"
+_PATH_CHUNK = (r"""(?:(?!\.(?=\s|$))[^\s/\\<>"'`|\[\](){},;!?]|"""
                r"\([^/\\\r\n()<>]*\)|\[(?!\[)[^/\\\r\n[\]<>]+\](?!\()|\{[^/\\\r\n{}<>]+\})")
 _PATH_WORD = rf"{_PATH_CHUNK}+(?:[',;!?]{_PATH_CHUNK}+)*"
 _SUBJECT_TOKEN = r"[A-Za-z0-9α-ωΑ-Ω][A-Za-z0-9α-ωΑ-Ω-]*[+−⁺⁻]?"
@@ -45,7 +44,8 @@ _PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|
                 r"|can't|won't|(?:differ|indicate|increase|decrease|remain|show|suggest)s?|fell|rose|[a-z]{2,}ed)"
                 r"(?=[ \t]+[a-z0-9](?![a-z0-9-]*[/\\])|[.!?]?[ \t]*(?:\[\[|[\r\n]|$))"
                 r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w(?![\w-]*[/\\])))"
-                r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])")
+                r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])"
+                rf"|{_SUBJECT_TOKEN}(?:[ \t]+[a-z][A-Za-z0-9-]*)*[ \t]*[<>=≤≥≈±]=?[ \t]*[+−-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+−-]?\d+)?(?![\w/\\-]|\.\w)")
 _TAIL_GAP = rf"[ \t]+(?!{_PROSE_START}|(?:(?i:and|or)[ \t]+)?!?\[[^\]\r\n]*\]\()"
 _PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
 _PATH_COMPONENT = rf"{_PATH_WORD}(?:{_TAIL_GAP}{_PATH_WORD})*"

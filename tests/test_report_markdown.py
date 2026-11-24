@@ -255,6 +255,14 @@ def test_generated_report_keeps_conclusion_after_path_without_anchor(path, concl
     assert build_report_package({}, f"# 연구 보고서\n\n## 요약\n\n{source}").answer == expected
 
 
+@pytest.mark.parametrize("conclusion", ["HR = 0.7", "p < 0.05", "p-value≤1e-4", "Hazard ratio = 0.7"])
+def test_generated_report_keeps_statistical_conclusion_after_path(conclusion):
+    source = f"작업 위치 /home/results/run {conclusion}"
+    expected = f"작업 위치 로컬 경로 {conclusion}"
+    assert add_references(source, "", []) == expected
+    assert add_references(source + " [[claim:s1/c1]]", "", []) == expected + " [[claim:s1/c1]]"
+
+
 @pytest.mark.parametrize("name", ["Project contains Private Data", "Project Results indicate Private Data"])
 def test_generated_report_masks_extensionless_name_that_contains_a_verb(name):
     source = f"작업 폴더 /home/results/{name}"

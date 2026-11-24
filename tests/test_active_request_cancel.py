@@ -210,6 +210,7 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
         self.open_request(hub, results={
             "s1": {"ok": True, "text": f"{path} {conclusion} {marker}"},
             "s2": {"ok": True, "text": "/home/fixture-user/run protein levels increased"},
+            "s3": {"ok": True, "text": "/home/fixture-user/run HR = 0.7"},
         })
 
         await hub.cancel_request("r")
@@ -219,6 +220,7 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["data"]["report"], report)
         self.assertIn(f"로컬 경로 {conclusion} {marker}", report)
         self.assertIn("로컬 경로 protein levels increased", report)
+        self.assertIn("로컬 경로 HR = 0.7", report)
         self.assertNotIn("fixture-user", report)
 
     async def test_the_limit_is_read_from_the_request_not_from_the_config_that_is_now_set(self):
