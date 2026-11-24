@@ -2648,9 +2648,8 @@ class Runner:
                 await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
-            artifact_contract = (task.meta.get("kind") in {"step", "result_correction", "slot_repair"} and
-                                 isinstance(task.meta.get("upstream_artifacts"), dict))
-            from .step_handoff import required_hpc_revisions, require_hpc_snapshots
+            from .step_handoff import artifact_contract_for, required_hpc_revisions, require_hpc_snapshots
+            artifact_contract = artifact_contract_for(task)
             hpc_revisions = required_hpc_revisions(task, whole_hpc, artifact_contract)
             staged_inputs: list[str] = []
             for directory in ([] if artifact_contract else task.meta.get("upstream_dirs", [])):
@@ -2696,6 +2695,8 @@ class Runner:
                 unavailable.update({sid: f"inputs/{sid} unavailable (HPC ancestor missing)"
                                     for sid in hpc_revisions if sid not in artifacts})
                 require_hpc_snapshots(hpc_revisions, unavailable)
+                if task.meta.get("kind") == "analysis_draft" and artifacts.keys() & unavailable.keys():
+                    raise ValueError("A collected report input is unavailable")
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
                         "These copies are read-only; do not read sibling workspaces. "
                         "Save scripts and intermediate files only in outputs/ or .tmp/. "

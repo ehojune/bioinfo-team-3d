@@ -36,6 +36,9 @@ CSO는 `applies_when`이 맞는 pack만 계획에 넣습니다.
 
 `research.compact_workflow: true`를 설정하면 새 연구 요청에서 갈래 없는 계획을 최대 3단계로 짭니다. `orchestrator.max_steps`가 3보다 작으면 그 값을 따릅니다. 기본값은 `false`이며 요청을 만들 때 저장한 옵션을 재개 때도 씁니다. 갈래 계획에는 위 상한을 그대로 적용합니다.
 이 옵션을 적용한 갈래 없는 계획은 분석 단계에 필요한 QC와 해석을 포함합니다. 분석 담당자는 시료 정보를 공개 기록과 대조하고 대조군과 기대 방향을 기록하며, 결과를 문헌 값과 표로 비교하라는 안내를 받습니다. 자료가 없거나 해당하지 않으면 이유를 남깁니다.
+
+이 옵션을 켜면 분석 세션이 보고서 초안을 씁니다. 후속 단계가 있으면 결과가 모인 뒤 같은 세션을 재개해 수집한 파일을 읽기 전용으로 넘깁니다. 재개한 초안은 단계별 그림을 생략합니다. Gateway는 runner가 수집한 초안과 결과표를 비공개로 받아 SHA-256을 대조합니다. 필수 파일 누락, 해시 불일치, 세션 재개 실패는 보고서 완료를 막습니다. 제한 구역 자료에는 기존 로컬 경로를 씁니다.
+
 자료 추출 파일이나 내부 폴더가 필요한 갈래는 CP1 전에 확인 질문을 냅니다. 노출군 가설의 주 대비는 노출군 대 나머지 또는 가장 덜 노출된 집단이며, 기준 범주 이유를 계획에 적습니다.
 계획의 `protocol.packs`(id·version·sha256)는 CSO가 아니라 labhq가 적용 pack snapshot으로 채우고, CSO prompt에는 pack마다 `pack_values_keys`(field·validator·acceptance 키, acceptance는 rule id)를 보여 줍니다.
 계획이 검증에 걸리면 schema·pack 문제를 모두 모아 교정 prompt에 한 번에 넣고(남은 문제 원문 그대로), 최대 3번 고치게 합니다. 3번 뒤에도 남으면 CP1 카드 없이 `outcome: plan_invalid`와 남은 문제 목록을 보고서에 적어 끝냅니다(#222, 교정 3회는 #948). 갈래 계획에서 `branch: synthesis` 단계가 있는데 첫 synthesis 단계가 각 갈래의 마지막 단계를 `depends_on`으로 받지 않으면, 검사 전에 labhq가 빠진 갈래가 가장 적은 synthesis 단계(동률이면 첫 단계)의 의존성을 채우고 계획 `warnings`에 "labhq가 synthesis 단계 …의 depends_on에 … 채웠습니다"로 남깁니다. synthesis 단계가 아예 없거나 채우면 순환이 되는 경우는 고치지 않고 문제로 돌려줍니다. CSO가 `synthesis`라는 이름의 갈래를 따로 선언해도 synthesis는 예약된 종합 lane이라 그 갈래를 읽어야 할 대상이나 갈래 밖 의존 금지 대상으로 세지 않습니다.

@@ -5790,42 +5790,25 @@ class Orchestrator:
 
         def upstream(step: dict) -> str:
             parts = []
-            for d in step["depends_on"]:
+            for d in input_steps(step):
                 r = results.get(d)
-                if r and r.ok:
-                    head = f"## {d} · {by_id[d]['agent_id']}"
-                    if whole_hpc and r.outputs and r.provenance.get("hpc_remote_data"):
-                        parts.append(remote_context(r, head, True))
-                        continue
-                    artifacts = [{"workdir_id": r.workdir_id, "path": path}
-                                 for path in r.outputs]
-                    # Relative to the step folder, where the runner links inputs/<step id> (#423): a script that
-                    # names these paths still runs from a request bundle on another machine.
-                    remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
-                    paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n" +
-                             "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
-                             "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
-                                       if whole_hpc and output_relpath(path) else input_relpath(d, path)) or str(Path(r.workdir) / path)
-                                      for path in r.outputs) if r.workdir else "")
-                    parts.append(f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
-                                 f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}\n"
-                                 f"{clip(r.text, self.cfg.context_chars_per_step)}")
-            for d in input_steps(step)[len(step["depends_on"]):]:
-                r = results.get(d)
-                if r and r.ok and r.workdir and r.outputs:
-                    if whole_hpc and r.provenance.get("hpc_remote_data"):
-                        parts.append(remote_context(r, f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)", False))
-                        continue
-                    artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
-                    remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
-                    paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n" +
-                             "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
-                             "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
-                                       if whole_hpc and output_relpath(path) else input_relpath(d, path)) or str(Path(r.workdir) / path)
-                                      for path in r.outputs))
-                    parts.append(f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)\n"
-                                 f"Declared output artifacts: {json.dumps(artifacts)}\n"
-                                 f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}")
+                direct = d in step["depends_on"]
+                if not r or not r.ok or not (direct or r.workdir and r.outputs):
+                    continue
+                head = f"## {d} · {by_id[d]['agent_id']}" + ("" if direct else " (earlier step, files only)")
+                remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
+                if remote and r.outputs:
+                    parts.append(remote_context(r, head, direct))
+                    continue
+                artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
+                paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n"
+                         + "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
+                         "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
+                                    if whole_hpc and output_relpath(path) else input_relpath(d, path))
+                                   or str(Path(r.workdir) / path) for path in r.outputs) if r.workdir else "")
+                part = (f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
+                        f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}")
+                parts.append(f"{part}\n{clip(r.text, self.cfg.context_chars_per_step)}" if direct else part)
             if step.get("branch") == "synthesis" and branch_ids:
                 failed_lines = []
                 for branch_id in branch_ids:
@@ -5940,10 +5923,6 @@ class Orchestrator:
             # Whole-request HPC steps run in scheduler jobs that never read them, so they get none (#1336).
             stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))
                                  if research_plan and not whole_hpc else [])
-            upstream_dirs = [results[d].workdir for d in linked
-                             if d in results and results[d].ok and results[d].workdir and results[d].outputs]
-            upstream_steps = {d: results[d].workdir for d in linked
-                              if d in results and results[d].ok and results[d].workdir and results[d].outputs}
             pin = step_execution.runner_pin((req_state or {}).get("plan") or {}, step, environment_runner_pin(step))
             if pin and (session_id or workdir):
                 origin = self._session_origin(rid, step["agent_id"], session_id)
@@ -5963,12 +5942,7 @@ class Orchestrator:
                               "revision": self._step_revision(rid, step["id"]),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
-                              "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
-                              "upstream_artifacts": {d: {
-                                  "task_id": results[d].task_id,
-                                  "workdir": results[d].workdir, "outputs": list(results[d].outputs),
-                                  "output_sha256": dict(results[d].output_sha256),
-                              } for d in upstream_steps},
+                              **step_execution.upstream_inputs(results, linked),
                               **({"precedent_texts": stored_precedents} if stored_precedents else {}),
                               "outputs": [*step.get("outputs", []), *optional_outputs],
                               "required_outputs": step.get("outputs", []),
@@ -6727,8 +6701,7 @@ class Orchestrator:
         if source_audit:
             report = _append_report_metadata(report, [source_audit])
         missing_review = decided == "approved" and analysis_draft.for_request(req) is not None
-        if missing_review:
-            req["outcome"] = "research_failed"
+        req["outcome"] = "research_failed" if missing_review else req["outcome"]
         (await self._finish(rid, report, serialized(), ok=decided == "approved" and not missing_review,
                      error=("Research reviewer unavailable" if missing_review else
                             RESEARCH_END_ERRORS.get(f"evidence_{decided}"))))
@@ -6835,10 +6808,14 @@ class Orchestrator:
                     restricted = bool(self._external_guard(rid) and
                                       restricted_input_steps(req["plan"]["steps"], *self._request_inputs(rid),
                                                              self.hub.s))
-                    context = (self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)
+                    context = (self._research_ledgers(steps, results, ledgers, refused, unsupported,
+                                                       artifact_sha256, n, staged=True)
                                + "\n\n" + cp2_report
                                + approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE))
-                    author = await self.run_step(draft.followup(rid, author, context, origin, restricted, transfer=bool(load)))
+                    inputs = step_execution.upstream_inputs(results, results)
+                    if any(r.ok and r.outputs and sid not in inputs["upstream_artifacts"] for sid, r in results.items()):
+                        raise ValueError("a collected report input has no workspace")
+                    author = await self.run_step(draft.followup(rid, author, context, origin, restricted, bool(load), inputs))
                     if rid in self.budget_denials:
                         await budget_denied("analysis draft", None)
                         return
@@ -6911,6 +6888,10 @@ class Orchestrator:
                 False, review))
             return
 
+        def check_claims(body: str) -> dict:
+            return check_report(body, ledgers, unsupported=unsupported, refused=refused,
+                                artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+
         if draft:
             body, model_appendix = _split_report_appendix(draft_body)
         else:
@@ -6919,9 +6900,14 @@ class Orchestrator:
             session_id, workdir = await self._free_session(
                 self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
                 req.get("cso_workdir") if resumable else None, rid=rid, step="synthesis")
-            final = await self.run_step(Task(
-                agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
-                prompt=RESEARCH_SYNTH_PROMPT.format(
+            async def write_report(prompt: str, title: str, **meta) -> TaskResult:
+                return await self.run_step(Task(
+                    agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id, prompt=prompt,
+                    meta={**refs, "kind": "synthesis", "request": text, "title": title, "final_budget_turn": True,
+                          **({"workdir": workdir} if workdir else {}), **meta}))
+
+            final = await write_report(
+                RESEARCH_SYNTH_PROMPT.format(
                     request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
                     citable="\n".join(map(_citable_claim_line, citable)) or "(none)",
                     uncitable="\n".join(f"- {row['step_id']}/{row['claim'].get('id')} ({row['reason']}): "
@@ -6937,9 +6923,7 @@ class Orchestrator:
                      if source_section else "") +
                     ("\n\nEarlier rounds of this request:\n" + "\n".join(earlier) + "\n" + EARLIER_ROUNDS_RULE
                      if (earlier := earlier_round_lines(contract)) else ""),
-                meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",
-                      "final_budget_turn": True,
-                      **({"workdir": workdir} if workdir else {})}))
+                "연구 보고서 작성")
             if not final.ok:
                 if rid in self.budget_denials:
                     (await budget_denied("synthesis", review))
@@ -6951,8 +6935,7 @@ class Orchestrator:
             # A report that finished keeps its text and check even if the budget card after it was denied; the denial
             # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
             body, model_appendix = _split_report_appendix(report_body(final.text))
-        check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                             artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+        check = check_claims(body)
         # One failed claim check used to end the request after the whole study ran (17th run: no anchor at all).
         # The writer gets the problems and the citable anchors back, up to REPORT_CORRECTIONS times (#956).
         corrections = 0
@@ -6960,20 +6943,15 @@ class Orchestrator:
             corrections += 1
             try:
                 # The whole report, never clipped: the corrected text replaces it, so nothing may be elided (#956).
-                fixed = await self.run_step(Task(
-                    agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
-                    prompt=report_correction(check["problems"],
-                                             "\n".join(map(_citable_claim_line, citable)) or "(none)", body),
-                    meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 교정",
-                          "report_correction": corrections, "final_budget_turn": True,
-                          **({"workdir": workdir} if workdir else {})}))
+                fixed = await write_report(
+                    report_correction(check["problems"], "\n".join(map(_citable_claim_line, citable)) or "(none)", body),
+                    "연구 보고서 교정", report_correction=corrections)
             except BudgetExceeded:
                 break  # a refused budget card: the finished report and its problems stand, as for a late denial
             if rid in self.budget_denials or not fixed.ok:
                 break  # the report written so far and its problems stand
             body, model_appendix = _split_report_appendix(report_body(fixed.text))
-            check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                                 artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+            check = check_claims(body)
         if corrections:
             contract["report_corrections"] = corrections
 
@@ -6982,20 +6960,15 @@ class Orchestrator:
                 if rid in self.budget_denials:
                     return None
                 try:
-                    done = await self.run_step(Task(
-                        agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id, prompt=prompt,
-                        meta={**refs, "kind": "synthesis", "request": text, "title": "보고서 수치·방향 교정",
-                              "final_budget_turn": True, **({"workdir": workdir} if workdir else {})}))
+                    done = await write_report(prompt, "보고서 수치·방향 교정")
                 except BudgetExceeded:
                     return None
                 return _split_report_appendix(report_body(done.text))[0] if done.ok else None
 
             body, contract["report_consistency"] = await report_consistency.correct_once(
-                body, results, fix_consistency, accept=lambda fixed: len(check_report(
-                    fixed, ledgers, unsupported=unsupported, refused=refused,
-                    artifact_sha256=artifact_sha256, literal_checks=literal_checks)["problems"]) <= len(check["problems"]))
-        check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                             artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+                body, results, fix_consistency,
+                accept=lambda fixed: len(check_claims(fixed)["problems"]) <= len(check["problems"]))
+            check = check_claims(body)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
@@ -7329,7 +7302,7 @@ class Orchestrator:
 
     def _research_ledgers(self, steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
                           refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
-                          n: int) -> str:
+                          n: int, *, staged: bool = False) -> str:
         """Each step's CP2-approved ledger for the research reviewer, with recorded hashes and readable files."""
         parts = []
         for step in steps:
@@ -7344,7 +7317,8 @@ class Orchestrator:
             # artifact without a recorded hash still reads "artifact_sha256": null.
             ledger = {key: [_without_empty(row) for row in value] if key in {"claims", "evidence", "links"}
                       and isinstance(value, list) else value for key, value in ledger.items()}
-            files = "\n".join(str(Path(result.workdir) / path) for path in result.outputs) if result.workdir else ""
+            files = "\n".join((input_relpath(sid, path) or "") if staged else str(Path(result.workdir) / path)
+                              for path in result.outputs) if result.workdir else ""
             parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n"
                          f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), n)}")
         return "\n\n".join(parts)
@@ -9432,7 +9406,8 @@ class Orchestrator:
         # What is left after the writer's one correction: the report front shows it as an unverified draft (#1374).
         draft = req.get("outcome") == "research_reported" and analysis_draft.for_request(req)
         loader = analysis_draft.artifact_loader(self.hub, req) if draft else None
-        tables = await asyncio.to_thread(analysis_draft.tables_for, report, results, loader)
+        tables = (await asyncio.to_thread(analysis_draft.tables_for, report, results, loader)
+                  if loader else report_consistency.tables_for(report, results))
         consistency = req["report_consistency"] = report_consistency.check(report, tables)
         if left := report_consistency.record_lines(consistency):
             req["execution_record"] += "\n\n" + left

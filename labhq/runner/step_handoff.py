@@ -7,6 +7,11 @@ from ..hpc_transfer import TransferError, validate_remote_manifest
 from ..util import INPUT_STEP_ID, output_relpath
 
 
+def artifact_contract_for(task):
+    return (task.meta.get("kind") in {"step", "result_correction", "slot_repair", "analysis_draft"}
+            and isinstance(task.meta.get("upstream_artifacts"), dict))
+
+
 def required_hpc_revisions(task, whole_hpc, artifact_contract):
     """Read the dispatcher-provided producer revisions. Ordinary tasks have no handoff."""
     if 'hpc_ancestor_revisions' not in task.meta:

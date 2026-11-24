@@ -1436,7 +1436,7 @@ async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeyp
 
 # Compact report handoff after the evidence checkpoint (#1490).
 
-def _draft_hub(tmp_path, *, problem=None, remote=None):
+def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None):
     from tests.test_research_report import REPORT, _hub
     from labhq.runner import report_artifacts
 
@@ -1445,9 +1445,8 @@ def _draft_hub(tmp_path, *, problem=None, remote=None):
     req["research_options"] = {"compact_workflow": True}
     reply = hub.reply
     approve = hub.request_approval
-    received = {}
-    if remote:
-        hub.report_artifacts = received.get
+    if gateway:
+        hub.report_artifacts = gateway.report_artifacts
 
     async def with_draft(task):
         result = await reply(task)
@@ -1490,10 +1489,22 @@ def _draft_hub(tmp_path, *, problem=None, remote=None):
                 payload[path] = payload[table]
             elif remote == "changed_table":
                 payload[table] = payload[path]
-            received[result.task_id] = report_artifacts.receive(
-                json.loads(json.dumps(payload)), task.meta, TaskResult.model_validate_json(result.model_dump_json()))
+            elif remote == "wrong_dispatch":
+                result = result.model_copy(update={"agent_id": "unrelated"})
             target.unlink()
             (tmp_path / table).unlink()
+            wire = {"type": "task.result", "task_id": task.id, "request_id": task.request_id, "runner_seq": 1,
+                    "data": {**result.model_dump(mode="json"), report_artifacts.RESULT_FIELD: payload}}
+            sent = asyncio.create_task(gateway.dispatch(task))
+            await asyncio.wait_for(gateway.runners["remote"].dispatched.wait(), 5)
+            await gateway.on_runner_message("remote", json.loads(json.dumps(wire)),
+                                            gateway.runners["remote"], "remote-1")
+            result = await asyncio.wait_for(sent, 5)
+            journal = gateway.store.runner_inbox("remote", "remote-1", 1)
+            assert journal["state"] == "completed" and report_artifacts.RESULT_FIELD not in journal["message"]["data"]
+            events = gateway.store.events_since(0)
+            assert any(event["type"] == "task.result" for event in events)
+            assert all(report_artifacts.RESULT_FIELD not in event.get("data", {}) for event in events)
         return result
 
     async def after_step(**kwargs):
@@ -1539,19 +1550,44 @@ async def test_inline_draft_uses_portable_result_links(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("remote", ["complete", "missing_draft", "changed_draft", "changed_source", "changed_table"])
+@pytest.mark.parametrize("remote", [
+    "complete", "missing_draft", "changed_draft", "changed_source", "changed_table", "wrong_dispatch",
+])
 async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path, remote):
-    hub = _draft_hub(tmp_path, problem="portable", remote=remote)
-    await Orchestrator(hub).run_request("r")
+    from labhq.gateway.server import Hub
 
-    req = hub.requests["r"]
+    class Socket:
+        def __init__(self):
+            self.dispatched = asyncio.Event()
+
+        async def send_text(self, frame):
+            if json.loads(frame)["type"] == "task.dispatch":
+                self.dispatched.set()
+
+    settings = _settings()
+    settings.gateway.state_dir = str(tmp_path / "gateway")
+    gateway = Hub(settings)
+    runner_dir = tmp_path / "runner"
+    runner_dir.mkdir()
+    try:
+        gateway.register_runner("remote", Socket(), [{"id": "worker"}], incarnation="remote-1")
+        hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway)
+        await Orchestrator(hub).run_request("r")
+        req = hub.requests["r"]
+        task_id = req["results"]["s1"]["task_id"]
+        files = gateway.report_artifacts(task_id) or {}
+        assert gateway.report_artifacts("unrelated") is None
+    finally:
+        gateway.store.close()
     table = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
-    assert not list((tmp_path / "outputs").iterdir())
+    assert not list((runner_dir / "outputs").iterdir())
     if remote == "complete":
+        assert files[table.removeprefix("steps/s1/")] == "effect\n0.25\n"
         assert req["status"] == "done" and req["outcome"] == "research_reported"
         assert req["report_consistency"]["checked"]["tables"] == [table]
         assert f"]({table})" in req["report"]
-    elif remote.endswith("_draft"):
+    elif remote.endswith("_draft") or remote == "wrong_dispatch":
+        assert analysis_draft.for_request(req).path not in files
         assert req["status"] == "failed" and req["outcome"] == "research_failed"
         assert req["research_contract"]["failure"]["stage"] == "analysis_draft"
     else:
@@ -1659,7 +1695,11 @@ def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
     ("parallel", True, False), ("parallel", False, False),
 ])
 async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable, remote):
+    from types import SimpleNamespace
+
     from labhq.runner import report_artifacts
+    from labhq.runner.step_handoff import artifact_contract_for
+    from labhq.runner.step_inputs import stage_inputs
     from tests.test_research_report import REPORT, _hub, _kinds
 
     hub = _hub()
@@ -1674,6 +1714,7 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         plan["steps"][1].update(phase="validation", depends_on=["s1"])
     base_reply = hub.reply
     later_finding = "Sensitivity test reproduced the estimate [[claim:s2/c2]]."
+    old_figure = "![Earlier conclusion](steps/s1/outputs/graphical_abstract.svg)"
 
     async def reply(task):
         kind = task.meta["kind"]
@@ -1688,7 +1729,17 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
             [path] = task.meta["outputs"]
             target = tmp_path / "report" / path
             target.parent.mkdir(parents=True)
-            data = f"{REPORT}\n\n{later_finding}".encode("utf-8")
+            assert artifact_contract_for(task)
+            inputs = task.meta["upstream_artifacts"]
+            assert set(inputs) == {"s1", "s2"}
+            _, refused = stage_inputs(SimpleNamespace(task=task, dir=tmp_path / "report"),
+                                      inputs, tmp_path, [], [], 1024, 4096)
+            assert not refused
+            for sid, row in inputs.items():
+                table = row["outputs"][0].removeprefix("outputs/")
+                assert f"inputs/{sid}/{table}" in task.context
+                assert (tmp_path / "report" / "inputs" / sid / table).read_bytes() == sid.encode()
+            data = f"{REPORT}\n\n{old_figure}\n\n{later_finding}".encode("utf-8")
             target.write_bytes(data)
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, workdir=str(tmp_path / "report"),
                                 session_id=task.resume_session_id, text=f"Draft saved at {path}", outputs=[path],
@@ -1714,8 +1765,20 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
             ledger["evidence"][0].update(id="e2", slots=["e2"])
             ledger["links"][0]["evidence_id"] = "e2"
         ledger["artifact_refs"][0]["path"] = path
+        workdir = tmp_path / sid
+        (workdir / path).parent.mkdir(parents=True)
+        (workdir / path).write_bytes(sid.encode())
+        hashes = {path: sha256(sid.encode()).hexdigest()}
+        if sid == "s1":
+            figure = "outputs/graphical_abstract.svg"
+            (workdir / figure).write_bytes(b"<svg/>")
+            hashes[figure] = sha256(b"<svg/>").hexdigest()
+        (workdir / "manifest.json").write_text(json.dumps({
+            "task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}},
+        }), encoding="utf-8")
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
-                          outputs=[path], output_sha256={path: "a" * 64}, session_id=f"analysis-{sid}")
+                          workdir=str(workdir), outputs=list(hashes), output_sha256=hashes,
+                          session_id=f"analysis-{sid}")
 
     hub.reply = reply
     await Orchestrator(hub).run_request("r")
@@ -1724,6 +1787,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
     if resumable:
         assert _kinds(hub) == ["plan", "step", "step", "analysis_draft", "review"], req.get("error")
         assert req["status"] == "done" and later_finding in req["report"]
+        assert old_figure not in req["report"] and not req["report_package"]["figures"]
+        assert "outputs/graphical_abstract.svg" in req["results"]["s1"]["outputs"]
         assert req["research_contract"]["report_check"] == {"anchors": 2, "problems": []}
         report = req["report"]
         receipt = req["research_contract"]["analysis_draft"]
