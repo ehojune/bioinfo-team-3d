@@ -12,5 +12,6 @@ Closes #1492
 - POSIX 경로 안의 콜론도 가리고 끝에 붙은 근거 줄 범위는 남깁니다. [콜론 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683244361)
 - 취소 보고서도 저장 전에 경로를 가립니다. 저장본과 완료 이벤트에서 경로가 가려지고 결론과 근거 표식이 남는지 확인했습니다. [취소 보고서 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683333586)
 - 정상 완료·재개 보고서에서 정확한 벤치마크 닫는 표식이 남고 취소 보고서에서 경로가 가려지는지 확인했습니다. [Linux CI 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/45442017521)
-- 슬래시가 두 개 이상으로 시작하는 POSIX 절대경로도 가립니다. 관련 시험 406개와 공개 저장소 점검을 통과했습니다. [경로 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683734824)
-- 제품 순증 +90줄·8커밋. 두 PR 제품 순증 합계 +300줄. `cso.py` 0, `server.py` +1, `daemon.py` 0. 핵심 파일 누계 +19줄, 잔여 81줄.
+- 슬래시가 두 개 이상으로 시작하는 POSIX 절대경로도 가립니다. [경로 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683734824)
+- 영문 결론에서 대문자로 시작하는 주어도 보존합니다. 파일명과 문장 경계가 모호한 경로는 백틱으로 감쌉니다. 관련 시험 410개와 공개 저장소 점검을 통과했습니다. [결론 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683815731)
+- 제품 순증 +90줄·10커밋. 두 PR 제품 순증 합계 +300줄. `cso.py` 0, `server.py` +1, `daemon.py` 0. 핵심 파일 누계 +19줄, 잔여 81줄.
