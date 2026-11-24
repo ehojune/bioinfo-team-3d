@@ -66,6 +66,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
+from ..research import compact_workflow
 from ..research import precedent_texts
 from ..research import continuation as research_continuation
 from ..research import input_fit
@@ -5877,6 +5878,9 @@ class Orchestrator:
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
                 prompt += self._spending_cap_line(rid)
+                if (not branch_ids and step.get("phase") == "analysis"
+                        and compact_workflow.enabled(req_state.get("research_options"))):
+                    prompt += compact_workflow.ANALYSIS_INSTRUCTIONS
             prompt += self._lookup_usage_line(rid)  # at the start of this step: what is left to spend (#1088)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
@@ -7553,6 +7557,8 @@ class Orchestrator:
             # A request that already carries a research contract stays research whatever the config now says,
             # so it never reaches the generic re-plan, review or synthesis paths (#90 CP2).
             research_lane = bool(intake and intake.work_kind == "research") or bool(req.get("research_contract"))
+            research_options = req.get("research_options") if research_lane else None
+            unbranched_limit = compact_workflow.unbranched_plan_limit(self.cfg.max_steps, research_options)
             research_execution = bool(research_lane and self.hub.s.research.evidence_checkpoint
                                       and req["mode"] != "plan_only")
             if research_lane:
@@ -7982,7 +7988,7 @@ class Orchestrator:
                 roster = [a for a in all_available if a["id"] not in orchestration]
                 # Apply the existing agent, DAG and external-data checks to the final assignments too.
                 research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
-                                  if req["plan"].get("branches") else self.cfg.max_steps)
+                                  if req["plan"].get("branches") else unbranched_limit)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
                                stored_environment=any("environment_binding" in s or "environment_bindings" in s
                                                       for s in req["plan"]["steps"]),
@@ -8016,7 +8022,7 @@ class Orchestrator:
                                                   topics=req["plan"].get("topics")))
                     active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
-                    validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
+                    validated = validate_research_plan(req["plan"], max_steps=unbranched_limit,
                                                        max_branches=self.cfg.max_branches,
                                                        max_branch_steps=self.cfg.max_branch_steps,
                                                        active_packs=active_pack_hashes,
@@ -8215,10 +8221,12 @@ class Orchestrator:
                         topic_vocab = output_vocab.current()
                         template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
                         template = _planning_prompt(template, self.hub.s, research=True)
+                        if compact_workflow.enabled(research_options):
+                            template = compact_workflow.plan_template(template)
                         prompt = template.format(
                             request=plan_request, roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                             capabilities=capabilities or "No workers available",
-                            briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
+                            briefing=clip(briefing, 4000) or "(none)", max_steps=unbranched_limit,
                             max_branches=self.cfg.max_branches,
                             max_branch_steps=self.cfg.max_branch_steps,
                             branched_max_steps=self.cfg.max_branches * self.cfg.max_branch_steps + 3,
@@ -8330,7 +8338,7 @@ class Orchestrator:
 
                     def plan_problems(candidate: Any, candidate_packs: dict[str, Any]) -> list[str]:
                         try:
-                            problems = research_plan_errors(candidate, max_steps=self.cfg.max_steps,
+                            problems = research_plan_errors(candidate, max_steps=unbranched_limit,
                                                             max_branches=self.cfg.max_branches,
                                                             max_branch_steps=self.cfg.max_branch_steps,
                                                             active_packs=pack_snapshot(candidate_packs),
@@ -8453,7 +8461,7 @@ class Orchestrator:
                             plan = with_checklist_skip_warnings(plan, checklist_catalog,
                                                                 req.get("analysis_precedents"))
                             plan = with_paused_host_warning(plan, self._paused_lookup_hosts(rid))  # frozen with the plan
-                            validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
+                            validated = validate_research_plan(plan, max_steps=unbranched_limit,
                                                                max_branches=self.cfg.max_branches,
                                                                max_branch_steps=self.cfg.max_branch_steps,
                                                                active_packs=pack_snapshot(candidate_packs),
@@ -8576,7 +8584,7 @@ class Orchestrator:
                     req["plan"] = {**req["plan"], "steps": steps}
                     if research_lane:
                         req["plan"] = validate_research_plan(
-                            req["plan"], max_steps=self.cfg.max_steps, max_branches=self.cfg.max_branches,
+                            req["plan"], max_steps=unbranched_limit, max_branches=self.cfg.max_branches,
                             max_branch_steps=self.cfg.max_branch_steps, active_packs=active_pack_hashes,
                             expected_intake=intake, pack_definitions=packs).model_dump(mode="json")
                         steps = req["plan"]["steps"]

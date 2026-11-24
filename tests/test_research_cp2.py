@@ -130,6 +130,23 @@ async def test_live_source_check_off_does_not_call_resolver(monkeypatch):
     assert "source_verification" not in hub.approvals[1]["detail"]
 
 
+@pytest.mark.parametrize("compact", [False, True])
+async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact):
+    settings = _settings()
+    settings.research.compact_workflow = not compact
+    hub = _research_hub(settings, [CP1, {"approved": False, "choice": "deny", "note": ""}])
+    hub.requests["r"]["research_options"] = {"compact_workflow": compact}
+
+    await Orchestrator(hub).run_request("r")
+
+    prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "step")
+    for instruction in ("cross-check sample information against public records",
+                        "record the controls and expected direction",
+                        "compare results with published values in a table"):
+        assert (instruction in prompt) is compact
+    assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
+
+
 @pytest.mark.asyncio
 async def test_live_recitation_refuses_duplicate_evidence_and_its_claim(monkeypatch):
     settings = _settings()

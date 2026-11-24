@@ -6279,6 +6279,19 @@ class Hub:
             return {}
         return {wiki_exposure.KEY: wiki_exposure.inherited(self.requests.get(extra[link]))}
 
+    def _request_research_options(self, body: RequestIn) -> dict[str, Any]:
+        research = self.s.research
+        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
+        research_request = research.enabled and intake.work_kind == "research"
+        options = {
+            "contract_version": 2,
+            "final_checkpoint": bool(research_request and research.evidence_checkpoint and research.final_checkpoint
+                                     and body.mode == "orchestrate"),
+        }
+        if research_request and body.mode != "direct" and research.compact_workflow:
+            options["compact_workflow"] = True
+        return options
+
     def create_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
         """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
         self._check_run_where(body)
@@ -6309,11 +6322,7 @@ class Hub:
         # snapshot, prompts or reports.
         originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
-        research = self.s.research
-        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
-        req["research_options"] = {"contract_version": 2, "final_checkpoint": bool(
-            research.enabled and research.evidence_checkpoint and research.final_checkpoint
-            and body.mode == "orchestrate" and intake.work_kind == "research")}
+        req["research_options"] = self._request_research_options(body)
         self.requests[rid] = req
         if proj:
             self.result_storage.inherited(rid)
@@ -6359,11 +6368,7 @@ class Hub:
         # snapshot, prompts or reports.
         originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
-        research = self.s.research
-        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
-        req["research_options"] = {"contract_version": 2, "final_checkpoint": bool(
-            research.enabled and research.evidence_checkpoint and research.final_checkpoint
-            and body.mode == "orchestrate" and intake.work_kind == "research")}
+        req["research_options"] = self._request_research_options(body)
         self.requests[rid] = req
         if proj:
             await self.result_storage.ainherited(rid)

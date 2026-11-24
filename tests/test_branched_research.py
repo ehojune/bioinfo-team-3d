@@ -149,7 +149,8 @@ async def test_nine_step_branch_is_replanned_without_silent_truncation():
 
 
 @pytest.mark.asyncio
-async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo_without_artifacts():
+@pytest.mark.parametrize("compact", [False, True])
+async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo_without_artifacts(compact):
     plan = branched_plan((1, 2, 1, 1), synthesis=1)
     settings = Settings()
     settings.research.enabled = True
@@ -177,6 +178,7 @@ async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo_with
                                      text="compare literature and public omics")
     # This test is about the failed branch, not the budget: room for every parallel branch's hold (#1139).
     hub.requests["r"]["budget_usd"] = 100
+    hub.requests["r"]["research_options"] = {"compact_workflow": compact}
     decisions = [{"approved": True, "note": "approved"},
                  {"approved": True, "choice": "approve", "note": ""}]
 
@@ -189,6 +191,8 @@ async def test_failed_branch_blocks_only_it_and_synthesis_gets_failure_memo_with
 
     dispatched = [task.meta.get("step_id") for task in hub.calls if task.meta["kind"] == "step"]
     assert "A1" in dispatched and "B1" in dispatched and "B2" not in dispatched and "S1" in dispatched
+    assert all("cross-check sample information against public records" not in task.prompt
+               for task in hub.calls if task.meta["kind"] == "step")
     synthesis = next(task for task in hub.calls if task.meta.get("step_id") == "S1")
     assert "실패한 갈래: B" in synthesis.context and "source refused" in synthesis.context
     assert "마지막으로 끝난 단계: none" in synthesis.context
