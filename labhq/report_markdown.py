@@ -49,7 +49,7 @@ _TAIL_GAP = rf"[ \t]+(?!(?:{_PROSE_START})[^\r\n]*\[\[\s*claim\s*:)"
 _PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
 _PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_WORD}(?:{_TAIL_GAP}{_PATH_WORD})*)"
 _PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
-_PATH_ROOT = rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\(?:[?.]\\(?:[A-Z]:[/\\])?)?|~[A-Z0-9_.+-]*[/\\]|/(?={_PATH_COMPONENT}/)|(?<!<)/)"
+_PATH_ROOT = rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\(?:[?.]\\(?:[A-Z]:[/\\])?)?|~[A-Z0-9_.+-]*[/\\]|/{{2,}}|/(?={_PATH_COMPONENT}/)|(?<!<)/)"
 _PATH_TEXT = re.compile(
     rf"""(?ix) https?://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
         | (?<![\w./\\:-]) (?:

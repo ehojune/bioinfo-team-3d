@@ -108,6 +108,8 @@ def test_scientific_appendix_keeps_review_but_masks_machine_path():
 @pytest.mark.parametrize("path", [
     "C:/Users/Jane Doe/run/results.tsv",
     "/home/Jane Doe/run/final results.tsv",
+    "//server/Shared Data/Project Run/results.tsv",
+    "///home/Jane Doe/run/results.tsv",
     r"\\pc\Shared Data\Project Run\results.tsv",
     r"C:\Users\Jane Doe\run\results.tsv",
     r"\\?\C:\Users\Example User\Project Run\results.tsv",
