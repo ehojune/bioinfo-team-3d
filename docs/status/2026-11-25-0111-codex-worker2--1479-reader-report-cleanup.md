@@ -11,5 +11,5 @@ Closes #1492
 - 영문 대명사·한정사와 국문 서술형 어미를 경계 판단에 쓰고, Windows device·확장 UNC 경로를 가립니다. [결론 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683163965) · [Windows 경로 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683163982)
 - POSIX 경로 안의 콜론도 가리고 끝에 붙은 근거 줄 범위는 남깁니다. [콜론 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683244361)
 - 취소 보고서도 저장 전에 경로를 가립니다. 저장본과 완료 이벤트에서 경로가 가려지고 결론과 근거 표식이 남는지 확인했습니다. [취소 보고서 리뷰 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683333586)
-- 취소·보고서·PDF·재현 묶음 대상 시험 282 passed, 2 skipped. 공개 저장소 점검 통과.
-- 제품 순증 +90줄·4커밋. 두 PR 제품 순증 합계 +300줄. `cso.py` 0, `server.py` +1, `daemon.py` 0. 핵심 파일 누계 +19줄, 잔여 81줄.
+- 정확한 벤치마크 닫는 표식을 보존합니다. 정상 완료·재개 보고서에서 끝 표식이 남고 취소 보고서에서 경로가 가려지는지 확인했습니다. [Linux CI 실패](https://github.com/ehojune/bioinfo-team-3d/actions/runs/45442017521) 재현 뒤 관련 시험 404개와 공개 저장소 점검을 통과했습니다.
+- 제품 순증 +90줄·6커밋. 두 PR 제품 순증 합계 +300줄. `cso.py` 0, `server.py` +1, `daemon.py` 0. 핵심 파일 누계 +19줄, 잔여 81줄.
