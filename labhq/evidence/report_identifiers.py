@@ -14,9 +14,9 @@ from .verify import LiveSourceResolver, LookupFailed, _json_object, _require_suc
 
 _GO = re.compile(r"(?<![A-Za-z0-9_])GO:[0-9]{7}(?![A-Za-z0-9_])", re.I)
 _SYMBOL = r"[A-Z](?:[A-Z0-9_-]|orf){0,39}"
-_SYMBOL_ITEM = rf"[*`]*{_SYMBOL}(?![A-Za-z0-9_:-])[*`]*"
-_GENE_SYMBOLS = re.compile(rf"(?i:\bHGNC(?:\s+symbols?)?\s*[:=]|\bhuman gene symbols?\s*[:=]|"
-                           rf"사람 유전자 기호\s*[:=])\s*({_SYMBOL_ITEM}(?:[ \t]*,[ \t]*{_SYMBOL_ITEM})*)")
+_SYMBOL_ITEM = rf"[*_`]*{_SYMBOL}(?![A-Za-z0-9_:-])[*_`]*"
+_GENE_SYMBOLS = re.compile(rf"(?i:(?<![A-Za-z0-9])(?:HGNC(?:\s+symbols?)?|human gene symbols?|사람 유전자 기호)"
+                           rf"[*_`]*\s*[:=])[*_`]*\s*({_SYMBOL_ITEM}(?:[ \t]*,[ \t]*{_SYMBOL_ITEM})*)")
 _DOI_VALUE = re.compile(r"10\.[0-9]{4,9}/[!-~]{1,512}")
 _MARKDOWN = MarkdownIt("commonmark")
 _CLAIM_ANCHOR = re.compile(r"\[\[\s*claim\s*:[^\]\n]+\]\]", re.I)
@@ -39,7 +39,7 @@ def _candidates(text: str) -> Iterable[tuple[str, str]]:
     plain = _URL.sub(" ", _CLAIM_ANCHOR.sub(" ", text))
     yield from (("go", value.upper()) for value in _GO.findall(plain))
     for symbols in _GENE_SYMBOLS.findall(plain):
-        yield from (("hgnc_symbol", item.strip(" \t*`")) for item in symbols.split(","))
+        yield from (("hgnc_symbol", item.strip(" \t*_`")) for item in symbols.split(","))
     for match in _DOI.finditer(plain):
         if _DOI_VALUE.fullmatch(doi := _clean_doi(match.group())):
             yield "doi", doi.lower()
@@ -149,6 +149,8 @@ async def check_identifiers(texts: Iterable[str], ledgers: Mapping, resolver: Re
                 matches, detail = await resolver.matches(client, scheme, value)
             except LookupFailed as error:
                 return {"status": "unverified", "detail": error.kind}
+            except Exception:  # noqa: BLE001 - a failed resolver leaves this identifier unverified
+                return {"status": "unverified", "detail": "resolver_error"}
         return {"status": "found" if matches else "not_found", "matches": matches, "detail": detail}
 
     async with httpx.AsyncClient(timeout=resolver.request_timeout_s, headers=resolver._headers,

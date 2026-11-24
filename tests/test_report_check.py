@@ -18,6 +18,7 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
     seen = []
 
     def registry(request):
+        assert "mailto:maintainer@example.test" in request.headers["User-Agent"]
         path = request.url.path
         seen.append(path)
         if path.endswith("/symbol/P53"):
@@ -35,6 +36,9 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
             return httpx.Response(200, json={"responseHeader": {"status": 0}, "response": {"numFound": 0, "docs": []}})
         if path.endswith("GO:9999999"):
             return httpx.Response(200, json={"numberOfHits": 0, "results": []})
+        if path.endswith("GO:0000005"):
+            return httpx.Response(200, json={"numberOfHits": 1, "results": [
+                {"id": "GO:0000005", "isObsolete": False}]})
         if path.endswith("GO:0000004"):
             return httpx.Response(200, json={"numberOfHits": 1, "results": [
                 {"id": "GO:0008150", "isObsolete": False}]})
@@ -54,13 +58,14 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
         transport=httpx.MockTransport(registry), **kwargs))
     settings = Settings()
     settings.runner.workspace_root = str(tmp_path)
+    settings.research.live_source_contact = "maintainer@example.test"
     req = {"id": "report-ids", "research_contract": {}, "report": (
-        "# Identifier notes\n\nHGNC symbols: **P53**, `BRCA1`, MOCKMISS, C4B_2, go:0000004. "
+        "# Identifier notes\n\n**HGNC symbols:** **P53**, `BRCA1`, __MOCKMISS__, _C4B_2_, go:0000004. "
         "[DOI](https://doi.org/10.1000/1?source=example). DOI:10.1000/MISSING. "
         "DOI:10.1000/slow. DOI:10.1000/proxy.\n\n"
         "~~~\nHGNC symbol: CODE\nGO:0000001\n~~~\n\n"
         "<!-- GO:0000002 -->\n"
-    )}
+    ), "report_appendix": "## 부록\n\nGO:0000005\n\n## 부록: 실행 기록\n\nGO:0000007"}
     ledgers = {"s1": {"claims": [{"statement": "GO:9999999 and DOI:10.1000/1"}], "evidence": [
         {"status": "observed", "source": {"id_scheme": "hgnc_symbol", "id_value": "C17orf50"}},
         {"status": "observed", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/A%28study%29"}},
@@ -74,12 +79,13 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
     result = audit.verify_request(req, settings)
     check = result["identifier_check"]
     by_id = {row["value"]: row for row in check["items"]}
-    assert len(seen) == 15 and seen.count("/api/handles/10.1000/1") == 1
+    assert len(seen) == 16 and seen.count("/api/handles/10.1000/1") == 1
     assert by_id["10.1000/a(study)"]["status"] == "found"
     assert by_id["P53"]["matches"] == ["TP53"] and by_id["P53"]["detail"] == "alias_symbol"
     for symbol in ("BRCA1", "C4B_2", "C17orf50"):
         assert by_id[symbol]["status"] == "found"
     assert by_id["MOCKMISS"]["status"] == "not_found"
+    assert by_id["GO:0000005"]["status"] == "found" and "GO:0000007" not in by_id
     assert by_id["GO:0000004"]["matches"] == ["GO:0008150"]
     assert by_id["GO:9999999"]["status"] == "not_found"
     assert by_id["10.1000/missing"]["status"] == "not_found"
@@ -130,6 +136,23 @@ async def test_report_identifier_deadline_and_limit_are_incomplete():
     result = await check_identifiers([text], {}, resolver, deadline_s=0.01)
     assert result["omitted"] == 2 and len(result["items"]) == LIMIT
     assert all(row["status"] == "unverified" and row["detail"] == "deadline" for row in result["items"])
+
+
+@pytest.mark.asyncio
+async def test_report_identifier_resolver_crash_is_unverified(monkeypatch):
+    import sqlite3
+
+    from labhq.evidence.report_identifiers import ReportIdentifierResolver, check_identifiers
+
+    async def broken_lookup(*_):
+        raise sqlite3.OperationalError("admission database unavailable")
+
+    resolver = ReportIdentifierResolver()
+    monkeypatch.setattr(resolver, "matches", broken_lookup)
+    result = await check_identifiers(["GO:0000004"], {}, resolver, deadline_s=1)
+    assert result["items"] == [
+        {"scheme": "go", "value": "GO:0000004", "status": "unverified", "detail": "resolver_error"},
+    ]
 
 
 def _ledger(status="supported", artifact="a1"):

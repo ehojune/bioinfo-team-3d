@@ -351,12 +351,13 @@ def _run_identifier_check(req: Mapping[str, Any], settings: Any, source_reports:
         return None
     from ..runner.lookup_admission import admission_for
 
-    resolver = ReportIdentifierResolver(request_timeout_s=settings.research.live_source_timeout_s, max_retries=0,
+    resolver = ReportIdentifierResolver(contact=settings.research.live_source_contact,
+                                        request_timeout_s=settings.research.live_source_timeout_s, max_retries=0,
                                         admission=admission_for(settings), request_id=str(req.get("id") or ""))
     known_dois = frozenset(resolution.id_value.casefold() for checked in source_reports
                            for evidence in checked.evidence for resolution in evidence.resolutions
                            if resolution.id_scheme == "doi" and resolution.status == "found")
-    texts = (str(req.get(field) or "") for field in ("report", "report_appendix"))
+    texts = (str(req.get("report") or ""), split_appendix(str(req.get("report_appendix") or ""))[0])
     return asyncio.run(check_identifiers(texts, research_ledgers(req), resolver,
                                          deadline_s=deadline_s, known_dois=known_dois))
 
