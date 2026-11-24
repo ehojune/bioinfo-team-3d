@@ -1,6 +1,8 @@
 """Planning and analysis guidance for opt-in unbranched research."""
 from typing import Any
 
+from ..report_format import ABSTRACT_PLAN_RULE
+
 
 def enabled(options: dict[str, Any] | None) -> bool:
     """Only the creation-time option enables compact planning, including after resume."""
@@ -19,7 +21,13 @@ def plan_template(template: str) -> str:
                      "QC separate. Keep the ")
             .replace("Put QC after data generation.",
                      "For a plan without branches, include QC and interpretation in the analysis step as applicable, "
-                     "with QC after data generation. For a branched plan, put QC after data generation."))
+                     "with QC after data generation. For a branched plan, put QC after data generation.")
+            .replace(ABSTRACT_PLAN_RULE,
+                     "For an unbranched plan, use one write-capable analysis step that depends on any preparation "
+                     "steps. Have it create the graphical abstract and its code as declared outputs. Keep Korean "
+                     "labels as SVG <text> and cover question, data, methods and findings. Do not add a separate "
+                     "writing step: labhq requests the draft from the analysis session during dispatch. "
+                     "For a branched plan: " + ABSTRACT_PLAN_RULE))
 
 
 ANALYSIS_INSTRUCTIONS = (

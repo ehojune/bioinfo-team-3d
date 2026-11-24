@@ -143,11 +143,18 @@ async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact, pha
 
     await Orchestrator(hub).run_request("r")
 
-    prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "step")
+    task = next(task for task in hub.calls if task.meta["kind"] == "step")
+    prompt = task.prompt
     for instruction in ("cross-check sample information against public records",
                         "record the controls and expected direction",
                         "compare results with published values in a table"):
         assert (instruction in prompt) is compact
+    assert ("save a draft for the PI" in prompt) is compact
+    drafts = [path for path in task.meta["optional_outputs"] if path.startswith("outputs/labhq-analysis-draft-")]
+    assert bool(drafts) is compact
+    req = hub.requests["r"]
+    assert req["research_contract"]["plan_sha256"] == plan_sha256(req["plan"])
+    assert not set(drafts).intersection(req["plan"]["steps"][0].get("optional_outputs", []))
     assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
 
 
