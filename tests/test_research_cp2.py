@@ -1649,6 +1649,131 @@ async def test_compact_resumes_the_saved_draft_and_review(tmp_path):
     assert req["research_contract"]["review"] == saved_review
 
 
+def _audit_hub(tmp_path, *, problem=None, malformed=False):
+    from tests.test_research_report import ACCEPT
+
+    hub = _draft_hub(tmp_path, problem=problem)
+    hub.s.runner.workspace_root = str(tmp_path.parent)
+    base_reply = hub.reply
+
+    async def reply(task):
+        if task.meta["kind"] != "review":
+            result = await base_reply(task)
+            return (result.model_copy(update={"workdir_id": tmp_path.name})
+                    if task.meta["kind"] == "step" else result)
+        assert task.agent_id == "sci_reviewer"
+        assert "The evidence is awaiting the PI's CP2 decision." in task.prompt
+        assert "First open the collected analysis code and result tables" in task.prompt
+        assert task.prompt.index("Readable files:") < task.prompt.index("Draft (open after")
+        assert task.meta["upstream_dirs"] == [str(tmp_path)]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured={} if malformed else ACCEPT)
+
+    hub.reply = reply
+    return hub
+
+
+@pytest.mark.parametrize("option", [None, False, True])
+async def test_audit_option_orders_checks_review_and_cp2(tmp_path, monkeypatch, option):
+    from tests.test_research_report import ACCEPT, _kinds
+
+    if option is None:
+        monkeypatch.delenv("LABHQ_AUDIT_BEFORE_CP2", raising=False)
+    else:
+        monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1" if option else "0")
+    enabled = option is True
+    hub = (_audit_hub if enabled else _draft_hub)(tmp_path, problem="table")
+    req = hub.requests["r"]
+    if option is False:
+        req["research_options"]["audit_before_cp2"] = False
+    original = hub.request_approval
+
+    async def approval(**kwargs):
+        if kwargs["kind"] == "research_evidence":
+            assert _kinds(hub) == ["plan", "step"] + (["review"] if enabled else [])
+        return await original(**kwargs)
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    contract = req["research_contract"]
+    assert contract["plan_sha256"] == plan_sha256(req["plan"])
+    assert _kinds(hub) == ["plan", "step", "review"]
+    detail = hub.approvals[1]["detail"]
+    cp2 = contract["checkpoints"]["cp2"]
+    assert ("independent_audit" in detail) is enabled
+    assert ("independent_audit" in cp2) is enabled
+    if enabled:
+        card = detail["independent_audit"]
+        assert card == cp2["independent_audit"]
+        assert card["issues"] == ACCEPT["issues"] and card["verdict"] == "accept"
+        assert card["checks"]["claims"] == {"anchors": 1, "problems": []}
+        assert card["checks"]["table_consistency"]["findings"][0]["kind"] == "number"
+        assert card["draft_sha256"] == sha256(detail["analysis_draft"].encode()).hexdigest()
+        assert '"kind": "number"' in hub.calls[-1].prompt
+
+
+@pytest.mark.parametrize("changed", [None, "artifact", "draft", "plan_receipt"])
+async def test_pre_cp2_audit_reuse_requires_all_hashes(tmp_path, monkeypatch, changed):
+    from tests.test_research_report import _kinds
+
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
+    hub = _audit_hub(tmp_path, problem="portable")
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    contract = req["research_contract"]
+    old = copy.deepcopy(contract["checkpoints"]["cp2"]["independent_audit"])
+    result = req["results"]["s1"]
+    path = (result["outputs"][0] if changed == "artifact" else
+            analysis_draft.for_request(req).path if changed == "draft" else None)
+    if path:
+        target = tmp_path / path
+        data = target.read_bytes() + b"\n"
+        target.write_bytes(data)
+        result["output_sha256"][path] = sha256(data).hexdigest()
+    if changed == "plan_receipt":
+        contract["review"]["plan_sha256"] = "a" * 64
+    calls, approvals = len(hub.calls), len(hub.approvals)
+    _interrupt(hub)
+    monkeypatch.delenv("LABHQ_AUDIT_BEFORE_CP2")
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    contract = req["research_contract"]
+    assert _kinds(hub, calls) == (["review"] if changed else [])
+    reopened = changed in {"artifact", "draft"}
+    assert [card["kind"] for card in hub.approvals[approvals:]] == (["research_evidence"] if reopened else [])
+    assert (contract["checkpoints"]["cp2"]["independent_audit"] != old) is reopened
+    assert contract["review"]["plan_sha256"] == plan_sha256(req["plan"])
+
+
+@pytest.mark.parametrize("failure", ["missing", "unparsed"])
+async def test_cp2_waits_for_a_completed_audit(tmp_path, monkeypatch, failure):
+    from tests.test_research_report import _kinds
+
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
+    hub = _audit_hub(tmp_path, problem=failure, malformed=failure == "unparsed")
+    await Orchestrator(hub).run_request("r")
+
+    assert [card["kind"] for card in hub.approvals] == ["research_plan"]
+    assert _kinds(hub) == ["plan", "step"] + (["review", "review"] if failure == "unparsed" else [])
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and req["research_contract"]["failure"]["stage"] == "independent_audit"
+
+
+async def test_cached_audit_rejects_changed_file_with_old_hash(tmp_path, monkeypatch):
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
+    hub = _audit_hub(tmp_path, problem="portable")
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    path = req["results"]["s1"]["outputs"][0]
+    (tmp_path / path).write_bytes(b"effect\n0.50\n")
+    _interrupt(hub)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert req["status"] == "failed" and "Collected output changed:" in req["error"]
+    assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved", [None, {"compact_workflow": False}])
 async def test_legacy_report_and_plan_hash_follow_frozen_options(tmp_path, saved):

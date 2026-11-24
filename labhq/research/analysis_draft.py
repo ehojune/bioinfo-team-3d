@@ -151,10 +151,14 @@ def tables_for(report: str, results: dict, load) -> dict[str, str | None]:
 async def report_tables(hub, request: dict, report: str, results: dict) -> tuple[bool, dict[str, str | None]]:
     """Report whether the compact draft is being finalized and read its linked tables."""
     draft = request.get("outcome") == "research_reported" and for_request(request) is not None
-    load = artifact_loader(hub, request) if draft else None
-    tables = (await asyncio.to_thread(tables_for, report, results, load)
-              if load else report_consistency.tables_for(report, results))
-    return draft, tables
+    return draft, await check_tables(hub, request, report, results, use_transfer=draft)
+
+
+async def check_tables(hub, request: dict, report: str, results: dict, *, use_transfer: bool = True) -> dict:
+    load = artifact_loader(hub, request) if use_transfer else None
+    if load:
+        return await asyncio.to_thread(tables_for, report, results, load)
+    return report_consistency.tables_for(report, results)
 
 
 def for_request(request: dict, plan: dict | None = None) -> AnalysisDraft | None:

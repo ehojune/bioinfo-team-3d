@@ -20,6 +20,7 @@ from .review_checklist import (
 
 if TYPE_CHECKING:
     from ..gateway.server import Hub
+    from .preapproval_audit import AuditDraft
 
 
 REVIEW_SCHEMA: dict[str, Any] = {
@@ -203,7 +204,7 @@ def _without_empty(value: Any) -> Any:
 
 def render_ledgers(steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
                    refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
-                   n: int, *, staged: bool = False) -> str:
+                   n: int, *, staged: bool = False, draft_path: str | None = None) -> str:
     """Each step's CP2-approved ledger for the research reviewer, with recorded hashes and readable files."""
     parts = []
     for step in steps:
@@ -218,19 +219,22 @@ def render_ledgers(steps: list[dict], results: dict[str, TaskResult], ledgers: d
         # artifact without a recorded hash still reads "artifact_sha256": null.
         ledger = {key: [_without_empty(row) for row in value] if key in {"claims", "evidence", "links"}
                   and isinstance(value, list) else value for key, value in ledger.items()}
-        files = "\n".join((input_relpath(sid, path) or "") if staged else str(Path(result.workdir) / path)
-                          for path in result.outputs) if result.workdir else ""
+        files = "\n".join((input_relpath(sid, path) or "") if staged else
+                          str(Path(result.workdir) / path) + (
+                              f" (SHA-256: {result.output_sha256.get(path) or 'unrecorded'})" if draft_path else "")
+                          for path in result.outputs if path != draft_path) if result.workdir else ""
         parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n"
                      f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), n)}")
     return "\n\n".join(parts)
 
 
-async def run_after_cp2(
+async def run(
     hub: Hub, rid: str, text: str, *, reviewer: str | None, refs: dict, packs: dict,
     cp2_notes: list[tuple[str, str]], run_step: Callable[[Task], Awaitable[TaskResult]],
     budget_denials: Container[str], render_evidence: Callable[[], str], spending_cap: Callable[[], str],
+    before_cp2: AuditDraft | None = None,
 ) -> tuple[dict, str | None]:
-    """Reuse a review of this plan or dispatch and save one after evidence approval.
+    """Dispatch the reviewer or reuse a result with matching inputs.
 
     An empty review carries a parse failure reason, or no reason when the budget was denied.
     """
@@ -238,14 +242,29 @@ async def run_after_cp2(
     contract = req["research_contract"]
     plan_hash = contract["plan_sha256"]
     stored = contract.get("review") or {}
-    if stored.get("plan_sha256") == plan_hash:
+    binding = before_cp2.binding if before_cp2 else None
+    if (stored.get("plan_sha256") == plan_hash and stored.get("audit_binding") == binding
+            and (not binding or (binding["artifacts_verified"] and stored.get("reviewer") == reviewer))):
         saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues"),
                  **{key: stored[key] for key in ("checklist", "blind_comparison") if key in stored}}
         if review := lenient_review(saved, RESEARCH_LANE_REVIEW_SCHEMA):
             return review, None
 
     catalog = topic_checklists.load()
-    prompt = RESEARCH_REVIEW_PROMPT.format(
+    template = RESEARCH_REVIEW_PROMPT
+    if before_cp2:
+        template = template.replace(
+            "PI-approved plan; the PI approved its evidence at CP2.",
+            "PI-approved plan. The evidence is awaiting the PI's CP2 decision.",
+        ).replace("refused and claims left unsupported at CP2",
+                  "excluded by automated checks and claims those checks leave unsupported")
+        template = (
+            "Follow this reading order. First open the collected analysis code and result tables listed below. "
+            "Trace the computations and compare the underlying results. Then open the Markdown draft and check "
+            "its methods and claims against those files. Read only collected files and do not execute them. "
+            "Report an issue if a required file cannot be opened or a claim cannot be checked.\n\n" + template
+        )
+    prompt = template.format(
         request=text, plan_sha256=plan_hash, plan=plan_digest(req["plan"]),
         packs=render_pack_review(packs), ledgers=render_evidence(),
     ) + plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents"))
@@ -258,12 +277,18 @@ async def run_after_cp2(
     prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + spending_cap()
     if contract.get("result_warnings"):
         prompt += "\nCP2 result limitations:\n" + "\n".join(contract["result_warnings"])
+    if before_cp2:
+        prompt += ("\n\nAutomated checks of the draft:\n" + json.dumps(before_cp2.checks, ensure_ascii=False)
+                   + "\n\nDraft (open after the analysis code and tables):\n" + before_cp2.path
+                   + f" (SHA-256: {before_cp2.binding['draft_sha256']})")
 
     for parse_attempt in (1, 2):
         reply = await run_step(Task(
             agent_id=reviewer, request_id=rid, output_schema=RESEARCH_LANE_REVIEW_SCHEMA,
             prompt=prompt if parse_attempt == 1 else prompt + RESEARCH_REVIEW_RETRY,
             meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "parse_attempt": parse_attempt,
+                  **({"upstream_dirs": before_cp2.workdirs,
+                      "restricted_inputs": before_cp2.restricted} if before_cp2 else {}),
                   "request": text, "title": "연구 리뷰"}))
         if rid in budget_denials:
             return {}, None
@@ -273,7 +298,8 @@ async def run_after_cp2(
             review = blind_draft.without_unfounded_comparison(with_p1_verdict(review_with_checklist(
                 parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True)),
                 contract.get(blind_draft.KEY))
-            contract["review"] = {"plan_sha256": plan_hash, "reviewer": reviewer, **review}
+            contract["review"] = {"plan_sha256": plan_hash, "reviewer": reviewer, **review,
+                                  **({"audit_binding": binding} if binding else {})}
             await persist_request(hub, rid)
             return review, None
     return {}, reply.error or "missing or invalid research review"
