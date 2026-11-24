@@ -14,8 +14,9 @@ from .verify import LiveSourceResolver, LookupFailed, _json_object, _require_suc
 
 _GO = re.compile(r"(?<![A-Za-z0-9_])GO:[0-9]{7}(?![A-Za-z0-9_])", re.I)
 _SYMBOL = r"[A-Z][A-Z0-9-]{0,39}"
-_GENE_SYMBOL = re.compile(rf"(?i:\bHGNC(?:\s+symbols?)?\s*[:=]|\bhuman gene symbols?\s*[:=]|"
-                          rf"사람 유전자 기호\s*[:=])\s*[*`]*({_SYMBOL})(?![A-Za-z0-9_-])")
+_SYMBOL_ITEM = rf"[*`]*{_SYMBOL}(?![A-Za-z0-9_:-])[*`]*"
+_GENE_SYMBOLS = re.compile(rf"(?i:\bHGNC(?:\s+symbols?)?\s*[:=]|\bhuman gene symbols?\s*[:=]|"
+                           rf"사람 유전자 기호\s*[:=])\s*({_SYMBOL_ITEM}(?:[ \t]*,[ \t]*{_SYMBOL_ITEM})*)")
 _DOI_VALUE = re.compile(r"10\.[0-9]{4,9}/[!-~]{1,512}")
 _MARKDOWN = MarkdownIt("commonmark")
 _CLAIM_ANCHOR = re.compile(r"\[\[\s*claim\s*:[^\]\n]+\]\]", re.I)
@@ -37,7 +38,8 @@ def _candidates(text: str) -> Iterable[tuple[str, str]]:
                 yield "go", go.upper()
     plain = _URL.sub(" ", _CLAIM_ANCHOR.sub(" ", text))
     yield from (("go", value.upper()) for value in _GO.findall(plain))
-    yield from (("hgnc_symbol", symbol) for symbol in _GENE_SYMBOL.findall(plain))
+    for symbols in _GENE_SYMBOLS.findall(plain):
+        yield from (("hgnc_symbol", item.strip(" \t*`")) for item in symbols.split(","))
     for match in _DOI.finditer(plain):
         if _DOI_VALUE.fullmatch(doi := _clean_doi(match.group())):
             yield "doi", doi.lower()
