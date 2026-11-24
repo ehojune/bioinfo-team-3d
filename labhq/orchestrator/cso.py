@@ -6818,8 +6818,10 @@ class Orchestrator:
         draft = analysis_draft.for_request(req)
         if draft:
             try:
-                author = results.get(draft.step_id)
-                if not draft.inline:
+                analyst = results.get(draft.step_id)
+                saved = draft.restored(contract.get("analysis_draft") or {}, analyst)
+                author = saved or analyst
+                if not draft.inline and saved is None:
                     if not (author and author.ok and author.session_id and self.hub.supports_resume(author.agent_id)):
                         raise ValueError("the analysis session cannot be resumed after the remaining steps")
                     origin = self._session_origin(rid, author.agent_id, author.session_id)
@@ -6831,7 +6833,7 @@ class Orchestrator:
                                       restricted_input_steps(req["plan"]["steps"], *self._request_inputs(rid),
                                                              self.hub.s))
                     context = (self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)
-                               + "\n\n" + self.format_results(steps, results, n)
+                               + "\n\n" + cp2_report
                                + approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE))
                     author = await self.run_step(draft.followup(rid, author, context, origin, restricted))
                     if rid in self.budget_denials:
@@ -6840,6 +6842,9 @@ class Orchestrator:
                     if author.ok and author.session_id != session:
                         raise ValueError("the draft did not come from the original analysis session")
                 draft_body = await asyncio.to_thread(draft.read, author)
+                if not draft.inline and saved is None:
+                    contract["analysis_draft"] = draft.receipt(analyst, author)
+                    await persist_request(self.hub, rid)
             except ValueError as exc:
                 await end("research_failed", cp2_report + f"\n\nAnalysis draft unavailable: {exc}.",
                           False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc))

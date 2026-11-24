@@ -19,11 +19,10 @@ class AnalysisDraft:
 
     def prompt(self) -> str:
         handoff = (
-            "Also return your structured research result. Link your own results as outputs/<file> and "
-            "upstream results as steps/<step_id>/outputs/<file>. " if self.inline else
+            "Also return your structured research result. " if self.inline else
             "Use the completed results and approved evidence in context. Write only the draft. "
             "Include downstream validation and independent results. Keep existing outputs and evidence intact. "
-            "Use steps/<step_id>/outputs/<file> for every result link. Confirm the draft path in your reply. "
+            "Confirm the draft path in your reply. "
         )
         return (
             f"\n\nIn this same session, after analysis and QC, save a draft for the PI as UTF-8 Markdown "
@@ -32,7 +31,8 @@ class AnalysisDraft:
             "Ground conclusions, numbers and result-table rows in your ledger or in the upstream ledgers: "
             "include the exact [[claim:<step_id>/<claim_id>]] anchor for each. "
             "Use only claims supported by collected artifacts or accepted sources. Link table claims to the "
-            "matching tables. Place your graphical_abstract.svg below the title "
+            "matching tables. Use steps/<step_id>/outputs/<file> for every result link, including your own "
+            "outputs and the graphical abstract. Place graphical_abstract.svg below the title "
             "if produced. Include key figures under results or explain any omission. State what could not be "
             "established and why. The CSO adds the approval and review record.\n"
             + PAPER_RULE
@@ -45,6 +45,20 @@ class AnalysisDraft:
                     meta={"kind": "analysis_draft", "parent_task": analyst.task_id, "outputs": [self.path],
                           "title": "분석 보고서 초안", "restricted_inputs": restricted,
                           **({"session_runner": runner} if runner else {})})
+
+    def restored(self, receipt: dict, analyst: TaskResult | None) -> TaskResult | None:
+        if (self.inline or not analyst or not analyst.ok or receipt.get("path") != self.path
+                or receipt.get("parent_task") != analyst.task_id):
+            return None
+        result = TaskResult.model_validate(receipt.get("result"))
+        if result.agent_id != analyst.agent_id or result.session_id != analyst.session_id:
+            raise ValueError("the saved draft does not match the analysis session")
+        return result
+
+    def receipt(self, analyst: TaskResult, result: TaskResult) -> dict:
+        fields = {"task_id", "agent_id", "ok", "workdir", "session_id", "outputs", "output_sha256"}
+        return {"path": self.path, "parent_task": analyst.task_id,
+                "result": result.model_dump(mode="json", include=fields)}
 
     def read(self, result: TaskResult | None) -> str:
         if not result or not result.ok or self.path not in result.outputs:

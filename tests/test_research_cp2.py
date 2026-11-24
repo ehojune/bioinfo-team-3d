@@ -1461,6 +1461,7 @@ def _draft_hub(tmp_path, *, problem=None):
             "anchor": "Unknown claim [[claim:s1/wrong]].",
             "table": f"The [measured effect]({table}) was 0.75 [[claim:s1/c1]].",
             "table_missing": "The [measured effect](outputs/missing.tsv) was 0.25 [[claim:s1/c1]].",
+            "portable": REPORT + f"\n\nThe [measured effect](steps/s1/{table}) was 0.25 [[claim:s1/c1]].",
         }.get(problem, REPORT)
         data = b"\xff" if problem == "encoding" else body.encode("utf-8")
         target.write_bytes(data)
@@ -1500,6 +1501,19 @@ async def test_compact_report_uses_collected_analyst_draft_without_cso_writing(t
     assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
     assert req["research_contract"]["plan_sha256"] == plan_sha256(req["plan"])
     assert analysis_draft.for_request(req).path in req["results"]["s1"]["output_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_inline_draft_uses_portable_result_links(tmp_path):
+    hub = _draft_hub(tmp_path, problem="portable")
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert "Use steps/<step_id>/outputs/<file> for every result link" in hub.calls[1].prompt
+    path = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
+    assert req["status"] == "done" and f"]({path})" in req["report"]
+    assert req["report_package"]["tables"][0]["path"] == path
+    assert req["report_consistency"]["checked"]["tables"] == [path]
 
 
 @pytest.mark.asyncio
@@ -1632,6 +1646,10 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
                               session_id=task.resume_session_id, text=f"Draft saved at {path}", outputs=[path],
                               output_sha256={path: sha256(data).hexdigest()})
         if kind != "step":
+            if kind == "review":
+                receipt = req["research_contract"]["analysis_draft"]
+                assert receipt["result"]["session_id"] == "analysis-s1"
+                assert receipt["path"] in receipt["result"]["output_sha256"]
             return await base_reply(task)
         assert not task.meta["optional_outputs"]
         sid = task.meta["step_id"]
@@ -1654,6 +1672,21 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         assert _kinds(hub) == ["plan", "step", "step", "analysis_draft", "review"], req.get("error")
         assert req["status"] == "done" and later_finding in req["report"]
         assert req["research_contract"]["report_check"] == {"anchors": 2, "problems": []}
+        report = req["report"]
+        receipt = req["research_contract"]["analysis_draft"]
+        if shape == "parallel":
+            (tmp_path / "report" / receipt["path"]).write_bytes(b"Changed after the review.")
+        req["research_contract"]["analysis_draft"] = json.loads(json.dumps(receipt))
+        _interrupt(hub)
+        calls, approvals = len(hub.calls), len(hub.approvals)
+        hub.supports_resume = lambda _: False
+        await Orchestrator(hub).run_request("r", resume=True)
+        req = hub.requests["r"]
+        assert _kinds(hub, calls) == [] and hub.approvals[approvals:] == []
+        if shape == "parallel":
+            assert req["status"] == "failed" and "differs from the collected SHA-256" in req["error"]
+        else:
+            assert req["status"] == "done" and req["report"] == report
     else:
         assert _kinds(hub) == ["plan", "step", "step"]
         assert req["status"] == "failed" and "cannot be resumed" in req["error"]
