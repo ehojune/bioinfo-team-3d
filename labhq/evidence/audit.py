@@ -25,6 +25,7 @@ from .. import __version__
 from ..artifact_policy import unreported_warning_paths
 from ..report_format import split_appendix
 from .report_check import check_report
+from .report_identifiers import ReportIdentifierResolver, check_identifiers
 
 OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED, REMOTE = (
     "ok", "mismatch", "missing", "unreadable", "unchecked", "unrecorded", "remote")
@@ -343,6 +344,21 @@ def _run_live_source_reports(req: Mapping[str, Any], settings: Any,
     return asyncio.run(_live_source_reports(req, settings, observed_artifacts))
 
 
+def _run_identifier_check(req: Mapping[str, Any], settings: Any, source_reports: list[Any]) -> dict | None:
+    if not settings.research.live_source_check or not isinstance(req.get("research_contract"), Mapping):
+        return None
+    from ..runner.lookup_admission import admission_for
+
+    resolver = ReportIdentifierResolver(request_timeout_s=settings.research.live_source_timeout_s, max_retries=0,
+                                        admission=admission_for(settings), request_id=str(req.get("id") or ""))
+    known_dois = frozenset(resolution.id_value.casefold() for checked in source_reports
+                           for evidence in checked.evidence for resolution in evidence.resolutions
+                           if resolution.id_scheme == "doi" and resolution.status == "found")
+    texts = (str(req.get(field) or "") for field in ("report", "report_appendix"))
+    return asyncio.run(check_identifiers(texts, research_ledgers(req), resolver,
+                                         deadline_s=settings.research.live_source_deadline_s, known_dois=known_dois))
+
+
 def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
     """Compare a request's recorded outputs with the files on this PC. ``exit_code`` 0 clean, 1 problems, 2 when a
     step's work folder is not on this PC."""
@@ -409,6 +425,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                                               in_zone=row is None and overlaps_zone(workdir / path, zones)))})
     report_check = rerun_report_check(req)
     source_reports = _run_live_source_reports(req, settings, observed_artifacts)
+    identifier_check = _run_identifier_check(req, settings, source_reports)
     problems = [f"{row['step_id']}: {row['path']} {row['status']} ({row['detail']})"
                 for row in files if row["status"] in PROBLEM_STATUSES]
     reasons += [f"{row['step_id']}: {row['path']} 원격 파일은 이 로컬 검사에서 다시 읽지 않아 무결성 미확인"
@@ -434,6 +451,14 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
         reasons += [f"live source: {claim.claim} 검사 미완료"
                     + (f" ({', '.join(claim.unverified_evidence)})" if claim.unverified_evidence else "")
                     for claim in checked.claims if claim.state == "unverified"]
+    for row in (identifier_check or {}).get("items", []):
+        label = f"식별자 {row['scheme']} {row['value']}"
+        if row["status"] == "not_found":
+            problems.append(f"{label}: 등록 기관에 일치하는 항목 없음")
+        elif row["status"] == "unverified":
+            reasons.append(f"{label}: 조회 미완료 ({row['detail']})")
+    if omitted := (identifier_check or {}).get("omitted"):
+        reasons.append(f"식별자 {omitted}건: 조회 수 한도에 닿아 미확인")
     reasons = list(dict.fromkeys(reasons))
     request_bundle = None
     request_id = str(req.get("id") or "")
@@ -473,6 +498,7 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
             "labhq_version": __version__, "files": files, "report_check": report_check,
             "unreported_outputs": unreported, "problems": problems, "reasons": reasons, "warnings": warnings,
             "source_verification": [checked.model_dump(mode="json") for checked in source_reports],
+            "identifier_check": identifier_check,
             "request_bundle": request_bundle, "report_consistency": consistency,
             "exit_code": 2 if reasons else 1 if problems else 0}
 
@@ -528,6 +554,14 @@ def render_verify(report: Mapping[str, Any]) -> str:
         lines.append("Live source verification:")
         lines += [f"  - {line}" for raw in source_reports
                   for line in verification_lines(VerificationReport.model_validate(raw))]
+    if isinstance(identifier_check := report.get("identifier_check"), Mapping):
+        labels = {"found": "등록 확인", "not_found": "등록 기관에 일치 항목 없음", "unverified": "조회 미완료"}
+        lines.append(f"식별자 실재 검사: {len(identifier_check['items'])}건")
+        for row in identifier_check["items"]:
+            matches = ", ".join(row.get("matches") or [])
+            lines.append(f"  - {row['scheme']} {row['value']}: {labels[row['status']]}"
+                         + (f" → {matches}" if matches and matches != row["value"] else "")
+                         + (f" ({row['detail']})" if row["detail"] else ""))
     request_bundle = report.get("request_bundle")
     if request_bundle and request_bundle.get("present"):
         if request_bundle.get("grade"):
@@ -633,7 +667,8 @@ def bundle_bytes(report: Mapping[str, Any], req: Mapping[str, Any]) -> bytes:
 
     claims = {**claims_record(req, report_check=report.get("report_check"),
                               source_verification=report.get("source_verification")),
-              "request_id": report.get("request_id")}
+              "request_id": report.get("request_id"),
+              **({"identifier_check": report["identifier_check"]} if report.get("identifier_check") is not None else {})}
     artifacts = [{key: row.get(key) for key in ("step_id", "task_id", "agent_id", "tool_use_id", "workdir_id",
                                                  "path", "size", "recorded_sha256", "sha256", "status")}
                  for row in report["files"]]

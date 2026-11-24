@@ -1,8 +1,100 @@
 """The claim-anchor check of a research report (#58 ③), without the orchestrator."""
 
+import httpx
 import pytest
 
 from labhq.evidence.report_check import check_report, claim_rows, failed_lookups
+
+
+def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkeypatch):
+    import json
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    from labhq.evidence import audit
+    from labhq.evidence.report_identifiers import ReportIdentifierResolver
+    from labhq.settings import Settings
+
+    seen = []
+
+    def registry(request):
+        path = request.url.path
+        seen.append(path)
+        if path.endswith("/symbol/P53"):
+            return httpx.Response(200, json={"responseHeader": {"status": 0}, "response": {"numFound": 0, "docs": []}})
+        if path.endswith("/alias_symbol/P53"):
+            return httpx.Response(200, json={"responseHeader": {"status": 0}, "response": {"numFound": 1, "docs": [
+                {"symbol": "TP53", "alias_symbol": ["P53"], "status": "Approved"}]}})
+        if path.endswith("GO:9999999"):
+            return httpx.Response(200, json={"numberOfHits": 0, "results": []})
+        if path.endswith("GO:0000004"):
+            return httpx.Response(200, json={"numberOfHits": 1, "results": [
+                {"id": "GO:0008150", "isObsolete": False}]})
+        if path.endswith("10.1000/1"):
+            return httpx.Response(200, json={"responseCode": 1, "handle": "10.1000/1"})
+        if path.endswith("10.1000/a(study)"):
+            return httpx.Response(200, json={"responseCode": 1, "handle": "10.1000/A(study)"})
+        if path.endswith("10.1000/missing"):
+            return httpx.Response(404, json={"responseCode": 100, "handle": "10.1000/missing"})
+        if path.endswith("10.1000/proxy"):
+            return httpx.Response(404, text="Proxy error")
+        if path.endswith("10.1000/slow"):
+            raise httpx.ReadTimeout("test timeout")
+        pytest.fail(f"unexpected registry lookup: {path}")
+
+    monkeypatch.setattr(audit, "ReportIdentifierResolver", lambda **kwargs: ReportIdentifierResolver(
+        transport=httpx.MockTransport(registry), **kwargs))
+    settings = Settings()
+    settings.runner.workspace_root = str(tmp_path)
+    req = {"id": "report-ids", "research_contract": {}, "report": (
+        "# Identifier notes\n\nHGNC symbol: **P53**. go:0000004. "
+        "[DOI](https://doi.org/10.1000/1?source=example). DOI:10.1000/MISSING. "
+        "DOI:10.1000/slow. DOI:10.1000/proxy.\n\n"
+        "~~~\nHGNC symbol: CODE\nGO:0000001\n~~~\n\n"
+        "<!-- GO:0000002 -->\n"
+    )}
+    ledgers = {"s1": {"claims": [{"statement": "GO:9999999 and DOI:10.1000/1"}], "evidence": [
+        {"status": "observed", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/A%28study%29"}},
+    ]}}
+    monkeypatch.setattr(audit, "research_ledgers", lambda _: ledgers)
+    monkeypatch.setattr(audit, "_run_live_source_reports", lambda *_: [])
+    assert audit.verify_request(req, settings)["identifier_check"] is None
+    assert not seen
+
+    settings.research.live_source_check = True
+    result = audit.verify_request(req, settings)
+    check = result["identifier_check"]
+    by_id = {row["value"]: row for row in check["items"]}
+    assert len(seen) == 9 and seen.count("/api/handles/10.1000/1") == 1
+    assert by_id["10.1000/a(study)"]["status"] == "found"
+    assert by_id["P53"]["matches"] == ["TP53"] and by_id["P53"]["detail"] == "alias_symbol"
+    assert by_id["GO:0000004"]["matches"] == ["GO:0008150"]
+    assert by_id["GO:9999999"]["status"] == "not_found"
+    assert by_id["10.1000/missing"]["status"] == "not_found"
+    assert by_id["10.1000/proxy"]["status"] == "unverified"
+    assert by_id["10.1000/slow"]["detail"] == "timeout"
+    assert result["exit_code"] == 2
+    assert {row.split()[2].removesuffix(":") for row in result["problems"]} == {"GO:9999999", "10.1000/missing"}
+    assert "등록 확인" in audit.render_verify(result) and "조회 미완료" in audit.render_verify(result)
+    with ZipFile(BytesIO(audit.bundle_bytes(result, req))) as bundle:
+        assert json.loads(bundle.read("claims.json"))["identifier_check"] == check
+
+
+@pytest.mark.asyncio
+async def test_report_identifier_deadline_and_limit_are_incomplete():
+    import asyncio
+
+    from labhq.evidence.report_identifiers import LIMIT, ReportIdentifierResolver, check_identifiers
+
+    async def slow(request):
+        await asyncio.sleep(60)
+        pytest.fail("the report deadline must cancel the lookup")
+
+    text = " ".join(f"GO:{index:07}" for index in range(LIMIT + 2))
+    resolver = ReportIdentifierResolver(transport=httpx.MockTransport(slow))
+    result = await check_identifiers([text], {}, resolver, deadline_s=0.01)
+    assert result["omitted"] == 2 and len(result["items"]) == LIMIT
+    assert all(row["status"] == "unverified" and row["detail"] == "deadline" for row in result["items"])
 
 
 def _ledger(status="supported", artifact="a1"):
