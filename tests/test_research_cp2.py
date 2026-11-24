@@ -1815,21 +1815,27 @@ def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("shape", "resumable", "remote", "approve_cp2"), [
-    ("validation_after_analysis", True, False, True), ("validation_after_analysis", True, True, True),
-    ("parallel", True, False, True), ("parallel", False, False, True), ("parallel", True, False, False),
+@pytest.mark.parametrize(("shape", "resumable", "remote", "approve_cp2", "audit"), [
+    ("validation_after_analysis", True, False, True, False),
+    ("validation_after_analysis", True, True, True, False),
+    ("parallel", True, False, True, False), ("parallel", False, False, True, False),
+    ("parallel", True, False, False, False), ("validation_after_analysis", True, False, True, True),
 ])
-async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable, remote, approve_cp2):
+async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable, remote,
+                                                                       approve_cp2, audit):
     from types import SimpleNamespace
 
     from labhq.runner import report_artifacts
     from labhq.runner.step_handoff import artifact_contract_for
     from labhq.runner.step_inputs import stage_inputs
-    from tests.test_research_report import REPORT, _hub, _kinds
+    from tests.test_research_report import ACCEPT, REPORT, _hub, _kinds
 
     hub = _hub()
     req = hub.requests["r"]
     req["research_options"] = {"compact_workflow": True}
+    if audit:
+        req["research_options"]["audit_before_cp2"] = True
+        hub.s.runner.workspace_root = str(tmp_path)
     hub.supports_resume = lambda agent_id: resumable and agent_id == "worker"
     saved = {}
 
@@ -1865,8 +1871,11 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         if kind == "analysis_draft":
             assert task.resume_session_id == "analysis-s1"
             assert not task.meta.get("workdir")
-            assert saved["cp2"] == req["research_contract"]["checkpoints"]["cp2"]
-            assert saved["cp2"]["decision"] == "approved"
+            if audit:
+                assert saved["cp2"] is None
+            else:
+                assert saved["cp2"] == req["research_contract"]["checkpoints"]["cp2"]
+                assert saved["cp2"]["decision"] == "approved"
             assert "Sensitivity test reproduced the estimate" in task.context
             assert "### s1" in task.context and "### s2" in task.context
             [path] = task.meta["outputs"]
@@ -1883,6 +1892,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
                 assert f"inputs/{sid}/{table}" in task.context
                 assert (tmp_path / "report" / "inputs" / sid / table).read_bytes() == sid.encode()
             data = f"{REPORT}\n\n{old_figure}\n\n{later_finding}".encode("utf-8")
+            if audit:
+                data = b"\xef\xbb\xbf" + data
             target.write_bytes(data)
             result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, workdir=str(tmp_path / "report"),
                                 session_id=task.resume_session_id, text=f"Draft saved at {path}", outputs=[path],
@@ -1898,6 +1909,10 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
                 assert saved["draft"] == receipt
                 assert receipt["result"]["session_id"] == "analysis-s1"
                 assert receipt["path"] in receipt["result"]["output_sha256"]
+                if audit:
+                    assert saved["cp2"] is None and [card["kind"] for card in hub.approvals] == ["research_plan"]
+                    assert receipt["result"]["output_sha256"][receipt["path"]] in task.prompt
+                    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ACCEPT)
             return await base_reply(task)
         assert not task.meta["optional_outputs"]
         sid = task.meta["step_id"]
@@ -1921,7 +1936,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
             "task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}},
         }), encoding="utf-8")
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
-                          workdir=str(workdir), outputs=list(hashes), output_sha256=hashes,
+                          workdir=str(workdir), workdir_id=sid if audit else None,
+                          outputs=list(hashes), output_sha256=hashes,
                           session_id=f"analysis-{sid}")
 
     hub.reply = reply
@@ -1940,6 +1956,12 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         assert req["research_contract"]["report_check"] == {"anchors": 2, "problems": []}
         report = req["report"]
         receipt = req["research_contract"]["analysis_draft"]
+        if audit:
+            card = hub.approvals[1]["detail"]
+            assert card["analysis_draft"].startswith("\ufeff") and old_figure in card["analysis_draft"]
+            draft_hash = sha256(card["analysis_draft"].encode("utf-8")).hexdigest()
+            assert card["independent_audit"]["draft_sha256"] == draft_hash
+            assert card["independent_audit"] == saved["cp2"]["independent_audit"]
         if shape == "parallel":
             (tmp_path / "report" / receipt["path"]).write_bytes(b"Changed after the review.")
         cp2_receipt = saved["cp2"]

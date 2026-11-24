@@ -6267,7 +6267,7 @@ class Orchestrator:
                     raise ValueError("Research reviewer unavailable")
                 body = await self._collect_research_draft(
                     rid, draft, results, cp2_report, [], lambda: independent_review.render_ledgers(
-                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True))
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True), raw=True)
                 if body is None:
                     raise ValueError(self.budget_denials[rid])
                 prepared = await preapproval_audit.prepare(
@@ -6289,7 +6289,7 @@ class Orchestrator:
                 await self._finish(rid, cp2_report + f"\n\nResearch stopped before CP2: {error}.",
                                    serialized(), ok=False, error=str(error))
                 return
-            preaudited = (body, review)
+            preaudited = (draft.for_report(body), review)
             audit_record = detail["independent_audit"] = prepared.card(reviewer, review)
             detail["analysis_draft"] = body
             summary += f"\n독립 감사 {review['verdict']} · 남은 지적 {len(review['issues'])}건"
@@ -6431,11 +6431,11 @@ class Orchestrator:
         return bool(self._external_guard(rid) and restricted_input_steps(
             self.hub.requests[rid]["plan"]["steps"], *self._request_inputs(rid), self.hub.s))
 
-    async def _collect_research_draft(self, rid, draft, results, report, notes, render_evidence):
+    async def _collect_research_draft(self, rid, draft, results, report, notes, render_evidence, *, raw=False):
         return await analysis_draft.collect(
             self.hub, rid, draft, results, cp2_report=report, cp2_notes=notes, render_evidence=render_evidence,
             restricted_inputs=lambda: self._restricted_draft_inputs(rid), session_origin=self._session_origin,
-            free_session=self._free_session, run_step=self.run_step, budget_denials=self.budget_denials)
+            free_session=self._free_session, run_step=self.run_step, budget_denials=self.budget_denials, raw=raw)
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,

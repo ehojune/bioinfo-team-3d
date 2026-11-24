@@ -50,6 +50,9 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
     contract = request["research_contract"]
     analyst = results[draft.step_id]
     collected = draft.restored(contract.get("analysis_draft") or {}, analyst) or analyst
+    draft_hash = sha256(body.encode("utf-8")).hexdigest()
+    if draft_hash != collected.output_sha256[draft.path]:
+        raise ValueError("Audit draft differs from the collected SHA-256")
     outputs = {sid: {path: result.output_sha256.get(path) for path in result.outputs}
                for sid, result in results.items() if result.ok}
     complete = all(re.fullmatch(r"[0-9a-f]{64}", digest or "")
@@ -71,7 +74,7 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
     binding = {"plan_sha256": contract["plan_sha256"],
                "artifacts_sha256": _digest(outputs) if complete else None,
                "artifacts_verified": verified,
-               "draft_sha256": collected.output_sha256[draft.path],
+               "draft_sha256": draft_hash,
                "evidence_sha256": _digest({**claim_context, "checks": checks})}
     workdirs = list(dict.fromkeys(result.workdir for result in [*results.values(), collected]
                                 if result.ok and result.outputs and result.workdir))
