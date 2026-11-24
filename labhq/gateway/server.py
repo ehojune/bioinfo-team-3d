@@ -6140,8 +6140,9 @@ class Hub:
         report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
                                                dict.fromkeys(pending.get("quota_steps") or []))
         from ..report_format import split_appendix
-        from ..report_contract import (available_result_files, build_report_package, reader_markdown,
+        from ..report_contract import (available_result_files, build_report_package, clean_reader_report, reader_markdown,
                                        validate_report_package, with_report_front)
+        report = clean_reader_report(report)
         appendix, execution = split_appendix(appendix)
         req.update(report=report, report_appendix=appendix, execution_record=execution)
         package = build_report_package(req, report, dict(req.get("results") or {}))
