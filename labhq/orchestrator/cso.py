@@ -6358,7 +6358,8 @@ class Orchestrator:
             audit += "\n" + "\n".join(reuse_lines)
         if decided == "revision_requested":
             # The PI's note is the revision request: the CSO re-plans from it and the PI approves a new CP1 (R10).
-            ended = (await self._research_continue(rid, None, results, cp2_note=note) if note else
+            ended = (await self._research_continue(rid, preaudited[1] if preaudited else None, results,
+                                                   cp2_note=note) if note else
                      "수정 요청에 메모가 없어 새 계획을 세우지 않았습니다.")
             if ended is None:  # a new plan, CP1 and run took this request over
                 return
@@ -6675,7 +6676,7 @@ class Orchestrator:
                         if limit else "")
             issues = ([{"step_id": sid, "priority": "P1", "problem": reason,
                         "request": "Resolve the stopped step in the revised plan."} for sid, reason in stops]
-                      if stops else [] if cp2_revise else research_continuation.p1_issues(review))
+                      if stops else research_continuation.p1_issues(review))
             round_no = len(rounds) + 2
             if cp2_revise:  # the CP2 card that asked for the revision is the decision
                 receipt = (contract.get("checkpoints") or {}).get("cp2") or {}

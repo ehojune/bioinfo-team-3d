@@ -41,7 +41,7 @@ def _digest(value: object) -> str:
 
 @dataclass(frozen=True)
 class AuditDraft:
-    body: str
+    transferred_body: str | None
     path: str
     binding: dict
     checks: dict
@@ -86,4 +86,7 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
                "evidence_sha256": _digest({**claim_context, "checks": checks, "earlier_notes": earlier_notes})}
     workdirs = list(dict.fromkeys(result.workdir for result in [*results.values(), collected]
                                 if result.ok and result.outputs and result.workdir))
-    return AuditDraft(body, str(Path(collected.workdir) / draft.path), binding, checks, restricted, workdirs)
+    load = analysis_draft.artifact_loader(hub, request) if not restricted else None
+    transferred_body = body if load and (load(collected.task_id) or {}).get(draft.path) == body else None
+    return AuditDraft(transferred_body, str(Path(collected.workdir) / draft.path), binding, checks,
+                      restricted, workdirs)

@@ -1456,7 +1456,7 @@ def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None):
         assert path in task.meta["outputs"] and path not in task.meta["required_outputs"]
         assert path in task.prompt
         target = tmp_path / path
-        target.parent.mkdir()
+        target.parent.mkdir(exist_ok=True)
         table = result.outputs[0]
         (tmp_path / table).write_bytes(b"effect\n0.25\n")
         body = {
@@ -1583,6 +1583,8 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
                     return await reply(task)
                 assert [card["kind"] for card in hub.approvals] == ["research_plan"]
                 assert "Automated checks of the draft" in task.prompt
+                assert task.prompt.index("Readable files:") < task.prompt.index("Verified draft copy.")
+                assert "The [measured effect](steps/s1/" in task.prompt
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ACCEPT)
 
             hub.reply = audit_reply
@@ -1683,6 +1685,7 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
         assert "First open the collected analysis code and result tables" in task.prompt
         assert task.prompt.index("Readable files:") < task.prompt.index("Draft (open after")
         assert task.meta["upstream_dirs"] == [str(tmp_path)]
+        assert "Verified draft copy." not in task.prompt
         return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                           structured={} if malformed else ACCEPT)
 
@@ -1827,6 +1830,41 @@ async def test_pre_cp2_audit_keeps_pi_notes_in_review_and_reader_report(tmp_path
     assert f"## PI 승인 메모\n\n> {latest}" in req["report"]
     assert req["research_contract"]["checkpoints"]["cp2"]["note"] == latest
     assert latest not in hub.approvals[1]["detail"]["analysis_draft"]
+
+
+async def test_cp2_revision_carries_prior_audit_p1_to_new_plan_and_review(tmp_path, monkeypatch):
+    from tests.test_research_report import APPROVE, REVISE, _kinds
+
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
+    hub = _audit_hub(tmp_path)
+    note = "Add a sensitivity check."
+    p1 = next(issue for issue in REVISE["issues"] if issue["priority"] == "P1")
+    decisions = iter([CP1, {"approved": False, "choice": "revise", "note": note}, CP1, APPROVE])
+    original_reply = hub.reply
+
+    async def reply(task):
+        result = await original_reply(task)
+        if task.meta["kind"] == "review" and len(hub.approvals) == 1:
+            return result.model_copy(update={"structured": REVISE})
+        if len(hub.approvals) >= 2 and task.meta["kind"] in {"plan", "review"}:
+            assert note in task.prompt and p1["problem"] in task.prompt
+        return result
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**next(decisions), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.reply, hub.request_approval = reply, approval
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported", req.get("error")
+    assert _kinds(hub) == ["plan", "step", "review", "plan", "step", "review"]
+    assert [card["kind"] for card in hub.approvals] == [
+        "research_plan", "research_evidence", "research_plan", "research_evidence",
+    ]
+    assert req["research_contract"]["continuation"]["p1_issues"] == [p1]
+    assert req["research_contract"]["rounds"][0]["cp2"]["independent_audit"]["verdict"] == "revise"
 
 
 @pytest.mark.asyncio
