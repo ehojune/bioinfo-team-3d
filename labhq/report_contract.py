@@ -417,7 +417,8 @@ def reader_markdown(report: str, *, footnotes: bool = False) -> str:
         code.append(value)
         return f"\x00labhq-code-{len(code) - 1}\x00"
 
-    rendered = clean_reader_report(report)
+    # Portable bundles still need the source paths here to map them to copied files.
+    rendered = translate_report_warnings(report)
     if footnotes:
         pieces: list[str] = []
         last = 0

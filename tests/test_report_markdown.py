@@ -89,3 +89,18 @@ def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_
 def test_scientific_appendix_keeps_review_but_masks_machine_path():
     report = scientific_appendix("", {}, {"issues": [{"problem": "See ~/local/run.csv", "request": "Check samples"}]}, "")
     assert "Check samples" in report and "로컬 경로" in report and "~/local" not in report
+
+
+@pytest.mark.parametrize("path", [
+    "C:/Users/Jane Doe/run/results.tsv",
+    "/home/Jane Doe/run/final results.tsv",
+    r"\\pc\Shared Data\Project Run\results.tsv",
+    r"C:\Users\Jane Doe\run\results.tsv",
+    "file:///C:/Users/Jane Doe/run/final results.tsv",
+])
+def test_reader_report_redacts_unquoted_path_components_with_spaces(path):
+    report = f"Table source: {path} followed by Case/control counts. [[claim:s1/c1]]"
+    stored = add_references(report, "", [])
+    assert stored == "Table source: 로컬 경로 followed by Case/control counts. [[claim:s1/c1]]"
+    assert "[근거 1]" in reader_markdown(stored)
+    assert add_references(f"표는 {path}입니다.", "", []) == "표는 로컬 경로입니다."

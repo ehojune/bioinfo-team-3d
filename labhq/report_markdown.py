@@ -31,12 +31,20 @@ _ARTIFACT_WARNING = re.compile(
     r"(?:[\w./-]+: +)?(?:evidence +)?[\w.-]+ cites artifact [^\r\n]+? missing from artifact_refs"
     r"[ .]*(?P<anchor> +\[\[\s*claim\s*:[^\]\r\n]+\]\])?[ \t]*(?=\r?$)"
 )
-_PATH_ROOT = r"(?:file:/+|[A-Z]:[/\\]|\\\\|~[/\\]|/(?=[\w.-]+/))"
+_PATH_WORD = r"""[^\s/\\<>"'`|\[\](){},:;!?]+"""
+_PATH_COMPONENT = rf"{_PATH_WORD}(?:[ \t]+{_PATH_WORD})*"
+_PATH_EXTENSION = r"\.[A-Z][A-Z0-9]{0,9}(?![A-Z0-9_-])"
+_PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
+_PATH_SPACED_FILE = rf"(?:{_PATH_WORD}[ \t]+)+?{_PATH_FILE}"
+# Spaces can occur inside a directory or filename. Stop at a complete filename before resuming prose.
+_PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_WORD})"
+_PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
+_PATH_ROOT = rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\|~[/\\]|/(?={_PATH_COMPONENT}/))"
 _PATH_TEXT = re.compile(
     rf"""(?ix) https?://[^\s<>"'`|]+
         | (?<![\w./\\:-]) (?:
             (?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)
-            | (?P<bare>{_PATH_ROOT}[^\s<>"'`|\[\])}},;!?]+) )"""
+            | (?P<bare>{_PATH_ROOT}{_PATH_DIRS}{_PATH_TAIL}[/\\]?(?::L\d+(?:-L\d+)?)?) )"""
 )
 
 
