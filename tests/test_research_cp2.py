@@ -1774,6 +1774,44 @@ async def test_cached_audit_rejects_changed_file_with_old_hash(tmp_path, monkeyp
     assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
 
 
+async def test_pre_cp2_audit_keeps_pi_notes_in_review_and_reader_report(tmp_path, monkeypatch):
+    from tests.test_research_report import _kinds
+
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
+    hub = _audit_hub(tmp_path)
+    req = hub.requests["r"]
+    earlier = "Use the same comparison as the earlier round."
+    latest = "Limit the conclusion to the observed cohort."
+    original_reply, original_approval = hub.reply, hub.request_approval
+
+    async def reply(task):
+        if task.meta["kind"] == "step":
+            assert earlier in task.prompt
+        if task.meta["kind"] == "review":
+            assert earlier in task.prompt and latest not in task.prompt
+        return await original_reply(task)
+
+    async def approval(**kwargs):
+        answer = await original_approval(**kwargs)
+        if kwargs["kind"] == "research_plan":
+            req["research_contract"]["rounds"] = [{
+                "round": 1, "cp2": {"decision": "approved", "note": earlier},
+            }]
+        if kwargs["kind"] == "research_evidence":
+            assert "승인 메모는 보고서 본문에 인용합니다" in kwargs["summary"]
+            answer["note"] = latest
+        return answer
+
+    hub.reply, hub.request_approval = reply, approval
+    await Orchestrator(hub).run_request("r")
+
+    assert _kinds(hub) == ["plan", "step", "review"]
+    assert req["outcome"] == "research_reported"
+    assert f"## PI 승인 메모\n\n> {latest}" in req["report"]
+    assert req["research_contract"]["checkpoints"]["cp2"]["note"] == latest
+    assert latest not in hub.approvals[1]["detail"]["analysis_draft"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("saved", [None, {"compact_workflow": False}])
 async def test_legacy_report_and_plan_hash_follow_frozen_options(tmp_path, saved):

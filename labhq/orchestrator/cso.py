@@ -1423,11 +1423,12 @@ def selection_record_line(plan: Any) -> str:
             f"판단을 바꿀 관측 {len(record.get('change_signals') or [])}개.")
 
 
-def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
+def research_cp2_notes(contract: dict, *, include_current: bool = True) -> list[tuple[str, str]]:
     """The notes of every approved CP2 of this request, earlier rounds first: the PI approved each for its report."""
     receipts = [(f"round {archived.get('round')}", archived.get("cp2"))
                 for archived in contract.get("rounds") or [] if isinstance(archived, dict)]
-    receipts.append(("", (contract.get("checkpoints") or {}).get("cp2")))
+    if include_current:
+        receipts.append(("", (contract.get("checkpoints") or {}).get("cp2")))
     notes = [(label, str(receipt.get("note") or "")) for label, receipt in receipts
              if isinstance(receipt, dict) and receipt.get("decision") == "approved" and receipt.get("note")]
     if len(notes) == 1 and not notes[0][0]:  # this round's note alone needs no round label
@@ -5540,7 +5541,11 @@ class Orchestrator:
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
             step_draft = draft if draft and draft.inline and step["id"] == draft.step_id else None
             if step_draft:
-                prompt += step_draft.prompt()
+                draft_prompt = step_draft.prompt()
+                if preapproval_audit.enabled(req_state):
+                    draft_prompt += approval_note_block(
+                        "CP2", research_cp2_notes(contract, include_current=False), CP2_REPORT_NOTE_RULE)
+                prompt += draft_prompt
                 optional.append(step_draft.path)
             if declared or optional:
                 prompt += STEP_OUTPUTS_RULE.format(
@@ -5634,7 +5639,7 @@ class Orchestrator:
                                **({"workdir": workdir} if workdir else {})})
             if updates:
                 if step_draft and can_resume:
-                    updates.append(step_draft.prompt())
+                    updates.append(draft_prompt)
                 task = task.model_copy(update={
                     "prompt": continuation_prompt(task, "\n\n".join(updates), resumable=can_resume,
                                                    previous_result=previous,
@@ -6262,20 +6267,23 @@ class Orchestrator:
         if preapproval_audit.enabled(req) and (draft := analysis_draft.for_request(req)):
             reviewer = self.cfg.reviewer_agent
             cp2_report = self.format_results(steps, results, n)
+            earlier_notes = research_cp2_notes(contract, include_current=False)
             try:
                 if not reviewer or reviewer not in self.hub.agents:
                     raise ValueError("Research reviewer unavailable")
                 body = await self._collect_research_draft(
-                    rid, draft, results, cp2_report, [], lambda: independent_review.render_ledgers(
+                    rid, draft, results, cp2_report, earlier_notes, lambda: independent_review.render_ledgers(
                         steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True), raw=True)
                 if body is None:
                     raise ValueError(self.budget_denials[rid])
                 prepared = await preapproval_audit.prepare(
-                    self.hub, req, draft, body, results, restricted=self._restricted_draft_inputs(rid),
+                    self.hub, req, draft, body, results, earlier_notes=earlier_notes,
+                    restricted=self._restricted_draft_inputs(rid),
                     claim_context={"ledgers": ledgers, "refused": refused, "unsupported": unsupported,
                                    "artifact_sha256": artifact_sha256, "literal_checks": literal_checks})
                 review, reason = await independent_review.run(
-                    self.hub, rid, text, reviewer=reviewer, refs=reference_meta(req), packs=packs, cp2_notes=[],
+                    self.hub, rid, text, reviewer=reviewer, refs=reference_meta(req), packs=packs,
+                    cp2_notes=earlier_notes,
                     run_step=self.run_step, budget_denials=self.budget_denials, before_cp2=prepared,
                     render_evidence=lambda: independent_review.render_ledgers(
                         steps, results, ledgers, refused, unsupported, artifact_sha256, n, draft_path=draft.path),
@@ -6293,6 +6301,9 @@ class Orchestrator:
             audit_record = detail["independent_audit"] = prepared.card(reviewer, review)
             detail["analysis_draft"] = body
             summary += f"\n독립 감사 {review['verdict']} · 남은 지적 {len(review['issues'])}건"
+            summary += "\n승인 메모는 보고서 본문에 인용합니다."
+            if revise_continues:
+                summary += " 초안을 고치려면 수정 요청을 고르세요."
 
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
         audit_changed = bool(audit_record and (not audit_record["artifacts_verified"]
@@ -6614,6 +6625,8 @@ class Orchestrator:
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
         if check["problems"]:
             body = _execution_warning_summary(body)
+        if preaudited and (approval_text := (contract["checkpoints"]["cp2"].get("note") or "")):
+            body = _before_bench_block(body, preapproval_audit.approval_section(approval_text))
         fallback = "" if EARLIER_ROUNDS_HEADING.search(body) else _earlier_rounds_fallback(contract)
         if fallback:
             body = _before_bench_block(body, fallback)

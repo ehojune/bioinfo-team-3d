@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass
 from hashlib import sha256
+from html import escape
 from pathlib import Path
 
 from ..evidence import report_consistency
@@ -27,6 +28,13 @@ def enabled(request: dict) -> bool:
     return (request.get("research_options") or {}).get(OPTION) is True
 
 
+def approval_section(note: str) -> str:
+    """Present the PI's annotation separately from the audited scientific claims."""
+    literal = re.sub(r"([\\`*_\[\]#!])", r"\\\1", escape(note, quote=False))
+    quoted = "\n".join(f"> {line}" for line in literal.splitlines())
+    return "## PI 승인 메모\n\n" + quoted
+
+
 def _digest(value: object) -> str:
     return sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
 
@@ -46,7 +54,7 @@ class AuditDraft:
 
 
 async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body: str, results: dict, *,
-                  claim_context: dict, restricted: bool) -> AuditDraft:
+                  claim_context: dict, earlier_notes: list[tuple[str, str]], restricted: bool) -> AuditDraft:
     contract = request["research_contract"]
     analyst = results[draft.step_id]
     collected = draft.restored(contract.get("analysis_draft") or {}, analyst) or analyst
@@ -75,7 +83,7 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
                "artifacts_sha256": _digest(outputs) if complete else None,
                "artifacts_verified": verified,
                "draft_sha256": draft_hash,
-               "evidence_sha256": _digest({**claim_context, "checks": checks})}
+               "evidence_sha256": _digest({**claim_context, "checks": checks, "earlier_notes": earlier_notes})}
     workdirs = list(dict.fromkeys(result.workdir for result in [*results.values(), collected]
                                 if result.ok and result.outputs and result.workdir))
     return AuditDraft(body, str(Path(collected.workdir) / draft.path), binding, checks, restricted, workdirs)
