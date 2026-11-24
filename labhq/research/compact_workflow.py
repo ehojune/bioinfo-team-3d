@@ -23,7 +23,8 @@ def plan_template(template: str) -> str:
 
 
 ANALYSIS_INSTRUCTIONS = (
-    "\n\nWithin the approved design, cross-check sample information against public records, record the controls "
-    "and expected direction, and compare results with published values in a table. When information is missing "
-    "or a check does not apply, record the reason."
+    "\n\nWhen your assigned work includes analysis, QC, or interpretation, cross-check sample information against "
+    "public records, record the controls and expected direction, and compare results with published values in a "
+    "table. Keep these checks within the approved design. When information is missing or a check does not apply, "
+    "record the reason."
 )

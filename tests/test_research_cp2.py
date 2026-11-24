@@ -132,7 +132,7 @@ async def test_live_source_check_off_does_not_call_resolver(monkeypatch):
 
 
 @pytest.mark.parametrize("compact", [False, True])
-@pytest.mark.parametrize("phase", ["analysis", "evidence", "validation"])
+@pytest.mark.parametrize("phase", ["question", "plan", "evidence", "analysis", "validation", "report"])
 async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact, phase):
     settings = _settings()
     settings.research.compact_workflow = not compact

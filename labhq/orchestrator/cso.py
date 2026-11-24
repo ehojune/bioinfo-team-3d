@@ -5878,9 +5878,7 @@ class Orchestrator:
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
                 prompt += self._spending_cap_line(rid)
-                if (not branch_ids
-                        and step.get("phase") in ("analysis", "evidence", "validation")
-                        and compact_workflow.enabled(req_state.get("research_options"))):
+                if not branch_ids and compact_workflow.enabled(req_state.get("research_options")):
                     prompt += compact_workflow.ANALYSIS_INSTRUCTIONS
             prompt += self._lookup_usage_line(rid)  # at the start of this step: what is left to spend (#1088)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
