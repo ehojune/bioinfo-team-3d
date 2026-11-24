@@ -126,7 +126,9 @@ def test_local_path_before_relative_link_keeps_label_and_target():
 
 @pytest.mark.parametrize("path", ["/home/example/private.tsv", "C:/Users/Example/data.tsv",
                                  r"C:\Users\Example\data.tsv", r"\Users\Example\data.tsv",
-                                 "file:///home/example/private.tsv"])
+                                 "C://Users/Example/data.tsv", r"C:\\Users\Example\\data.tsv",
+                                 "file:///home/example/private.tsv", "vscode://file/C:/Users/Example/data.tsv",
+                                 "vscode-insiders://file/home/example/data.tsv"])
 def test_generated_report_redacts_paths_immediately_after_a_label_colon(path):
     links = "HTTPS:https://example.org/Users/public.\nFTP:ftp://example.org/pub/data.tsv."
     source = f"Source:{path}. [[claim:s1/c1]]\n{links}"
@@ -171,6 +173,7 @@ def test_reader_report_redacts_unquoted_path_components_with_spaces(path):
     "</home/O'Connor/Project (pilot)/results.tsv>",
     "C%3A%2FUsers%2FJane%20Doe%2Fresults.tsv",
     "~example/Shared Data/results.tsv",
+    "vscode://file/C:/Users/Example/data.tsv",
     "/Example User",
 ])
 def test_generated_report_masks_local_link_target_and_preserves_its_label(target):
@@ -187,7 +190,10 @@ def test_generated_report_masks_local_link_target_and_preserves_its_label(target
     "/Example User",
     "C:/Users/Jane Doe/Project Alpha",
     "/home/results/Jane Doe/Project [phase 2]",
+    "/private",
     "/home/Project response increased expression/run",
+    "/home/results/Project Phase 2",
+    "/home/results/Project B 2",
 ])
 def test_generated_report_redacts_extensionless_local_tail(path):
     report = f"작업 폴더 {path}; 표본을 확인했습니다. [[claim:s1/c1]]"
@@ -255,12 +261,56 @@ def test_generated_report_keeps_conclusion_after_path_without_anchor(path, concl
     assert build_report_package({}, f"# 연구 보고서\n\n## 요약\n\n{source}").answer == expected
 
 
-@pytest.mark.parametrize("conclusion", ["HR = 0.7", "p < 0.05", "p-value≤1e-4", "Hazard ratio = 0.7"])
+@pytest.mark.parametrize("conclusion", [
+    "HR = 0.7", "p < 0.05", "p-value≤1e-4", "Hazard ratio = 0.7",
+    "n /N = 0.5", "Case /control ratios increased",
+    "AUC 0.85", "HR 0.7", "95% CI 0.60–0.80", "OR 1.3 (95% CI 1.1-1.5)", "p-value 0.03",
+    "AUC: 0.85", "95% CI: 0.60–0.80", "HR：0.7",
+    "log2FC 1.5", "RPKM 12.4", "TPM 3.2", "log2fc 1.5", "CPM 32",
+    "R 0.82", "F 5.4", "t 3.1", "z 2.0", "χ 1.2", "r −2", "Q: 3",
+])
 def test_generated_report_keeps_statistical_conclusion_after_path(conclusion):
     source = f"작업 위치 /home/results/run {conclusion}"
     expected = f"작업 위치 로컬 경로 {conclusion}"
+    assert add_references(conclusion, "", []) == conclusion
     assert add_references(source, "", []) == expected
     assert add_references(source + " [[claim:s1/c1]]", "", []) == expected + " [[claim:s1/c1]]"
+
+
+@pytest.mark.parametrize("quantity", [
+    "10 cells /mL", "events /person-year", "g /L", "4 reads /µL", "8 cells /mm²",
+    "2 mg /kg/day", "2 mg/kg/day", "0.5 g / kg / d",
+    "3 events /100 person-years", "4 reads /100,000 cells", "2 events /10^5 person-years",
+    "6 events /10⁵ person-years", "5 events /1e5 person-years",
+    "3 events /100 patient-years", "4 cases /100 participant‑years", "2 deaths /500 subject-days",
+    "3 events /1,000 exposure-hours", "5 visits /100 patients",
+    "3 events /100 person days", "2 cases /100 person\u00a0years", "4 deaths /500 exposure hours",
+    "10 counts /sample", "counts /sample", "12 features /library", "20 UMIs /barcode",
+    "10 counts /million", "5 reads /million mapped reads", "3 cases /100,000 population",
+    "5 events /1,000,000 residents", "6 reads /1e6 total mapped reads", "3 /100",
+])
+def test_generated_report_preserves_slash_prefixed_scientific_units(quantity):
+    assert add_references(f"Density was {quantity}.", "", []) == f"Density was {quantity}."
+    source = f"Location /home/results/run {quantity} [[claim:s1/c1]]"
+    assert add_references(source, "", []) == f"Location 로컬 경로 {quantity} [[claim:s1/c1]]"
+
+
+def test_generated_report_masks_paths_in_quantified_prose():
+    assert add_references("Found 10 samples /private.", "", []) == "Found 10 samples 로컬 경로."
+    assert add_references("Found 10 counts /sample/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Sample Name/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100,000 Sample Name/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example, Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100,000, Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example. Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100,000. Fixture/notes/private.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example. Fixture Q. Public/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example, Fixture Q. Public/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example?! Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example?!.. Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    source = "Found 10 counts /million. See https://example.org/public.md"
+    assert add_references(source, "", []) == source
 
 
 @pytest.mark.parametrize("name", ["Project contains Private Data", "Project Results indicate Private Data"])

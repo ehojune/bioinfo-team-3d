@@ -14,8 +14,8 @@ from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from .report_markdown import (clean_report_prose, markdown_body, render_marker_message, rendered_markers,
-                              replace_markdown_body, translate_report_warnings)
+from .report_markdown import (LOCAL_FILE_URI, clean_report_prose, markdown_body, render_marker_message,
+                              rendered_markers, replace_markdown_body, translate_report_warnings)
 from .evidence.report_consistency import front_lines as consistency_front_lines
 from .reproduction_receipt import receipt_note, receipt_summary
 
@@ -47,7 +47,7 @@ def _balanced_link_target(depth: int = 4, *, spaces: bool = False) -> str:
     return rf"(?:{char}|\({inner}\))+"
 
 
-_LOCAL_TARGET = r"(?:[Ff][Ii][Ll][Ee]:|[A-Za-z]:[/\\]|[/\\]|~[A-Za-z0-9_.+-]*[/\\])"
+_LOCAL_TARGET = rf"(?:{LOCAL_FILE_URI}|[A-Za-z]:[/\\]|[/\\]|~[A-Za-z0-9_.+-]*[/\\])"
 
 
 def _link_pattern(*, reader: bool = False) -> re.Pattern[str]:

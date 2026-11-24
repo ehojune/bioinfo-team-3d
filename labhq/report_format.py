@@ -10,8 +10,7 @@ PAPER_RULE = '''Use the basic paper format in this order: "제목", "요약(Abst
 "논의", "결론", "참고", "부록". Start with the report's first heading: no preamble.
 Use one # title and ## for each section.
 The abstract summarizes the question and findings; the introduction states the background and question.
-Methods include seeds, tool/data versions and assumptions; results contain evidence, figures and tables.
-Wrap machine-local paths in backticks. Use relative links for report assets.
+Methods include seeds, tool/data versions and assumptions. Results contain evidence, figures and tables. Wrap machine-local paths in backticks and link report assets with relative paths.
 Discussion covers interpretation, reviewer concerns, limitations and what would change the conclusion.
 The conclusion gives the answer and concrete next steps. References name only supplied data accessions,
 PMIDs and DOIs, never invented citations. Label human gene symbols for registry checks (e.g. "HGNC symbol: TP53")
