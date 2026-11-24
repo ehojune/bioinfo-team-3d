@@ -14,6 +14,12 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 05:21 | [`52ac820`](https://github.com/ehojune/bioinfo-team-3d/commit/52ac820) | **로컬 경로를 가리고 통계 약어와 단위를 보존합니다.**<br>구두점이 든 디렉터리를 가리고 log2FC·TPM과 R·F·t·z의 수치를 남깁니다. |
+| 03:40 | [`046d476`](https://github.com/ehojune/bioinfo-team-3d/commit/046d476) | **작업 경로 뒤의 통계 비교식을 보고서에 남깁니다.**<br>완료·취소 보고서에서 위험비와 p값의 항과 비교 기호를 보존합니다. |
+| 03:33 | [`dc8e3ad`](https://github.com/ehojune/bioinfo-team-3d/commit/dc8e3ad) | **근거 표식이 없는 보고서에서도 작업 경로 뒤 결론을 남깁니다.**<br>완료 보고서의 요약과 취소 보고서의 부분 결과를 검증했습니다. |
+| 03:29 | [`d227408`](https://github.com/ehojune/bioinfo-team-3d/commit/d227408) | **슬래시 왼쪽에만 공백을 둔 세포 비율을 보존합니다.**<br>보고서 본문과 앞쪽 요약에서 CD4+ /CD8+를 확인했습니다. |
+| 03:23 | [`670d7b1`](https://github.com/ehojune/bioinfo-team-3d/commit/670d7b1) | **보고서에서 콜론에 붙은 작업 경로를 가리고 공백이 든 비율을 보존합니다.**<br>POSIX·Windows 경로를 가리고 HTTPS·FTP URL과 CD4+ / CD8+ 표기를 남깁니다. |
+| 03:21 | [`226061c`](https://github.com/ehojune/bioinfo-team-3d/commit/226061c) | **연구 보고서에서 작업 경로를 가리고 결론과 근거를 남깁니다.**<br>정상 완료·재개·취소 보고서에 적용합니다. 경로 뒤 결론과 수식, 상대 링크를 보존합니다. |
 | 02:26 | [`bf69871`](https://github.com/ehojune/bioinfo-team-3d/commit/bf69871) | **간소화 연구 계획에서 단계 이름과 관계없이 필요한 QC를 안내합니다.**<br>무분기 단계에서 맡은 작업에 분석, QC 또는 해석이 포함될 때 승인된 범위 안에서 시료, 대조군, 문헌 값을 확인하도록 안내한다. |
 | 02:17 | [`e12dd9c`](https://github.com/ehojune/bioinfo-team-3d/commit/e12dd9c) | **간소화 연구 계획의 증거 수집과 검증 단계에도 QC를 안내합니다.**<br>evidence와 validation으로 표시한 무분기 단계에도 공개 시료 기록 대조, 대조군과 기대 방향 기록, 문헌 값 비교를 안내한다. |
 | 01:49 | [`5967afc`](https://github.com/ehojune/bioinfo-team-3d/commit/5967afc) | **연구 계획 간소화 옵션을 한영 매뉴얼에 설명했습니다.**<br>설정 방법, 갈래 없는 계획의 단계 상한, 재개 동작과 분석 지시를 적었다. |
