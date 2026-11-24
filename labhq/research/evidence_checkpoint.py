@@ -28,13 +28,15 @@ async def ask(hub, rid: str, detail: dict, summary: str, revise_continues: bool)
 def record_receipt(contract: dict, decision: dict, decided: str, note: str, asks: int, *,
                    warnings: list, refused_rows: list, refused: list, unsupported: list,
                    artifact_sha256: dict, unreported_outputs: dict, literal_checks: list,
-                   source_verification: list, source_reports: list | None) -> None:
+                   source_verification: list, source_reports: list | None,
+                   independent_audit: dict | None = None) -> None:
     # A continuation reuses a step together with its per-step salvage records (#90).
     salvage = contract.pop("result_salvage", None) or {}
     contract.setdefault("checkpoints", {})["cp2"] = {
         "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
         "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
         "plan_sha256": contract["plan_sha256"], "asks": asks,
+        **({"independent_audit": independent_audit} if independent_audit else {}),
         **({"warnings": warnings} if warnings else {}),
         **({"refused_rows": refused_rows} if refused_rows else {}),
         "refused_evidence": refused, "unsupported_claims": unsupported,

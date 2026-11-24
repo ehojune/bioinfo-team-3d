@@ -62,21 +62,28 @@ class AnalysisDraft:
         return {"path": self.path, "parent_task": analyst.task_id, "result": result.model_dump(
             mode="json", include={"task_id", "agent_id", "ok", "workdir", "session_id", "outputs", "output_sha256"})}
 
-    def read(self, result: TaskResult | None, load=None) -> str:
+    def read(self, result: TaskResult | None, load=None, *, raw: bool = False) -> str:
         if not result or not result.ok or self.path not in result.outputs:
             raise ValueError("the analysis step did not deliver the draft")
         if not (digest := result.output_sha256.get(self.path)):
             raise ValueError("the draft has no collected SHA-256")
         if load:
-            body = report_artifacts.transferred_text(load(result.task_id), self.path, digest, MAX_SOURCE_BYTES)
+            payload = load(result.task_id)
+            report_artifacts.transferred_text(payload, self.path, digest, MAX_SOURCE_BYTES)
+            body = payload[self.path]  # keep the verified UTF-8 text, including any BOM
         else:
             try:
                 data = _source_bytes(result.workdir, self.path)
-                body = report_artifacts.verified_text(data, digest, MAX_SOURCE_BYTES).removeprefix("\ufeff")
+                body = report_artifacts.verified_text(data, digest, MAX_SOURCE_BYTES)
             except (OSError, TypeError, UnicodeError):
                 raise ValueError("the collected draft is unreadable as UTF-8 Markdown") from None
-        if not body.strip():
+        if not body.removeprefix("\ufeff").strip():
             raise ValueError("the collected draft is empty")
+        return body if raw else self.for_report(body)
+
+    def for_report(self, body: str) -> str:
+        """Apply display changes when assembling the final report from the collected draft."""
+        body = body.removeprefix("\ufeff")
         if not self.inline and (images := image_links(body)):
             for image in reversed(images):
                 note = "단계별 그림은 최종 보고서에서 생략했습니다." if image == images[0] else ""
@@ -93,7 +100,7 @@ def artifact_loader(hub, request: dict):
 
 async def collect(hub, rid: str, draft: AnalysisDraft, results: dict[str, TaskResult], *,
                   cp2_report: str, cp2_notes: list[tuple[str, str]], render_evidence, restricted_inputs,
-                  session_origin, free_session, run_step, budget_denials) -> str | None:
+                  session_origin, free_session, run_step, budget_denials, raw: bool = False) -> str | None:
     """Read the collected draft, resuming its analyst if needed. None means the follow-up budget was denied."""
     request = hub.requests[rid]
     contract = request["research_contract"]
@@ -101,7 +108,7 @@ async def collect(hub, rid: str, draft: AnalysisDraft, results: dict[str, TaskRe
     analyst = results.get(draft.step_id)
     saved = draft.restored(contract.get("analysis_draft") or {}, analyst)
     if draft.inline or saved is not None:
-        return await asyncio.to_thread(draft.read, saved or analyst, load)
+        return await asyncio.to_thread(draft.read, saved or analyst, load, raw=raw)
 
     if not (analyst and analyst.ok and analyst.session_id and hub.supports_resume(analyst.agent_id)):
         raise ValueError("the analysis session cannot be resumed after the remaining steps")
@@ -120,7 +127,7 @@ async def collect(hub, rid: str, draft: AnalysisDraft, results: dict[str, TaskRe
         return None
     if author.ok and author.session_id != session:
         raise ValueError("the draft did not come from the original analysis session")
-    body = await asyncio.to_thread(draft.read, author, load)
+    body = await asyncio.to_thread(draft.read, author, load, raw=raw)
     contract["analysis_draft"] = draft.receipt(analyst, author)
     await persist_request(hub, rid)
     return body
@@ -151,10 +158,14 @@ def tables_for(report: str, results: dict, load) -> dict[str, str | None]:
 async def report_tables(hub, request: dict, report: str, results: dict) -> tuple[bool, dict[str, str | None]]:
     """Report whether the compact draft is being finalized and read its linked tables."""
     draft = request.get("outcome") == "research_reported" and for_request(request) is not None
-    load = artifact_loader(hub, request) if draft else None
-    tables = (await asyncio.to_thread(tables_for, report, results, load)
-              if load else report_consistency.tables_for(report, results))
-    return draft, tables
+    return draft, await check_tables(hub, request, report, results, use_transfer=draft)
+
+
+async def check_tables(hub, request: dict, report: str, results: dict, *, use_transfer: bool = True) -> dict:
+    load = artifact_loader(hub, request) if use_transfer else None
+    if load:
+        return await asyncio.to_thread(tables_for, report, results, load)
+    return report_consistency.tables_for(report, results)
 
 
 def for_request(request: dict, plan: dict | None = None) -> AnalysisDraft | None:

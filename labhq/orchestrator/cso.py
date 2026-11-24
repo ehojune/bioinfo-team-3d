@@ -65,7 +65,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
-from ..research import analysis_draft, compact_workflow, evidence_checkpoint, independent_review
+from ..research import analysis_draft, compact_workflow, evidence_checkpoint, independent_review, preapproval_audit
 from ..research import precedent_texts
 from ..research.approval_notes import APPROVAL_NOTE_CHARS, CP2_REPORT_NOTE_RULE, approval_note, approval_note_block
 from ..research.independent_review import (RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_PROMPT, REVIEW_SCHEMA,
@@ -1423,11 +1423,12 @@ def selection_record_line(plan: Any) -> str:
             f"판단을 바꿀 관측 {len(record.get('change_signals') or [])}개.")
 
 
-def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
+def research_cp2_notes(contract: dict, *, include_current: bool = True) -> list[tuple[str, str]]:
     """The notes of every approved CP2 of this request, earlier rounds first: the PI approved each for its report."""
     receipts = [(f"round {archived.get('round')}", archived.get("cp2"))
                 for archived in contract.get("rounds") or [] if isinstance(archived, dict)]
-    receipts.append(("", (contract.get("checkpoints") or {}).get("cp2")))
+    if include_current:
+        receipts.append(("", (contract.get("checkpoints") or {}).get("cp2")))
     notes = [(label, str(receipt.get("note") or "")) for label, receipt in receipts
              if isinstance(receipt, dict) and receipt.get("decision") == "approved" and receipt.get("note")]
     if len(notes) == 1 and not notes[0][0]:  # this round's note alone needs no round label
@@ -5540,7 +5541,11 @@ class Orchestrator:
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
             step_draft = draft if draft and draft.inline and step["id"] == draft.step_id else None
             if step_draft:
-                prompt += step_draft.prompt()
+                draft_prompt = step_draft.prompt()
+                if preapproval_audit.enabled(req_state):
+                    draft_prompt += approval_note_block(
+                        "CP2", research_cp2_notes(contract, include_current=False), CP2_REPORT_NOTE_RULE)
+                prompt += draft_prompt
                 optional.append(step_draft.path)
             if declared or optional:
                 prompt += STEP_OUTPUTS_RULE.format(
@@ -5634,7 +5639,7 @@ class Orchestrator:
                                **({"workdir": workdir} if workdir else {})})
             if updates:
                 if step_draft and can_resume:
-                    updates.append(step_draft.prompt())
+                    updates.append(draft_prompt)
                 task = task.model_copy(update={
                     "prompt": continuation_prompt(task, "\n\n".join(updates), resumable=can_resume,
                                                    previous_result=previous,
@@ -6258,7 +6263,51 @@ class Orchestrator:
                 reuse_lines.append(f"- {len(pinned)} DOI/PMID reference(s) of the reused steps are pinned by identifier "
                                    f"only; their content was not checked ({', '.join(pinned[:5])}"
                                    f"{', ...' if len(pinned) > 5 else ''}).")
+        preaudited, audit_record = None, None
+        if preapproval_audit.enabled(req) and (draft := analysis_draft.for_request(req)):
+            reviewer = self.cfg.reviewer_agent
+            cp2_report = self.format_results(steps, results, n)
+            earlier_notes = research_cp2_notes(contract, include_current=False)
+            try:
+                if not reviewer or reviewer not in self.hub.agents:
+                    raise ValueError("Research reviewer unavailable")
+                body = await self._collect_research_draft(
+                    rid, draft, results, cp2_report, earlier_notes, lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True), raw=True)
+                if body is None:
+                    raise ValueError(self.budget_denials[rid])
+                prepared = await preapproval_audit.prepare(
+                    self.hub, req, draft, body, results, earlier_notes=earlier_notes,
+                    restricted=self._restricted_draft_inputs(rid),
+                    claim_context={"ledgers": ledgers, "refused": refused, "unsupported": unsupported,
+                                   "artifact_sha256": artifact_sha256, "literal_checks": literal_checks})
+                review, reason = await independent_review.run(
+                    self.hub, rid, text, reviewer=reviewer, refs=reference_meta(req), packs=packs,
+                    cp2_notes=earlier_notes,
+                    run_step=self.run_step, budget_denials=self.budget_denials, before_cp2=prepared,
+                    render_evidence=lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, draft_path=draft.path),
+                    spending_cap=lambda: self._spending_cap_line(rid))
+                if not review:
+                    raise ValueError(reason or self.budget_denials.get(rid) or "Research audit unavailable")
+            except (BudgetExceeded, ValueError) as error:
+                contract["failure"] = {"stage": "independent_audit", "plan_sha256": contract["plan_sha256"],
+                                       "error": str(error)}
+                req["outcome"] = "research_failed"
+                await self._finish(rid, cp2_report + f"\n\nResearch stopped before CP2: {error}.",
+                                   serialized(), ok=False, error=str(error))
+                return
+            preaudited = (draft.for_report(body), review)
+            audit_record = detail["independent_audit"] = prepared.card(reviewer, review)
+            detail["analysis_draft"] = body
+            summary += f"\n독립 감사 {review['verdict']} · 남은 지적 {len(review['issues'])}건"
+            summary += "\n승인 메모는 보고서 본문에 인용합니다."
+            if revise_continues:
+                summary += " 초안을 고치려면 수정 요청을 고르세요."
+
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
+        audit_changed = bool(audit_record and (not audit_record["artifacts_verified"]
+                                              or recorded.get("independent_audit") != audit_record))
         source_changed = ((live_resolver is not None or self.hub.s.research.literal_source_check)
                           and bool(recorded.get("decision"))
                           and recorded.get("plan_sha256") == contract["plan_sha256"]
@@ -6270,7 +6319,7 @@ class Orchestrator:
             prefix = 'Live source' if live_resolver is not None else 'Saved source'
             summary = prefix + " verification changed after the recorded CP2 decision. " + summary
         if (recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]
-                and not source_changed):
+                and not source_changed and not audit_changed):
             # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
             decided, note, asks = recorded["decision"], str(recorded.get("note") or ""), recorded.get("asks")
             refused = recorded.get("refused_evidence") or []
@@ -6287,7 +6336,7 @@ class Orchestrator:
                 refused=refused, unsupported=unsupported, artifact_sha256=artifact_sha256,
                 unreported_outputs=unreported_outputs, literal_checks=literal_checks,
                 source_verification=source_verification,
-                source_reports=source_reports if live_resolver is not None else None)
+                source_reports=source_reports if live_resolver is not None else None, independent_audit=audit_record)
         req["outcome"] = f"evidence_{decided}"
         await persist_request(self.hub, rid)
         audit = f"CP2 evidence review: {decided}."
@@ -6309,7 +6358,8 @@ class Orchestrator:
             audit += "\n" + "\n".join(reuse_lines)
         if decided == "revision_requested":
             # The PI's note is the revision request: the CSO re-plans from it and the PI approves a new CP1 (R10).
-            ended = (await self._research_continue(rid, None, results, cp2_note=note) if note else
+            ended = (await self._research_continue(rid, preaudited[1] if preaudited else None, results,
+                                                   cp2_note=note) if note else
                      "수정 요청에 메모가 없어 새 계획을 세우지 않았습니다.")
             if ended is None:  # a new plan, CP1 and run took this request over
                 return
@@ -6338,7 +6388,8 @@ class Orchestrator:
             review_audit = audit + (("\n" + source_audit) if source_audit else "")
             await self._research_report(rid, text, steps, results, n, serialized, packs, report, review_audit, ledgers,
                                         refused=refused, unsupported=unsupported,
-                                        artifact_sha256=receipt.get("artifact_sha256") or artifact_sha256)
+                                        artifact_sha256=receipt.get("artifact_sha256") or artifact_sha256,
+                                        preaudited=preaudited)
             return
         if decided == "approved":
             report += ("\nNo reviewer agent is configured (orchestrator.reviewer_agent), so the research review and "
@@ -6388,11 +6439,22 @@ class Orchestrator:
         await persist_request(self.hub, rid)
         return True
 
+    def _restricted_draft_inputs(self, rid: str) -> bool:
+        return bool(self._external_guard(rid) and restricted_input_steps(
+            self.hub.requests[rid]["plan"]["steps"], *self._request_inputs(rid), self.hub.s))
+
+    async def _collect_research_draft(self, rid, draft, results, report, notes, render_evidence, *, raw=False):
+        return await analysis_draft.collect(
+            self.hub, rid, draft, results, cp2_report=report, cp2_notes=notes, render_evidence=render_evidence,
+            restricted_inputs=lambda: self._restricted_draft_inputs(rid), session_origin=self._session_origin,
+            free_session=self._free_session, run_step=self.run_step, budget_denials=self.budget_denials, raw=raw)
+
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
                                cp2_audit: str, ledgers: dict[str, Any], *, refused: list[dict],
                                unsupported: list[dict],
-                               artifact_sha256: dict[str, str | None]) -> None:
+                               artifact_sha256: dict[str, str | None],
+                               preaudited: tuple[str, dict] | None = None) -> None:
         """After CP2 approval: one research review, then the CSO's report and its claim-anchor check (#58 ③⑤).
 
         The plan stays frozen, so a review that asks for revision ends the request unless the PI continues through
@@ -6436,16 +6498,11 @@ class Orchestrator:
                 error="예산 승인을 받지 못해 연구를 멈췄어요"))
 
         draft = analysis_draft.for_request(req)
-        if draft:
+        if draft and not preaudited:
             try:
-                draft_body = await analysis_draft.collect(
-                    self.hub, rid, draft, results, cp2_report=cp2_report, cp2_notes=cp2_notes,
-                    render_evidence=lambda: independent_review.render_ledgers(
-                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True),
-                    restricted_inputs=lambda: bool(self._external_guard(rid) and restricted_input_steps(
-                        req["plan"]["steps"], *self._request_inputs(rid), self.hub.s)),
-                    session_origin=self._session_origin, free_session=self._free_session,
-                    run_step=self.run_step, budget_denials=self.budget_denials)
+                draft_body = await self._collect_research_draft(
+                    rid, draft, results, cp2_report, cp2_notes, lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True))
                 if draft_body is None:
                     await budget_denied("analysis draft", None)
                     return
@@ -6454,12 +6511,16 @@ class Orchestrator:
                           False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc))
                 return
 
-        review, reason = await independent_review.run_after_cp2(
-            self.hub, rid, text, reviewer=reviewer, refs=refs, packs=packs, cp2_notes=cp2_notes,
-            run_step=self.run_step, budget_denials=self.budget_denials,
-            render_evidence=lambda: independent_review.render_ledgers(
-                steps, results, ledgers, refused, unsupported, artifact_sha256, n),
-            spending_cap=lambda: self._spending_cap_line(rid))
+        if preaudited:
+            draft_body, review = preaudited
+            reason = None
+        else:
+            review, reason = await independent_review.run(
+                self.hub, rid, text, reviewer=reviewer, refs=refs, packs=packs, cp2_notes=cp2_notes,
+                run_step=self.run_step, budget_denials=self.budget_denials,
+                render_evidence=lambda: independent_review.render_ledgers(
+                    steps, results, ledgers, refused, unsupported, artifact_sha256, n),
+                spending_cap=lambda: self._spending_cap_line(rid))
         if not review:
             if reason is None:
                 await budget_denied("review", None)
@@ -6565,6 +6626,8 @@ class Orchestrator:
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
         if check["problems"]:
             body = _execution_warning_summary(body)
+        if preaudited and (approval_text := (contract["checkpoints"]["cp2"].get("note") or "")):
+            body = _before_bench_block(body, preapproval_audit.approval_section(approval_text))
         fallback = "" if EARLIER_ROUNDS_HEADING.search(body) else _earlier_rounds_fallback(contract)
         if fallback:
             body = _before_bench_block(body, fallback)
@@ -6613,7 +6676,7 @@ class Orchestrator:
                         if limit else "")
             issues = ([{"step_id": sid, "priority": "P1", "problem": reason,
                         "request": "Resolve the stopped step in the revised plan."} for sid, reason in stops]
-                      if stops else [] if cp2_revise else research_continuation.p1_issues(review))
+                      if stops else research_continuation.p1_issues(review))
             round_no = len(rounds) + 2
             if cp2_revise:  # the CP2 card that asked for the revision is the decision
                 receipt = (contract.get("checkpoints") or {}).get("cp2") or {}
@@ -7153,6 +7216,8 @@ class Orchestrator:
             # A request that already carries a research contract stays research whatever the config now says,
             # so it never reaches the generic re-plan, review or synthesis paths (#90 CP2).
             research_lane = bool(intake and intake.work_kind == "research") or bool(req.get("research_contract"))
+            if research_lane and not resume and not req.get("research_contract"):
+                preapproval_audit.capture(req)
             research_options = req.get("research_options") if research_lane else None
             unbranched_limit = compact_workflow.unbranched_plan_limit(self.cfg.max_steps, research_options)
             research_execution = bool(research_lane and self.hub.s.research.evidence_checkpoint

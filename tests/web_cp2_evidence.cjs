@@ -74,6 +74,22 @@ test('contract-refused rows and their reasons lead the CP2 card detail',async()=
   assert.doesNotMatch(row._decisionParts.detail.textContent,/choices/);
 });
 
+test('CP2 shows the audit verdict and every remaining issue before the draft',async()=>{
+  const decide=await modulePromise,container=new Element();
+  const detail={...cp2.detail,analysis_draft:'<script>draft text</script>',independent_audit:{
+    verdict:'revise',issues:[
+      {priority:'P1',step_id:'s1',claim_id:'c1',problem:'Effect direction disagrees',request:'Check the table'},
+      {priority:'P2',step_id:'s2',problem:'Single cohort'},
+    ],
+  }};
+  const [row]=decide.syncDecisionCards(container,[{...cp2,detail}],[],{});
+  const list=row._decisionParts.detail.children[0];
+  assert.match(list.children[0].textContent,/독립 감사 · revise · 남은 지적 2건/);
+  assert.match(list.children[1].textContent,/P1 · s1 · c1 · Effect direction disagrees · Check the table/);
+  assert.match(list.children[1].textContent,/P2 · s2 · Single cohort/);
+  assert.match(list.textContent,/<script>draft text<\/script>/);
+});
+
 test('missing artifact reference warning is Korean and retains the original in details',async()=>{
   const decide=await modulePromise,container=new Element();
   const item={...cp2,detail:{...cp2.detail,refused_evidence:[{evidence_id:'e1',reason:'evidence e1 cites artifact a1 missing from artifact_refs'}]}};

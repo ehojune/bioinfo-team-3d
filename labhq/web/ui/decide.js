@@ -671,7 +671,7 @@ export function renderDetail(container, kind, detail, approval = null) {
   const preferred = kind === 'tool_permission' ? ['tool_name', 'input'] :
     kind === 'hpc_submit' ? ['queue', 'script_path', 'script_preview', 'cores', 'mem', 'walltime', 'resources'] :
     kind === 'facilities_fix' ? ['action', 'reason', 'signature_id', 'command'] :
-    kind === 'research_evidence' ? ['refused_rows', 'refused_evidence', 'unsupported_claims', 'results', 'plan_sha256'] :
+    kind === 'research_evidence' ? ['independent_audit', 'analysis_draft', 'refused_rows', 'refused_evidence', 'unsupported_claims', 'results', 'plan_sha256'] :
     kind === 'research_plan' ? ['plan_canonical', 'continuation', 'target_sha256', 'scope_status'] :
     kind === 'research_continue' ? ['p1_issues', 'round', 'limit', 'plan_sha256'] :
     kind === 'question' ? ['why_blocked', 'from'] :
@@ -720,6 +720,19 @@ export function renderDetail(container, kind, detail, approval = null) {
     else if (kind === 'resume' && key === 'steps' && Array.isArray(detail.steps))
       // No plan (a direct request, or a stop before planning) reruns the whole request; a card saved before has_plan reads 없음 (#521).
       detailEntry(list, labels[key], detail.steps.join(', ') || (detail.has_plan === false ? '요청 전체' : '없음'), {raw: true});
+    else if (kind === 'research_evidence' && key === 'independent_audit') {
+      const audit = detail[key];
+      const issues = Array.isArray(audit?.issues) ? audit.issues : [];
+      const findings = issues.map(issue => [
+        `${issue.priority} · ${issue.step_id || '단계 없음'}${issue.claim_id ? ` · ${issue.claim_id}` : ''}`,
+        issue.problem, issue.request,
+      ].filter(Boolean).join(' · ')).join('\n');
+      detailEntry(list, `독립 감사 · ${audit?.verdict || '판정 없음'} · 남은 지적 ${issues.length}건`,
+        findings || '(없음)', {raw: true});
+      detailEntry(list, '감사 기록', value, {raw: true, fold: true});
+    }
+    else if (kind === 'research_evidence' && key === 'analysis_draft')
+      detailEntry(list, '분석 보고서 초안', value, {raw: true, fold: true});
     else if (kind === 'research_evidence' && ['refused_rows', 'refused_evidence'].includes(key) && Array.isArray(detail[key])) {
       const missing = detail[key].filter(row => /cites artifact .* missing from artifact_refs/.test(String(row?.reason || '')));
       if (missing.length) detailEntry(list, '근거 대조 경고', missing.map(row =>
