@@ -196,6 +196,7 @@ flowchart TB
 | **Runner & Adapters** | `labhq/runner/daemon.py`, `workspace.py`, `labhq/adapters/` | 단계별 격리 작업 폴더(`inputs/`·`outputs/`), JSON schema 정형 출력 계약과 슬롯 복구(`slot_repair`), CLI·WSL·HPC 실행 |
 | **CLI & Lifecycle** | `labhq/cli.py`, `supervisor.py`, `doctor.py` | 백그라운드 데몬 기동·중지·상태 확인, 자식 프로세스 감시·종료 코드 기록, 환경·로그인·런타임 준비도 점검 |
 | **Research Contract** | `labhq/research/contract.py`, `continuation.py`, `labhq/evidence/claims.py` | CP1 계획 해시 동결, `result v2` 주장·근거·산출물 sha256 대조, 독립 근거 그룹 판정, 이어 가기(continuation) 재사용 |
+| **독립 감사** | `labhq/research/independent_review.py` | CP2 승인 뒤 이종 벤더 리뷰어에게 근거를 전달합니다. 같은 계획 해시의 유효한 감사 결과는 재시작 뒤에도 다시 씁니다. |
 | **core 점검** | `labhq/vocab/`, `labhq/research/packs.py`, `input_fit.py`, `semantic_devices.py` | 어휘·EDAM, 분야 점검표, 고정 pack, CP1 입력 적합성, 공개 안전 오류. live 그림자 제거는 #1388에서 검증 중입니다. |
 | **Bundle & Publication** | `labhq/request_bundle.py`, `portfolio.py`, `result_storage.py`, `reproduction_receipt.py`, `verify.py` | 요청 묶음·RO-Crate 생성, 오프라인 무결성 재검증(`labhq verify`), 재현 검증 receipt, GitHub 연구소 정리본·PDF 출판 |
 
