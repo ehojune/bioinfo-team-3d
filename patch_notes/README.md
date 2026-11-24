@@ -14,7 +14,11 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 02:26 | [`bf69871`](https://github.com/ehojune/bioinfo-team-3d/commit/bf69871) | **간소화 연구 계획에서 단계 이름과 관계없이 필요한 QC를 안내합니다.**<br>무분기 단계에서 맡은 작업에 분석, QC 또는 해석이 포함될 때 승인된 범위 안에서 시료, 대조군, 문헌 값을 확인하도록 안내한다. |
+| 02:17 | [`e12dd9c`](https://github.com/ehojune/bioinfo-team-3d/commit/e12dd9c) | **간소화 연구 계획의 증거 수집과 검증 단계에도 QC를 안내합니다.**<br>evidence와 validation으로 표시한 무분기 단계에도 공개 시료 기록 대조, 대조군과 기대 방향 기록, 문헌 값 비교를 안내한다. |
+| 01:49 | [`5967afc`](https://github.com/ehojune/bioinfo-team-3d/commit/5967afc) | **연구 계획 간소화 옵션을 한영 매뉴얼에 설명했습니다.**<br>설정 방법, 갈래 없는 계획의 단계 상한, 재개 동작과 분석 지시를 적었다. |
 | 00:58 | [`134aae0`](https://github.com/ehojune/bioinfo-team-3d/commit/134aae0) | **강조한 HGNC 라벨과 기호를 읽고 기존 실행 기록은 조회에서 뺍니다.**<br>식별자 조회에도 설정한 연락처를 쓰고 조회기 내부 오류는 미확인으로 기록합니다. |
+| 00:52 | [`3791368`](https://github.com/ehojune/bioinfo-team-3d/commit/3791368) | **간소화 옵션을 켜면 새 무분기 연구 계획을 최대 3단계로 짭니다.**<br>요청을 만들 때 옵션을 저장하고 계획 안내와 검증에 같은 상한을 적용한다. 분석 단계에 시료 대조, 대조군과 기대 방향, 문헌 값 비교를 안내한다. |
 | 00:35 | [`8d2a588`](https://github.com/ehojune/bioinfo-team-3d/commit/8d2a588) | **대체 좌위의 HGNC 기호도 보고서에서 검사합니다.**<br>근거 출처와 식별자 조회에 같은 시간 한도를 적용합니다. 남은 시간이 없으면 미확인으로 기록합니다. |
 | 00:28 | [`ad2f424`](https://github.com/ehojune/bioinfo-team-3d/commit/ad2f424) | **쉼표로 나열한 HGNC 기호도 하나씩 조회합니다.**<br>목록 뒤쪽의 미등록 기호도 보고서 검사에 기록합니다. |
 | 00:19 | [`f6a7db9`](https://github.com/ehojune/bioinfo-team-3d/commit/f6a7db9) | **연구 보고서의 유전자 기호와 GO ID, DOI가 등록되어 있는지 확인합니다.**<br>실시간 출처 확인을 켠 labhq verify에서 등록 기관이 확인한 미등록과 조회 실패를 구분하고 감사 번들에 결과를 담습니다. |
