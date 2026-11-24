@@ -124,6 +124,8 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 
 `research.live_source_check`를 켠 연구 요청에서는 `labhq verify`가 본문·과학 부록·원장의 식별자도 조회합니다. 사람 유전자 기호는 `HGNC symbol: TP53`처럼 표시합니다. GO ID와 DOI도 검사합니다. 등록 기관이 일치 항목 없음을 확인하면 문제로, 통신 오류나 한도에 걸리면 미확인으로 남깁니다. 등록 확인은 주장에 대한 검증과 별개입니다.
 
+보고서의 로컬 경로와 산출물 등록 경고는 읽기 쉬운 문구로 바꿉니다. 결과표·그림 링크와 근거 표식은 유지합니다.
+
 ### 최종 초안 수용(CP4)
 
 `research.final_checkpoint: true`는 새 연구 실행 요청에만 적용합니다(기본 `false`). CP1-only·`plan_only`·simple·direct는 제외하며 생성 때 고정한 값과 계약 version은 설정 변경·재시작으로 바뀌지 않습니다.

@@ -26,6 +26,62 @@ _CODE_BLOCKS = {"code_block", "fence"}
 RENDERED_MARKERS = ("**", "__", "[[")
 READER_FILENAMES = {"readme.md", "report.md", "result.md"}
 
+_ARTIFACT_WARNING = re.compile(r"(?im)^(?P<bullet> {0,3}(?:[-*+] +)?)"
+    r"(?:[\w./-]+: +)?(?:evidence +)?[\w.-]+ cites artifact [^\r\n]+? missing from artifact_refs"
+    r"[ .]*(?P<anchor> +\[\[\s*claim\s*:[^\]\r\n]+\]\])?[ \t]*(?=\r?$)")
+_PATH_CHUNK = (r"""(?:(?!\.(?=\s|$))[^\s/\\<>"'`|\[\](){},;!?]|"""
+               r"\([^/\\\r\n()<>]*\)|\[(?!\[)[^/\\\r\n[\]<>]+\](?!\()|\{[^/\\\r\n{}<>]+\})")
+_PATH_WORD = rf"{_PATH_CHUNK}+(?:[',;!?]{_PATH_CHUNK}+)*"
+_SUBJECT_TOKEN = r"[A-Za-z0-9α-ωΑ-Ω][A-Za-z0-9α-ωΑ-Ω-]*[+−⁺⁻]?"
+_LINE_SUFFIX = r":L\d+(?:-L\d+)?(?=\s|\[\[|[.,;](?=\s|$)|[)\]>]|$)"
+_PATH_FILE = rf"{_PATH_WORD}\.[A-Z][A-Z0-9]{{0,9}}(?![A-Z0-9_-]|(?!{_LINE_SUFFIX}):[^\s])"
+_PATH_DOT_GAP = rf"[,;!?]*\.[.,;!?]*[ \t]+(?=(?:{_PATH_WORD}[.,;!?]*[ \t]+)*{_PATH_WORD}(?<!:)[/\\]+(?:(?:{_PATH_WORD}[/\\]+)+{_PATH_WORD}|(?i:{_PATH_FILE})))"
+_STAT_NUMBER = r"[+−-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+−-]?\d+)?"
+_STAT_VALUE = rf"{_STAT_NUMBER}(?:[ \t]*[–−-][ \t]*{_STAT_NUMBER})?(?![\w/\\-]|\.\w)"
+_NUMERIC_RELATION = rf"[ \t]*[<>=≤≥≈±]=?[ \t]*{_STAT_VALUE}"
+_SCIENTIFIC_UNIT = r"(?:[fpnμµumcdkMGT]?(?:mol|g|m|[lL]|s|Pa|Bq|Hz|J|cal|bp)|h|d|min|(?:[a-z]+(?:[ \t\u00a0\u202f]+|[-‐‑‒–—·_]))?(?:years?|months?|weeks?|days?|hours?|minutes?|seconds?|time)|(?:[a-z]+[ \t]+){0,2}(?:(?:cell|event|case|read|count|molecule|transcript|fragment|death|visit|patient|subject|participant|sample|specimen|barcode|well|reaction|replicate|genome|droplet|population|resident|inhabitant|household)s?|cop(?:y|ies)|librar(?:y|ies)|nucle(?:us|i)|people))(?:\^?[23]|[²³])?"
+_SCIENTIFIC_SCALE = rf"(?:\d{{1,3}}(?:,\d{{3}})+|\d+(?:\^[+−-]?\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹]+)|{_STAT_NUMBER}|(?:hundred|thousand|million|billion|trillion)s?)"
+_SCIENTIFIC_QUANTITY = rf"(?:{_SCIENTIFIC_SCALE}(?:[ \t]*{_SCIENTIFIC_UNIT})?|{_SCIENTIFIC_UNIT})"
+_UNIT_FRACTION = rf"(?-i:(?:{_SCIENTIFIC_QUANTITY}|{_STAT_NUMBER}[ \t]+{_SUBJECT_TOKEN})(?:[ \t]*/[ \t]*{_SCIENTIFIC_QUANTITY})+(?![\w/\\-]|\.\w|,\d|(?:(?:[,;!?]*[ \t]+|{_PATH_DOT_GAP}){_PATH_WORD})+(?<!:)[/\\](?=\S)))"
+_PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|no)|[A-Z][A-Z0-9-]+)[ \t]+[a-z][a-z-]*[ \t]+\w"
+                rf"|{_SUBJECT_TOKEN}(?:[ \t]*/[ \t]*{_SUBJECT_TOKEN})*(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)(?:[a-z][A-Za-z0-9-]*|[A-Z]))*"
+                r"[ \t]+(?:(?:am|is|are|was|were|has|have|had|do|does|did|can|could|may|might|must|shall|should|will|would)(?:n't)?"
+                r"|can't|won't|(?:differ|indicate|increase|decrease|remain|show|suggest)s?|fell|rose|[a-z]{2,}ed)"
+                r"(?=[ \t]+[a-z0-9](?![a-z0-9-]*[/\\])|[.!?]?[ \t]*(?:\[\[|[\r\n]|$))"
+                r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w(?![\w-]*[/\\])))"
+                r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])"
+                rf"|(?-i:{_SUBJECT_TOKEN}(?:[ \t]*/[ \t]*{_SUBJECT_TOKEN})*(?:[ \t]+[a-z][A-Za-z0-9-]*)*{_NUMERIC_RELATION}"
+                rf"|(?:\d+(?:\.\d+)?%[ \t]+)?(?:[A-Z][A-Z0-9-]+|[a-z][a-z0-9-]*[A-Z][A-Za-z0-9-]*|[a-z]+\d+[a-z]+|[Rr]²|[βρτ]|(?i:p(?:[- ]value)?|mean|median|n))(?:[ \t]*[:：][ \t]*|[ \t]+){_STAT_VALUE}"
+                rf"|[A-Za-zα-ωΑ-Ω](?:[ \t]*[:：][ \t]*|[ \t]+(?=[+−-]?\d*\.\d|[+−-]\d|\d+[eE])){_STAT_VALUE})")
+_TAIL_GAP = rf"[ \t]+(?!{_PROSE_START}|{_UNIT_FRACTION}|(?:(?i:and|or)[ \t]+)?!?\[[^\]\r\n]*\]\()"
+_PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
+_PATH_COMPONENT = rf"{_PATH_WORD}(?:(?:{_TAIL_GAP}|{_PATH_DOT_GAP}|[,;!?]+[ \t]+(?=(?:{_PATH_WORD}[.,;!?]*[ \t]+)*{_PATH_WORD}(?<!:)[/\\])){_PATH_WORD})*"
+_PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\]+)*"
+LOCAL_FILE_URI = r"(?i:file:|(?:vscode(?:-insiders)?|cursor|zed)://file(?=/))"
+_PATH_ROOT = (rf"(?:{LOCAL_FILE_URI}/+(?:[A-Z]:[/\\]+)?|[A-Z]:[/\\]+|\\\\(?:[?.]\\(?:[A-Z]:[/\\]+)?)?"
+              rf"|\\(?={_PATH_COMPONENT}[/\\]|{_PATH_FILE}|{_PATH_SPACED_FILE})|~[A-Z0-9_.+-]*[/\\]|/{{2,}}|/(?={_PATH_COMPONENT}/)|(?<!<)/)")
+_PATH_TEXT = re.compile(rf"""(?ix) (?<![\w+.-])(?:https?|ftps?|sftp|ssh|s3|gs|az|ipfs)://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
+        | (?<![\\$])(?:\$\$(?:\\.|[^\\$]|\$(?!\$))+?\$\$|\$(?![\s$])(?:\\.|[^\\$\r\n])+?(?<!\s)\$(?![\d$]))
+        | (?<!\\)\\(?:\([^\r\n]*?\\\)|\[[\s\S]*?\\\])
+        | (?<![\w./\\-]) {_SUBJECT_TOKEN}(?<=[+−⁺⁻])[ \t]+/{_SUBJECT_TOKEN}(?<=[+−⁺⁻])(?=\s|[.,;!?)](?=\s|$)|\[\[|$)
+        | (?<![\w./\\-]) (?:{_UNIT_FRACTION}|{_SUBJECT_TOKEN}[ \t]+/{_SUBJECT_TOKEN}(?={_NUMERIC_RELATION}|[ \t]+(?:ratios?|비율)\b))
+        | (?<![\w./\\-]) (?<!\w[+−⁺⁻%]) (?:(?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)(?![A-Za-z0-9_])
+            | (?P<bare>{_PATH_ROOT}{_PATH_DIRS}(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_COMPONENT})[/\\]?(?:{_LINE_SUFFIX})?) )""")
+
+
+def clean_report_prose(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        if match["quoted"]:
+            return f"{match['quote']}로컬 경로{match['quote']}"
+        return ("로컬 경로" + re.search(rf"(?:{_LINE_SUFFIX})?[.]*$", bare).group()
+                if (bare := match["bare"]) else match.group())
+    return _PATH_TEXT.sub(replace, text)
+
+
+def translate_report_warnings(text: str) -> str:
+    return replace_markdown_body(text, lambda body: _ARTIFACT_WARNING.sub(
+        r"\g<bullet>일부 근거가 가리키는 산출물이 원장에 등록되지 않았습니다. 실행 기록 참고.\g<anchor>", body))
+
 
 @dataclass(frozen=True)
 class MarkdownRegion:

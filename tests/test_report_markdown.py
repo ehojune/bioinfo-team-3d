@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from labhq.report_contract import build_report_package, reader_markdown
-from labhq.report_markdown import markdown_body, markdown_regions, rendered_markers
+from labhq.report_format import add_references, scientific_appendix
+from labhq.report_markdown import clean_report_prose, markdown_body, markdown_regions, rendered_markers
 
 
 @pytest.mark.parametrize("code", [
@@ -59,3 +60,261 @@ def test_code_regions_preserve_source_newlines(newline):
     rendered = reader_markdown(source)
     assert "> 앞 `[[claim:example/code]]` 뒤" + newline in rendered
     assert "실제 [근거 1]" in rendered
+
+
+def test_report_cleanup_preserves_only_the_exact_benchmark_closing_marker():
+    source = (
+        "Table: /tmp/results.tsv\n"
+        "<!-- /LABHQ_BENCH_RESULT/private -->\n"
+        "<!-- /labhq_bench_result -->\n"
+        "<!-- /LABHQ_BENCH_RESULT -->"
+    )
+    assert clean_report_prose(source) == (
+        "Table: 로컬 경로\n<!-- 로컬 경로>\n<!-- 로컬 경로>\n<!-- /LABHQ_BENCH_RESULT -->"
+    )
+
+
+def test_reader_report_preserves_tex_beside_windows_rooted_path():
+    source = (
+        r"The model used \beta coefficients and \log transformation ($\beta = 1$) [[claim:s1/c1]]."
+        "\n"
+        r"Expressions $\alpha\beta$, $\sin\theta$ and $\operatorname{log}\beta$ were tested."
+        "\n"
+        r"Alternate notation \(\sin\theta\) and \[\alpha\beta\]."
+        "\n"
+        "$$\n" + r"\sin\theta" + "\n$$"
+    )
+    report = source + "\n" + r"Input was \Users\Example User\counts.tsv and \final results.tsv."
+    assert add_references(report, "", []) == source + "\nInput was 로컬 경로 and 로컬 경로."
+
+
+def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_and_evidence():
+    source = (
+        "# 결과\n\n## 요약\n\n"
+        '작업 위치 "C:/Users/test name/run/data.tsv"와 \\\\pc\\share\\counts.tsv입니다. [[claim:s1/c1]]\n\n'
+        "- s1: ev_missing cites artifact outputs/check.json missing from artifact_refs\n"
+        "- 표본 짝을 확인하지 못한 점은 해석에 남습니다.\n\n"
+        "![로컬 그림](/tmp/labhq/outputs/fig.svg)\n"
+        "![그림](steps/s1/outputs/fig.svg)\n"
+        "[표](steps/s1/outputs/stats.tsv) · https://example.org/Users/public · <b>라벨</b>\n"
+        "위치 /data/owner:Example User/result.tsv:L10-L12[[claim:s1/c2]]\n"
+    )
+    stored = add_references(source, "", [])
+    rendered = reader_markdown(stored)
+    assert "test name" not in rendered and "\\\\pc" not in rendered and "/data/owner" not in rendered and "Example User" not in rendered
+    assert "missing from artifact_refs" not in rendered
+    assert "산출물이 원장에 등록되지 않았습니다" in rendered and "표본 짝을 확인" in rendered
+    assert "[근거 1]" in rendered and "s1/c1" in rendered and "[[claim:s1/c1]]" in stored
+    assert "로컬 그림 (로컬 경로)" in rendered and "/tmp/labhq" not in rendered
+    assert "![그림](steps/s1/outputs/fig.svg)" in rendered
+    assert "[표](steps/s1/outputs/stats.tsv)" in rendered
+    assert "https://example.org/Users/public" in rendered and "<b>라벨</b>" in rendered
+    assert "로컬 경로:L10-L12[근거 2]" in rendered and "s1/c2" in rendered
+    package = build_report_package({}, stored)
+    assert "test name" not in package.answer and package.evidence_notes == ["s1/c1", "s1/c2"]
+
+
+def test_scientific_appendix_keeps_review_but_masks_machine_path():
+    report = scientific_appendix("", {}, {"issues": [{"problem": "See ~/local/run.csv", "request": "Check samples"}]}, "")
+    assert "Check samples" in report and "로컬 경로" in report and "~/local" not in report
+
+
+def test_local_path_before_relative_link_keeps_label_and_target():
+    report = "See /tmp/a and [result](steps/s1/outputs/a.tsv) [[claim:s1/c1]]"
+    assert add_references(report, "", []) == "See 로컬 경로 and [result](steps/s1/outputs/a.tsv) [[claim:s1/c1]]"
+
+
+@pytest.mark.parametrize("path", ["/home/example/private.tsv", "C:/Users/Example/data.tsv",
+                                 r"C:\Users\Example\data.tsv", r"\Users\Example\data.tsv",
+                                 "C://Users/Example/data.tsv", r"C:\\Users\Example\\data.tsv",
+                                 "file:///home/example/private.tsv", "vscode://file/C:/Users/Example/data.tsv",
+                                 "vscode-insiders://file/home/example/data.tsv"])
+def test_generated_report_redacts_paths_immediately_after_a_label_colon(path):
+    links = "HTTPS:https://example.org/Users/public.\nFTP:ftp://example.org/pub/data.tsv."
+    source = f"Source:{path}. [[claim:s1/c1]]\n{links}"
+    assert add_references(source, "", []) == f"Source:로컬 경로. [[claim:s1/c1]]\n{links}"
+
+
+@pytest.mark.parametrize("ratio", ["CD4+/CD8+", "CD4⁺/CD8⁺", "CD4+ /CD8+"])
+def test_reader_report_preserves_slash_in_biological_ratio(ratio):
+    report = f"{ratio} ratio increased [[claim:s1/c1]]."
+    assert add_references(report, "", []) == report
+    assert add_references(ratio, "", []) == ratio
+
+
+@pytest.mark.parametrize("path", [
+    "C:/Users/Jane Doe/run/results.tsv",
+    "/home/Jane Doe/run/final results.tsv",
+    "//server/Shared Data/Project Run/results.tsv",
+    "///home/Jane Doe/run/results.tsv",
+    r"\\pc\Shared Data\Project Run\results.tsv",
+    r"C:\Users\Jane Doe\run\results.tsv",
+    r"\Users\Jane Doe\run\results.tsv",
+    r"\\?\C:\Users\Example User\Project Run\results.tsv",
+    r"\\.\C:\Users\Example User\Project Run\results.tsv",
+    r"\\?\UNC\server\Shared Data\Project Run\results.tsv",
+    "file:///C:/Users/Jane Doe/run/final results.tsv",
+    "/home/O'Connor/Project (pilot, v2)/results.tsv",
+    "C:/Users/Doe,Jane/run/results.tsv",
+    "/data/owner:Example User/project/results.tsv",
+    "/data/owner:Example User/project/results.tsv:L10.raw",
+    "/home/Project response increased expression/results.tsv",
+])
+def test_reader_report_redacts_unquoted_path_components_with_spaces(path):
+    report = f"Table source: {path} followed by Case/control counts. [[claim:s1/c1]]"
+    stored = add_references(report, "", [])
+    assert stored == "Table source: 로컬 경로 followed by Case/control counts. [[claim:s1/c1]]"
+    assert "[근거 1]" in reader_markdown(stored)
+    assert add_references(f"표는 {path}입니다.", "", []) == "표는 로컬 경로입니다."
+
+
+@pytest.mark.parametrize("target", [
+    "C:/Users/Jane Doe/run/results.tsv",
+    "</home/O'Connor/Project (pilot)/results.tsv>",
+    "C%3A%2FUsers%2FJane%20Doe%2Fresults.tsv",
+    "~example/Shared Data/results.tsv",
+    "vscode://file/C:/Users/Example/data.tsv",
+    "/Example User",
+])
+def test_generated_report_masks_local_link_target_and_preserves_its_label(target):
+    report = f"[표]({target})와 [결과표](steps/s1/outputs/results.tsv)를 읽었습니다. [[claim:s1/c1]]"
+    assert add_references(report, "", []) == (
+        "표 (로컬 경로)와 [결과표](steps/s1/outputs/results.tsv)를 읽었습니다. [[claim:s1/c1]]"
+    )
+
+
+@pytest.mark.parametrize("path", [
+    "/home/results/Jane Doe",
+    "/data/stats.tsv:Example User",
+    "~example/Shared Data",
+    "/Example User",
+    "C:/Users/Jane Doe/Project Alpha",
+    "/home/results/Jane Doe/Project [phase 2]",
+    "/private",
+    "/home/Project response increased expression/run",
+    "/home/results/Project Phase 2",
+    "/home/results/Project B 2",
+])
+def test_generated_report_redacts_extensionless_local_tail(path):
+    report = f"작업 폴더 {path}; 표본을 확인했습니다. [[claim:s1/c1]]"
+    assert add_references(report, "", []) == "작업 폴더 로컬 경로; 표본을 확인했습니다. [[claim:s1/c1]]"
+    assert add_references(f"작업 폴더 {path}. [[claim:s1/c1]]", "", []) == (
+        "작업 폴더 로컬 경로. [[claim:s1/c1]]"
+    )
+    assert add_references(f"작업 폴더 {path}. Case/control 발현은 증가했습니다. [[claim:s1/c1]]", "", []) == (
+        "작업 폴더 로컬 경로. Case/control 발현은 증가했습니다. [[claim:s1/c1]]"
+    )
+
+@pytest.mark.parametrize(("path", "conclusion"), [
+    ("/home/results/run", "contains normalized counts and treatment increased expression"),
+    ("/home/results/run", "treatment increased expression"),
+    ("/home/results/run", "There was no difference"),
+    ("/home/results/run", "Results indicate increased expression"),
+    ("/home/results/run", "Protein levels increased"),
+    ("/home/Example User/Project Alpha", "Gene expression increased"),
+    ("/home/results/run", "gene expression was higher"),
+    ("/home/results/run", "cell viability was reduced"),
+    ("/home/results/run", "treatment effect was significant"),
+    ("/home/results/run", "gene expression did not increase"),
+    ("/home/results/run", "treatment response can improve"),
+    ("/home/results/run", "cell viability would not change"),
+    ("/home/results/run", "CD4+ T cells increased"),
+    ("/home/results/run", "p53 expression was higher"),
+    ("/home/results/run", "IL-6 levels fell"),
+    ("/home/results/run", "16S rRNA abundance increased"),
+    ("/home/results/run", "5hmC levels increased"),
+    ("/home/results/run", "CD4+/CD8+ ratio increased"),
+    ("/home/results/run", "CD4+ / CD8+ ratio increased"),
+    ("/home/results/run", "CD4+ /CD8+ ratio increased"),
+    ("/home/results/run", "CD4⁺  / CD8⁺ ratio increased"),
+    ("/home/Example User/Project phase two", "Treatment produced lower counts"),
+    ("/home/Example User/Project Alpha", "Both groups had similar expression"),
+    ("/home/Example User/Project Alpha", "We found no evidence of treatment response"),
+    ("/home/Example User/Project Alpha", "발현 증가를 확인했습니다"),
+    ("/home/Example User/Project phase two", "the control group yielded lower counts"),
+    ("/home/Example User/Project Alpha", "RNA levels rose in the treatment group"),
+    ("/home/Jane Doe/Project Alpha", "contains normalized counts and treatment increased expression"),
+    (r"C:\Users\Example User\Project Alpha", "처리군의 발현은 증가했습니다"),
+    ("file:///C:/Users/Example User/run/final results.tsv", "처리군의 발현은 증가했습니다"),
+])
+def test_generated_report_keeps_unpunctuated_conclusion_after_local_path(path, conclusion):
+    source = f"작업 위치 {path} {conclusion} [[claim:s1/c1]]"
+    stored = add_references(source, "", [])
+    assert stored == f"작업 위치 로컬 경로 {conclusion} [[claim:s1/c1]]"
+    rendered = reader_markdown(stored)
+    assert f"{conclusion} [근거 1]" in rendered
+    assert "s1/c1" in rendered
+    front = build_report_package({}, f"# 연구 보고서\n\n## 요약\n\n{source}")
+    assert front.answer == "작업 위치 로컬 경로 " + " ".join(conclusion.split())
+    assert front.evidence_notes == ["s1/c1"]
+
+
+@pytest.mark.parametrize(("path", "conclusion"), [
+    ("/home/results/run", "treatment increased expression"),
+    (r"C:\Users\Example User\Project Alpha", "Protein levels increased"),
+    ("/home/results/run", "CD4+ / CD8+ ratio increased"),
+])
+def test_generated_report_keeps_conclusion_after_path_without_anchor(path, conclusion):
+    source = f"작업 위치 {path} {conclusion}"
+    expected = f"작업 위치 로컬 경로 {conclusion}"
+    assert add_references(source, "", []) == expected
+    assert build_report_package({}, f"# 연구 보고서\n\n## 요약\n\n{source}").answer == expected
+
+
+@pytest.mark.parametrize("conclusion", [
+    "HR = 0.7", "p < 0.05", "p-value≤1e-4", "Hazard ratio = 0.7",
+    "n /N = 0.5", "Case /control ratios increased",
+    "AUC 0.85", "HR 0.7", "95% CI 0.60–0.80", "OR 1.3 (95% CI 1.1-1.5)", "p-value 0.03",
+    "AUC: 0.85", "95% CI: 0.60–0.80", "HR：0.7",
+    "log2FC 1.5", "RPKM 12.4", "TPM 3.2", "log2fc 1.5", "CPM 32",
+    "R 0.82", "F 5.4", "t 3.1", "z 2.0", "χ 1.2", "r −2", "Q: 3",
+])
+def test_generated_report_keeps_statistical_conclusion_after_path(conclusion):
+    source = f"작업 위치 /home/results/run {conclusion}"
+    expected = f"작업 위치 로컬 경로 {conclusion}"
+    assert add_references(conclusion, "", []) == conclusion
+    assert add_references(source, "", []) == expected
+    assert add_references(source + " [[claim:s1/c1]]", "", []) == expected + " [[claim:s1/c1]]"
+
+
+@pytest.mark.parametrize("quantity", [
+    "10 cells /mL", "events /person-year", "g /L", "4 reads /µL", "8 cells /mm²",
+    "2 mg /kg/day", "2 mg/kg/day", "0.5 g / kg / d",
+    "3 events /100 person-years", "4 reads /100,000 cells", "2 events /10^5 person-years",
+    "6 events /10⁵ person-years", "5 events /1e5 person-years",
+    "3 events /100 patient-years", "4 cases /100 participant‑years", "2 deaths /500 subject-days",
+    "3 events /1,000 exposure-hours", "5 visits /100 patients",
+    "3 events /100 person days", "2 cases /100 person\u00a0years", "4 deaths /500 exposure hours",
+    "10 counts /sample", "counts /sample", "12 features /library", "20 UMIs /barcode",
+    "10 counts /million", "5 reads /million mapped reads", "3 cases /100,000 population",
+    "5 events /1,000,000 residents", "6 reads /1e6 total mapped reads", "3 /100",
+])
+def test_generated_report_preserves_slash_prefixed_scientific_units(quantity):
+    assert add_references(f"Density was {quantity}.", "", []) == f"Density was {quantity}."
+    source = f"Location /home/results/run {quantity} [[claim:s1/c1]]"
+    assert add_references(source, "", []) == f"Location 로컬 경로 {quantity} [[claim:s1/c1]]"
+
+
+def test_generated_report_masks_paths_in_quantified_prose():
+    assert add_references("Found 10 samples /private.", "", []) == "Found 10 samples 로컬 경로."
+    assert add_references("Found 10 counts /sample/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Sample Name/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100,000 Sample Name/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example, Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100,000, Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example. Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /100,000. Fixture/notes/private.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example. Fixture Q. Public/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example, Fixture Q. Public/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example?! Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    assert add_references("Found 10 counts /million Example?!.. Fixture/private.tsv.", "", []) == "Found 10 counts 로컬 경로."
+    source = "Found 10 counts /million. See https://example.org/public.md"
+    assert add_references(source, "", []) == source
+
+
+@pytest.mark.parametrize("name", ["Project contains Private Data", "Project Results indicate Private Data"])
+def test_generated_report_masks_extensionless_name_that_contains_a_verb(name):
+    source = f"작업 폴더 /home/results/{name}"
+    assert add_references(source, "", []) == "작업 폴더 로컬 경로"
+    assert add_references(source + " [[claim:s1/c1]]", "", []) == "작업 폴더 로컬 경로 [[claim:s1/c1]]"
