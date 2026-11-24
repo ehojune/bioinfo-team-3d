@@ -13,7 +13,7 @@ from ..edition_sources import _DOI, _DOI_HOSTS, _URL, _clean_doi
 from .verify import LiveSourceResolver, LookupFailed, _json_object, _require_success
 
 _GO = re.compile(r"(?<![A-Za-z0-9_])GO:[0-9]{7}(?![A-Za-z0-9_])", re.I)
-_SYMBOL = r"[A-Z][A-Z0-9-]{0,39}"
+_SYMBOL = r"[A-Z](?:[A-Z0-9_-]|orf){0,39}"
 _SYMBOL_ITEM = rf"[*`]*{_SYMBOL}(?![A-Za-z0-9_:-])[*`]*"
 _GENE_SYMBOLS = re.compile(rf"(?i:\bHGNC(?:\s+symbols?)?\s*[:=]|\bhuman gene symbols?\s*[:=]|"
                            rf"사람 유전자 기호\s*[:=])\s*({_SYMBOL_ITEM}(?:[ \t]*,[ \t]*{_SYMBOL_ITEM})*)")
@@ -142,6 +142,8 @@ async def check_identifiers(texts: Iterable[str], ledgers: Mapping, resolver: Re
     async def check(client: httpx.AsyncClient, scheme: str, value: str) -> dict:
         if scheme == "doi" and value in known_dois:
             return {"status": "found", "matches": [value], "detail": ""}
+        if deadline_s <= 0:
+            return {"status": "unverified", "detail": "deadline"}
         async with slots:
             try:
                 matches, detail = await resolver.matches(client, scheme, value)

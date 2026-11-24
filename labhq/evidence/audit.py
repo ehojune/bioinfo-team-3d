@@ -19,6 +19,7 @@ from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path, PurePosixPath
+from time import monotonic
 from typing import Any
 
 from .. import __version__
@@ -344,7 +345,8 @@ def _run_live_source_reports(req: Mapping[str, Any], settings: Any,
     return asyncio.run(_live_source_reports(req, settings, observed_artifacts))
 
 
-def _run_identifier_check(req: Mapping[str, Any], settings: Any, source_reports: list[Any]) -> dict | None:
+def _run_identifier_check(req: Mapping[str, Any], settings: Any, source_reports: list[Any],
+                          *, deadline_s: float) -> dict | None:
     if not settings.research.live_source_check or not isinstance(req.get("research_contract"), Mapping):
         return None
     from ..runner.lookup_admission import admission_for
@@ -356,7 +358,7 @@ def _run_identifier_check(req: Mapping[str, Any], settings: Any, source_reports:
                            if resolution.id_scheme == "doi" and resolution.status == "found")
     texts = (str(req.get(field) or "") for field in ("report", "report_appendix"))
     return asyncio.run(check_identifiers(texts, research_ledgers(req), resolver,
-                                         deadline_s=settings.research.live_source_deadline_s, known_dois=known_dois))
+                                         deadline_s=deadline_s, known_dois=known_dois))
 
 
 def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
@@ -424,8 +426,10 @@ def verify_request(req: Mapping[str, Any], settings: Any) -> dict[str, Any]:
                           **(kept or _compare(recorded.get(path), row, note, files_below=below,
                                               in_zone=row is None and overlaps_zone(workdir / path, zones)))})
     report_check = rerun_report_check(req)
+    source_started = monotonic()
     source_reports = _run_live_source_reports(req, settings, observed_artifacts)
-    identifier_check = _run_identifier_check(req, settings, source_reports)
+    identifier_check = _run_identifier_check(
+        req, settings, source_reports, deadline_s=settings.research.live_source_deadline_s - (monotonic() - source_started))
     problems = [f"{row['step_id']}: {row['path']} {row['status']} ({row['detail']})"
                 for row in files if row["status"] in PROBLEM_STATUSES]
     reasons += [f"{row['step_id']}: {row['path']} 원격 파일은 이 로컬 검사에서 다시 읽지 않아 무결성 미확인"

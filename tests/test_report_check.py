@@ -28,6 +28,9 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
         if path.endswith("/symbol/BRCA1"):
             return httpx.Response(200, json={"responseHeader": {"status": 0}, "response": {"numFound": 1, "docs": [
                 {"symbol": "BRCA1", "status": "Approved"}]}})
+        if path.endswith(("/symbol/C4B_2", "/symbol/C17orf50")):
+            return httpx.Response(200, json={"responseHeader": {"status": 0}, "response": {"numFound": 1, "docs": [
+                {"symbol": path.rsplit("/", 1)[-1], "status": "Approved"}]}})
         if path.endswith("/MOCKMISS"):
             return httpx.Response(200, json={"responseHeader": {"status": 0}, "response": {"numFound": 0, "docs": []}})
         if path.endswith("GO:9999999"):
@@ -52,13 +55,14 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
     settings = Settings()
     settings.runner.workspace_root = str(tmp_path)
     req = {"id": "report-ids", "research_contract": {}, "report": (
-        "# Identifier notes\n\nHGNC symbols: **P53**, `BRCA1`, MOCKMISS, go:0000004. "
+        "# Identifier notes\n\nHGNC symbols: **P53**, `BRCA1`, MOCKMISS, C4B_2, go:0000004. "
         "[DOI](https://doi.org/10.1000/1?source=example). DOI:10.1000/MISSING. "
         "DOI:10.1000/slow. DOI:10.1000/proxy.\n\n"
         "~~~\nHGNC symbol: CODE\nGO:0000001\n~~~\n\n"
         "<!-- GO:0000002 -->\n"
     )}
     ledgers = {"s1": {"claims": [{"statement": "GO:9999999 and DOI:10.1000/1"}], "evidence": [
+        {"status": "observed", "source": {"id_scheme": "hgnc_symbol", "id_value": "C17orf50"}},
         {"status": "observed", "source": {"id_scheme": "doi", "id_value": "https://doi.org/10.1000/A%28study%29"}},
     ]}}
     monkeypatch.setattr(audit, "research_ledgers", lambda _: ledgers)
@@ -70,10 +74,11 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
     result = audit.verify_request(req, settings)
     check = result["identifier_check"]
     by_id = {row["value"]: row for row in check["items"]}
-    assert len(seen) == 13 and seen.count("/api/handles/10.1000/1") == 1
+    assert len(seen) == 15 and seen.count("/api/handles/10.1000/1") == 1
     assert by_id["10.1000/a(study)"]["status"] == "found"
     assert by_id["P53"]["matches"] == ["TP53"] and by_id["P53"]["detail"] == "alias_symbol"
-    assert by_id["BRCA1"]["status"] == "found"
+    for symbol in ("BRCA1", "C4B_2", "C17orf50"):
+        assert by_id[symbol]["status"] == "found"
     assert by_id["MOCKMISS"]["status"] == "not_found"
     assert by_id["GO:0000004"]["matches"] == ["GO:0008150"]
     assert by_id["GO:9999999"]["status"] == "not_found"
@@ -85,6 +90,29 @@ def test_verify_report_ids_separates_misses_and_lookup_failures(tmp_path, monkey
     assert "등록 확인" in audit.render_verify(result) and "조회 미완료" in audit.render_verify(result)
     with ZipFile(BytesIO(audit.bundle_bytes(result, req))) as bundle:
         assert json.loads(bundle.read("claims.json"))["identifier_check"] == check
+
+
+def test_evidence_and_identifier_checks_share_the_live_source_deadline(tmp_path, monkeypatch):
+    from labhq.evidence import audit
+    from labhq.evidence.report_identifiers import ReportIdentifierResolver
+    from labhq.settings import Settings
+
+    def unexpected_lookup(_):
+        pytest.fail("an exhausted deadline must not send an identifier lookup")
+
+    monkeypatch.setattr(audit, "monotonic", iter((10.0, 15.0)).__next__)
+    monkeypatch.setattr(audit, "_run_live_source_reports", lambda *_: [])
+    monkeypatch.setattr(audit, "ReportIdentifierResolver", lambda **kwargs: ReportIdentifierResolver(
+        transport=httpx.MockTransport(unexpected_lookup), **kwargs))
+    settings = Settings()
+    settings.runner.workspace_root = str(tmp_path)
+    settings.research.live_source_check = True
+    settings.research.live_source_deadline_s = 5.0
+    result = audit.verify_request({"id": "report-ids", "research_contract": {}, "report": "GO:0000004"}, settings)
+    assert result["identifier_check"]["items"] == [
+        {"scheme": "go", "value": "GO:0000004", "status": "unverified", "detail": "deadline"},
+    ]
+    assert result["exit_code"] == 2
 
 
 @pytest.mark.asyncio
