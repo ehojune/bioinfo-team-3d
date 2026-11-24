@@ -164,6 +164,9 @@ def test_generated_report_redacts_extensionless_local_tail(path):
 @pytest.mark.parametrize(("path", "conclusion"), [
     ("/home/results/run", "contains normalized counts and treatment increased expression"),
     ("/home/results/run", "treatment increased expression"),
+    ("/home/results/run", "There was no difference"),
+    ("/home/results/run", "Results indicate increased expression"),
+    ("/home/Example User/Project phase two", "Treatment produced lower counts"),
     ("/home/Example User/Project Alpha", "Both groups had similar expression"),
     ("/home/Example User/Project Alpha", "We found no evidence of treatment response"),
     ("/home/Example User/Project Alpha", "발현 증가를 확인했습니다"),
@@ -184,7 +187,8 @@ def test_generated_report_keeps_unpunctuated_conclusion_after_local_path(path, c
     assert front.answer == f"작업 위치 로컬 경로 {conclusion}"
     assert front.evidence_notes == ["s1/c1"]
 
-def test_generated_report_masks_extensionless_name_that_contains_a_verb():
-    source = "작업 폴더 /home/results/Project contains Private Data"
+@pytest.mark.parametrize("name", ["Project contains Private Data", "Project Results indicate Private Data"])
+def test_generated_report_masks_extensionless_name_that_contains_a_verb(name):
+    source = f"작업 폴더 /home/results/{name}"
     assert add_references(source, "", []) == "작업 폴더 로컬 경로"
     assert add_references(source + " [[claim:s1/c1]]", "", []) == "작업 폴더 로컬 경로 [[claim:s1/c1]]"

@@ -40,11 +40,11 @@ _LINE_SUFFIX = r":L\d+(?:-L\d+)?(?=\s|\[\[|[.,;](?=\s|$)|[)\]>]|$)"
 _PATH_EXTENSION = rf"\.[A-Z][A-Z0-9]{{0,9}}(?![A-Z0-9_-]|(?!{_LINE_SUFFIX}):[^\s])"
 _PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
 # Quoting gives an explicit boundary. For bare, anchored text, use clause syntax at the path tail.
-_PROSE_START = (
-    r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|no)|[A-Z][A-Z0-9-]+)[ \t]+[a-z][a-z-]*[ \t]+\w"
-    r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w))"
-    r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])"
-)
+_PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|no)|[A-Z][A-Z0-9-]+)[ \t]+[a-z][a-z-]*[ \t]+\w"
+                r"|[A-Z][a-z-]+[ \t]+(?:is|are|was|were|has|have|had|indicate|suggest|show|[a-z]{2,}ed)"
+                r"(?=[ \t]+[a-z0-9])"
+                r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w))"
+                r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])")
 _TAIL_GAP = rf"[ \t]+(?!(?:{_PROSE_START})[^\r\n]*\[\[\s*claim\s*:)"
 _PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
 _PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_WORD}(?:{_TAIL_GAP}{_PATH_WORD})*)"
