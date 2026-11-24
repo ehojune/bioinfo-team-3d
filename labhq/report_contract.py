@@ -39,17 +39,27 @@ _ANCHOR = re.compile(r"\[\[\s*claim\s*:([^\[\]\n]+)\]\]", re.I)
 _HEADING = re.compile(r"(?m)^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
 
-def _balanced_link_target(depth: int = 4) -> str:
-    inner = r"[^()\s]*"
+def _balanced_link_target(depth: int = 4, *, spaces: bool = False) -> str:
+    char = r"[^()\r\n]" if spaces else r"[^()\s]"
+    inner = char + "*"
     for _ in range(depth - 1):
-        inner = rf"(?:[^()\s]|\({inner}\))*"
-    return rf"(?:[^()\s]|\({inner}\))+"
+        inner = rf"(?:{char}|\({inner}\))*"
+    return rf"(?:{char}|\({inner}\))+"
 
 
-_MARKDOWN_LINK = re.compile(
-    r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced_link_target()
-    + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)"
-)
+_LOCAL_TARGET = r"(?:[Ff][Ii][Ll][Ee]:|[A-Za-z]:[/\\]|[/\\]|~[/\\])"
+
+
+def _link_pattern(*, reader: bool = False) -> re.Pattern[str]:
+    targets = "<[^>\n]*>|" + _balanced_link_target()
+    if reader:
+        targets += "|" + _LOCAL_TARGET + _balanced_link_target(spaces=True)
+    return re.compile(r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target>" + targets
+                      + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
+
+
+_MARKDOWN_LINK = _link_pattern()
+_READER_LINK = _link_pattern(reader=True)
 _CODE_RUN = re.compile(r"`+|~{3,}")
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _FOOTNOTE_DEFINITION = re.compile(r"^\[\^([^\]\n]+)\]:\s*(.*)$")
@@ -398,12 +408,18 @@ def _closing_fence(text: str, char: str, length: int, start: int) -> int | None:
 
 
 def clean_reader_report(report: str) -> str:
-    """Clean text and link labels without discarding targets needed for bundle asset mapping."""
+    """Clean the generated reader report. Declared assets use relative targets."""
     report = translate_report_warnings(report)
     parts = []
     cursor = 0
-    for match in _markdown_links(report):
+    for match in _READER_LINK.finditer(markdown_body(report)):
         start, end = match.span("target")
+        if re.match(_LOCAL_TARGET, unquote(report[start:end].strip().strip("<>"))):
+            label_start, label_end = match.span("label")
+            label = clean_report_prose(report[label_start:label_end])
+            parts.extend((clean_report_prose(report[cursor:match.start()]), f"{label} (로컬 경로)" if label else "로컬 경로"))
+            cursor = match.end()
+            continue
         parts.extend((clean_report_prose(report[cursor:start]), report[start:end]))
         cursor = end
     return "".join([*parts, clean_report_prose(report[cursor:])])

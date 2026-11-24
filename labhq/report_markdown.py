@@ -31,7 +31,9 @@ _ARTIFACT_WARNING = re.compile(
     r"(?:[\w./-]+: +)?(?:evidence +)?[\w.-]+ cites artifact [^\r\n]+? missing from artifact_refs"
     r"[ .]*(?P<anchor> +\[\[\s*claim\s*:[^\]\r\n]+\]\])?[ \t]*(?=\r?$)"
 )
-_PATH_WORD = r"""[^\s/\\<>"'`|\[\](){},:;!?]+"""
+_PATH_CHAR = r"""[^\s/\\<>"'`|\[\](){},:;!?]"""
+_PATH_CHUNK = rf"(?:{_PATH_CHAR}|\([^/\\\r\n()<>]*\))"
+_PATH_WORD = rf"{_PATH_CHUNK}+(?:[',]{_PATH_CHUNK}+)*"
 _PATH_COMPONENT = rf"{_PATH_WORD}(?:[ \t]+{_PATH_WORD})*"
 _PATH_EXTENSION = r"\.[A-Z][A-Z0-9]{0,9}(?![A-Z0-9_-])"
 _PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
@@ -43,7 +45,7 @@ _PATH_ROOT = rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\|~[/\\]|/(?={_PATH_CO
 _PATH_TEXT = re.compile(
     rf"""(?ix) https?://[^\s<>"'`|]+
         | (?<![\w./\\:-]) (?:
-            (?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)
+            (?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)(?![A-Za-z0-9_])
             | (?P<bare>{_PATH_ROOT}{_PATH_DIRS}{_PATH_TAIL}[/\\]?(?::L\d+(?:-L\d+)?)?) )"""
 )
 

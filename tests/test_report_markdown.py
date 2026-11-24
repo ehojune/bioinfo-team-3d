@@ -68,7 +68,8 @@ def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_
         '작업 위치 "C:/Users/test name/run/data.tsv"와 \\\\pc\\share\\counts.tsv입니다. [[claim:s1/c1]]\n\n'
         "- s1: ev_missing cites artifact outputs/check.json missing from artifact_refs\n"
         "- 표본 짝을 확인하지 못한 점은 해석에 남습니다.\n\n"
-        "![그림](/tmp/labhq/outputs/fig.svg)\n"
+        "![로컬 그림](/tmp/labhq/outputs/fig.svg)\n"
+        "![그림](steps/s1/outputs/fig.svg)\n"
         "[표](steps/s1/outputs/stats.tsv) · https://example.org/Users/public · <b>라벨</b>\n"
         "위치 /home/person/result.tsv:L10-L12[[claim:s1/c2]]\n"
     )
@@ -78,7 +79,8 @@ def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_
     assert "missing from artifact_refs" not in rendered
     assert "산출물이 원장에 등록되지 않았습니다" in rendered and "표본 짝을 확인" in rendered
     assert "[근거 1]" in rendered and "s1/c1" in rendered and "[[claim:s1/c1]]" in stored
-    assert "![그림](/tmp/labhq/outputs/fig.svg)" in rendered  # bundle maps the declared target
+    assert "로컬 그림 (로컬 경로)" in rendered and "/tmp/labhq" not in rendered
+    assert "![그림](steps/s1/outputs/fig.svg)" in rendered
     assert "[표](steps/s1/outputs/stats.tsv)" in rendered
     assert "https://example.org/Users/public" in rendered and "<b>라벨</b>" in rendered
     assert "로컬 경로:L10-L12[근거 2]" in rendered and "s1/c2" in rendered
@@ -97,6 +99,8 @@ def test_scientific_appendix_keeps_review_but_masks_machine_path():
     r"\\pc\Shared Data\Project Run\results.tsv",
     r"C:\Users\Jane Doe\run\results.tsv",
     "file:///C:/Users/Jane Doe/run/final results.tsv",
+    "/home/O'Connor/Project (pilot, v2)/results.tsv",
+    "C:/Users/Doe,Jane/run/results.tsv",
 ])
 def test_reader_report_redacts_unquoted_path_components_with_spaces(path):
     report = f"Table source: {path} followed by Case/control counts. [[claim:s1/c1]]"
@@ -104,3 +108,15 @@ def test_reader_report_redacts_unquoted_path_components_with_spaces(path):
     assert stored == "Table source: 로컬 경로 followed by Case/control counts. [[claim:s1/c1]]"
     assert "[근거 1]" in reader_markdown(stored)
     assert add_references(f"표는 {path}입니다.", "", []) == "표는 로컬 경로입니다."
+
+
+@pytest.mark.parametrize("target", [
+    "C:/Users/Jane Doe/run/results.tsv",
+    "</home/O'Connor/Project (pilot)/results.tsv>",
+    "C%3A%2FUsers%2FJane%20Doe%2Fresults.tsv",
+])
+def test_generated_report_masks_local_link_target_and_preserves_its_label(target):
+    report = f"[표]({target})와 [결과표](steps/s1/outputs/results.tsv)를 읽었습니다. [[claim:s1/c1]]"
+    assert add_references(report, "", []) == (
+        "표 (로컬 경로)와 [결과표](steps/s1/outputs/results.tsv)를 읽었습니다. [[claim:s1/c1]]"
+    )
