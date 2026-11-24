@@ -197,6 +197,7 @@ flowchart TB
 | **CLI & Lifecycle** | `labhq/cli.py`, `supervisor.py`, `doctor.py` | Starting, stopping and checking background daemons, supervising child processes and recording exit codes, checking environment, login and runtime readiness |
 | **Research Contract** | `labhq/research/contract.py`, `continuation.py`, `labhq/evidence/claims.py` | CP1 plan-hash freeze, `result v2` claim, evidence and output sha256 matching, independent evidence-group judgment, continuation reuse |
 | **Independent review** | `labhq/research/independent_review.py` | Sends evidence to the cross-vendor reviewer after CP2 approval. Reuses a valid review for the same plan hash after a restart. |
+| **CP2 and report draft** | `labhq/research/evidence_checkpoint.py`, `labhq/research/analysis_draft.py` | Records the CP2 decision and collects and verifies the analyst's draft and its linked tables in the compact workflow. |
 | **Core checks** | `labhq/vocab/`, `labhq/research/packs.py`, `input_fit.py`, `semantic_devices.py` | Vocabulary/EDAM, topic checks, frozen packs, CP1 input fit and public-safe health errors. Live shadow removal: #1388, under validation. |
 | **Bundle & Publication** | `labhq/request_bundle.py`, `portfolio.py`, `result_storage.py`, `reproduction_receipt.py`, `verify.py` | Request bundle and RO-Crate creation, offline integrity recheck (`labhq verify`), reproduction verification receipt, GitHub lab summary and PDF publication |
 

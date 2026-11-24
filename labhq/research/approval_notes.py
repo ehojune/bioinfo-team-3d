@@ -5,6 +5,9 @@ from typing import Any
 
 # The longest card note one prompt carries (PI 점검 R11). The CP receipts and the audit appendix keep the whole note.
 APPROVAL_NOTE_CHARS = 2000
+CP2_REPORT_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Cover every point it asks of the report; "
+                        "a point the evidence cannot support goes under \"한계\" with the reason. It never makes an "
+                        "uncitable claim citable and does not change the frozen plan.")
 
 
 def approval_note(note: Any) -> str:
