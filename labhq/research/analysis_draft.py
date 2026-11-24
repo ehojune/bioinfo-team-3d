@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 
 from ..evidence.literal_check import _source_bytes
+from ..models import Task, TaskResult
 from ..report_format import PAPER_RULE
 from . import compact_workflow
 from .continuation import _ancestors
@@ -14,24 +15,38 @@ from .contract import plan_sha256
 class AnalysisDraft:
     step_id: str
     path: str
+    inline: bool
 
     def prompt(self) -> str:
+        handoff = (
+            "Also return your structured research result. Link your own results as outputs/<file> and "
+            "upstream results as steps/<step_id>/outputs/<file>. " if self.inline else
+            "Use the completed results and approved evidence in context. Write only the draft. "
+            "Include downstream validation and independent results. Keep existing outputs and evidence intact. "
+            "Use steps/<step_id>/outputs/<file> for every result link. Confirm the draft path in your reply. "
+        )
         return (
             f"\n\nIn this same session, after analysis and QC, save a draft for the PI as UTF-8 Markdown "
-            f"at {self.path}, in addition to returning your structured research result. "
+            f"at {self.path}. {handoff}"
             "Omit the draft if you have to stop and ask for a decision. "
             "Ground conclusions, numbers and result-table rows in your ledger or in the upstream ledgers: "
             "include the exact [[claim:<step_id>/<claim_id>]] anchor for each. "
             "Use only claims supported by collected artifacts or accepted sources. Link table claims to the "
-            "matching tables using outputs/<file> for your step and steps/<step_id>/outputs/<file> for upstream "
-            "steps. Use the same links for result figures. Place your graphical_abstract.svg below the title "
+            "matching tables. Place your graphical_abstract.svg below the title "
             "if produced. Include key figures under results or explain any omission. State what could not be "
             "established and why. The CSO adds the approval and review record.\n"
             + PAPER_RULE
         )
 
-    def read(self, results) -> str:
-        result = results.get(self.step_id)
+    def followup(self, rid: str, analyst: TaskResult, context: str, runner: str | None, restricted: bool) -> Task:
+        """Resume the analyst in a fresh workspace once the complete result set exists."""
+        return Task(agent_id=analyst.agent_id, request_id=rid, resume_session_id=analyst.session_id,
+                    prompt=self.prompt(), context=context,
+                    meta={"kind": "analysis_draft", "parent_task": analyst.task_id, "outputs": [self.path],
+                          "title": "분석 보고서 초안", "restricted_inputs": restricted,
+                          **({"session_runner": runner} if runner else {})})
+
+    def read(self, result: TaskResult | None) -> str:
         if not result or not result.ok or self.path not in result.outputs:
             raise ValueError("the analysis step did not deliver the draft")
         digest = result.output_sha256.get(self.path)
@@ -58,10 +73,12 @@ def for_request(request: dict, plan: dict | None = None) -> AnalysisDraft | None
     if plan.get("branches") or not (steps := plan.get("steps")):
         return None
     ancestors = _ancestors(steps)
-    # Prefer the analysis step that can see the most upstream evidence. Phase labels do not gate the handoff.
+    # Only a writer with every other step in its input closure can safely draft on its first turn.
     writer = max(steps, key=lambda step: (step.get("phase") == "analysis", len(ancestors[step["id"]])))
+    sid = writer["id"]
     round_no = (request.get("research_contract") or {}).get("round") or 1
-    return AnalysisDraft(writer["id"], f"outputs/labhq-analysis-draft-{round_no}-{plan_sha256(plan)[:12]}.md")
+    return AnalysisDraft(sid, f"outputs/labhq-analysis-draft-{round_no}-{plan_sha256(plan)[:12]}.md",
+                         len(ancestors[sid]) == len(steps) - 1)
 
 
 def new_round_rerun(request: dict, plan: dict) -> dict[str, str]:

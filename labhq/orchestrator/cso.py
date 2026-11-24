@@ -5884,7 +5884,7 @@ class Orchestrator:
             prompt += self._lookup_usage_line(rid)  # at the start of this step: what is left to spend (#1088)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
-            step_draft = draft if draft and step["id"] == draft.step_id else None
+            step_draft = draft if draft and draft.inline and step["id"] == draft.step_id else None
             if step_draft:
                 prompt += step_draft.prompt()
                 optional.append(step_draft.path)
@@ -6818,7 +6818,28 @@ class Orchestrator:
         draft = analysis_draft.for_request(req)
         if draft:
             try:
-                draft_body = await asyncio.to_thread(draft.read, results)
+                author = results.get(draft.step_id)
+                if not draft.inline:
+                    if not (author and author.ok and author.session_id and self.hub.supports_resume(author.agent_id)):
+                        raise ValueError("the analysis session cannot be resumed after the remaining steps")
+                    origin = self._session_origin(rid, author.agent_id, author.session_id)
+                    session, _ = await self._free_session(author.agent_id, author.session_id, author.workdir,
+                                                          rid=rid, step="analysis_draft")
+                    if session != author.session_id or (getattr(self.hub, "store", None) is not None and not origin):
+                        raise ValueError("the original analysis session or its runner is unavailable")
+                    restricted = bool(self._external_guard(rid) and
+                                      restricted_input_steps(req["plan"]["steps"], *self._request_inputs(rid),
+                                                             self.hub.s))
+                    context = (self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)
+                               + "\n\n" + self.format_results(steps, results, n)
+                               + approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE))
+                    author = await self.run_step(draft.followup(rid, author, context, origin, restricted))
+                    if rid in self.budget_denials:
+                        await budget_denied("analysis draft", None)
+                        return
+                    if author.ok and author.session_id != session:
+                        raise ValueError("the draft did not come from the original analysis session")
+                draft_body = await asyncio.to_thread(draft.read, author)
             except ValueError as exc:
                 await end("research_failed", cp2_report + f"\n\nAnalysis draft unavailable: {exc}.",
                           False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc))

@@ -1586,11 +1586,74 @@ def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
     req = {"plan": plan, "research_options": {"compact_workflow": True}, "research_contract": {"round": 1}}
 
     draft = analysis_draft.for_request(req)
-    assert draft.step_id == "s2"
+    assert draft.step_id == "s2" and not draft.inline
     req["research_contract"]["round"] = 2
     assert analysis_draft.for_request(req).path != draft.path
     assert list(analysis_draft.new_round_rerun(req, plan)) == ["s2"]
     analysis["phase"] = "evidence"
-    assert analysis_draft.for_request(req).step_id == "s3"
+    assert analysis_draft.for_request(req).step_id == "s3" and analysis_draft.for_request(req).inline
     plan["branches"] = [{"id": "a"}]
     assert analysis_draft.for_request(req) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("shape", "resumable"), [
+    ("validation_after_analysis", True), ("parallel", True), ("parallel", False),
+])
+async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable):
+    from tests.test_research_report import REPORT, _hub, _kinds
+
+    hub = _hub()
+    req = hub.requests["r"]
+    req["research_options"] = {"compact_workflow": True}
+    hub.supports_resume = lambda agent_id: resumable and agent_id == "worker"
+    plan = valid_plan(steps=2)
+    if shape == "validation_after_analysis":
+        plan["steps"][1].update(phase="validation", depends_on=["s1"])
+    base_reply = hub.reply
+    later_finding = "Sensitivity test reproduced the estimate [[claim:s2/c2]]."
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+        if kind == "analysis_draft":
+            assert task.resume_session_id == "analysis-s1"
+            assert not task.meta.get("workdir")
+            assert req["research_contract"]["checkpoints"]["cp2"]["decision"] == "approved"
+            assert "Sensitivity test reproduced the estimate" in task.context
+            assert "### s1" in task.context and "### s2" in task.context
+            [path] = task.meta["outputs"]
+            target = tmp_path / "report" / path
+            target.parent.mkdir(parents=True)
+            data = f"{REPORT}\n\n{later_finding}".encode("utf-8")
+            target.write_bytes(data)
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, workdir=str(tmp_path / "report"),
+                              session_id=task.resume_session_id, text=f"Draft saved at {path}", outputs=[path],
+                              output_sha256={path: sha256(data).hexdigest()})
+        if kind != "step":
+            return await base_reply(task)
+        assert not task.meta["optional_outputs"]
+        sid = task.meta["step_id"]
+        ledger = _cp2_result(hub, task)
+        [path] = task.meta["required_outputs"]
+        if sid == "s2":
+            ledger["claims"][0].update(id="c2", statement="Sensitivity test reproduced the estimate.")
+            ledger["links"][0]["claim_id"] = "c2"
+            ledger["evidence"][0].update(id="e2", slots=["e2"])
+            ledger["links"][0]["evidence_id"] = "e2"
+        ledger["artifact_refs"][0]["path"] = path
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                          outputs=[path], output_sha256={path: "a" * 64}, session_id=f"analysis-{sid}")
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    if resumable:
+        assert _kinds(hub) == ["plan", "step", "step", "analysis_draft", "review"], req.get("error")
+        assert req["status"] == "done" and later_finding in req["report"]
+        assert req["research_contract"]["report_check"] == {"anchors": 2, "problems": []}
+    else:
+        assert _kinds(hub) == ["plan", "step", "step"]
+        assert req["status"] == "failed" and "cannot be resumed" in req["error"]

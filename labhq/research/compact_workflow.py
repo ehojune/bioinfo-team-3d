@@ -23,8 +23,9 @@ def plan_template(template: str) -> str:
                      "For a plan without branches, include QC and interpretation in the analysis step as applicable, "
                      "with QC after data generation. For a branched plan, put QC after data generation.")
             .replace(ABSTRACT_PLAN_RULE,
-                     "For an unbranched plan, use one write-capable analysis step that depends on any preparation "
-                     "steps. Have it create the graphical abstract and its code as declared outputs. Keep Korean "
+                     "For an unbranched plan, use one write-capable analysis step after all other steps. Make "
+                     "every other step its direct or indirect dependency. Have it create the graphical abstract "
+                     "and its code as declared outputs. Keep Korean "
                      "labels as SVG <text> and cover question, data, methods and findings. Do not add a separate "
                      "writing step: labhq requests the draft from the analysis session during dispatch. "
                      "For a branched plan: " + ABSTRACT_PLAN_RULE))
