@@ -55,13 +55,14 @@ def _extra_observation(row_id="bad"):
             "assessment_reason": "an independent cross-check", "slots": []}
 
 
-def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False, unreported_outputs=None):
+def _research_hub(settings, decisions, *, plan=None, artifact_path=None, fail_steps=False, unreported_outputs=None):
     holder = {}
 
     async def reply(task):
         hub = holder["hub"]
         if task.meta["kind"] == "plan":
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured=plan if plan is not None else valid_plan())
         if task.meta["kind"] != "step" or fail_steps:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="worker exited with code 1")
         path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
@@ -128,6 +129,26 @@ async def test_live_source_check_off_does_not_call_resolver(monkeypatch):
     monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", forbidden)
     await Orchestrator(hub).run_request("r")
     assert "source_verification" not in hub.approvals[1]["detail"]
+
+
+@pytest.mark.parametrize("compact", [False, True])
+@pytest.mark.parametrize("phase", ["question", "plan", "evidence", "analysis", "validation", "report"])
+async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact, phase):
+    settings = _settings()
+    settings.research.compact_workflow = not compact
+    plan = valid_plan()
+    plan["steps"][0]["phase"] = phase
+    hub = _research_hub(settings, [CP1, {"approved": False, "choice": "deny", "note": ""}], plan=plan)
+    hub.requests["r"]["research_options"] = {"compact_workflow": compact}
+
+    await Orchestrator(hub).run_request("r")
+
+    prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "step")
+    for instruction in ("cross-check sample information against public records",
+                        "record the controls and expected direction",
+                        "compare results with published values in a table"):
+        assert (instruction in prompt) is compact
+    assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
 
 
 @pytest.mark.asyncio
