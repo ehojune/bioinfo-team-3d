@@ -14,12 +14,18 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 06:16 | [`ef32872`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/ef32872) | **공유 폴더 없이 간소화 연구 보고서를 조립합니다.**<br>Gateway가 작업 배정과 SHA-256을 대조해 초안과 결과표를 비공개 저장하고 작업 ID로 읽는다. 재개한 세션에 검사한 입력을 넘기고 이전 단계 그림은 본문에서 생략한다. |
 | 05:21 | [`52ac820`](https://github.com/ehojune/bioinfo-team-3d/commit/52ac820) | **로컬 경로를 가리고 통계 약어와 단위를 보존합니다.**<br>구두점이 든 디렉터리를 가리고 log2FC·TPM과 R·F·t·z의 수치를 남깁니다. |
 | 03:40 | [`046d476`](https://github.com/ehojune/bioinfo-team-3d/commit/046d476) | **작업 경로 뒤의 통계 비교식을 보고서에 남깁니다.**<br>완료·취소 보고서에서 위험비와 p값의 항과 비교 기호를 보존합니다. |
+| 03:36 | [`9d4c75b`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/9d4c75b) | **보고서 초안과 결과표를 다른 PC에서도 대조할 수 있게 준비했습니다.**<br>runner가 수집한 UTF-8 파일을 내부 결과에 담기 전에 검사하고, 보고서를 조립할 때 같은 SHA-256을 다시 대조한다. |
 | 03:33 | [`dc8e3ad`](https://github.com/ehojune/bioinfo-team-3d/commit/dc8e3ad) | **근거 표식이 없는 보고서에서도 작업 경로 뒤 결론을 남깁니다.**<br>완료 보고서의 요약과 취소 보고서의 부분 결과를 검증했습니다. |
 | 03:29 | [`d227408`](https://github.com/ehojune/bioinfo-team-3d/commit/d227408) | **슬래시 왼쪽에만 공백을 둔 세포 비율을 보존합니다.**<br>보고서 본문과 앞쪽 요약에서 CD4+ /CD8+를 확인했습니다. |
 | 03:23 | [`670d7b1`](https://github.com/ehojune/bioinfo-team-3d/commit/670d7b1) | **보고서에서 콜론에 붙은 작업 경로를 가리고 공백이 든 비율을 보존합니다.**<br>POSIX·Windows 경로를 가리고 HTTPS·FTP URL과 CD4+ / CD8+ 표기를 남깁니다. |
 | 03:21 | [`226061c`](https://github.com/ehojune/bioinfo-team-3d/commit/226061c) | **연구 보고서에서 작업 경로를 가리고 결론과 근거를 남깁니다.**<br>정상 완료·재개·취소 보고서에 적용합니다. 경로 뒤 결론과 수식, 상대 링크를 보존합니다. |
+| 03:14 | [`96c86d0`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/96c86d0) | **재시작 뒤에도 검사한 보고서 초안을 다시 씁니다.**<br>후속 초안의 해시와 세션을 리뷰 전에 저장하고, 결과 링크를 묶음 경로로 통일한다. |
+| 03:06 | [`51694f1`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/51694f1) | **후속 검증과 병렬 분석 결과까지 초안에 반영할 수 있게 했습니다.**<br>모든 결과가 모인 뒤 원래 분석 세션을 재개하고 승인된 근거를 넘긴다. |
+| 02:58 | [`8aede87`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/8aede87) | **초안 회귀시험을 기존 결과 승인 시험 파일로 옮겼습니다.**<br>Windows CI 인벤토리에 등록된 CP2 시험과 함께 실행한다. |
+| 02:53 | [`6fa58e5`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/6fa58e5) | **간소화 연구에서는 분석 세션이 보고서 초안을 씁니다.**<br>수집한 Markdown의 해시를 대조하고 근거와 결과표를 검사해 보고서를 조립한다. 검사에서 문제가 발견되면 완료로 표시하지 않는다. |
 | 02:26 | [`bf69871`](https://github.com/ehojune/bioinfo-team-3d/commit/bf69871) | **간소화 연구 계획에서 단계 이름과 관계없이 필요한 QC를 안내합니다.**<br>무분기 단계에서 맡은 작업에 분석, QC 또는 해석이 포함될 때 승인된 범위 안에서 시료, 대조군, 문헌 값을 확인하도록 안내한다. |
 | 02:17 | [`e12dd9c`](https://github.com/ehojune/bioinfo-team-3d/commit/e12dd9c) | **간소화 연구 계획의 증거 수집과 검증 단계에도 QC를 안내합니다.**<br>evidence와 validation으로 표시한 무분기 단계에도 공개 시료 기록 대조, 대조군과 기대 방향 기록, 문헌 값 비교를 안내한다. |
 | 01:49 | [`5967afc`](https://github.com/ehojune/bioinfo-team-3d/commit/5967afc) | **연구 계획 간소화 옵션을 한영 매뉴얼에 설명했습니다.**<br>설정 방법, 갈래 없는 계획의 단계 상한, 재개 동작과 분석 지시를 적었다. |
