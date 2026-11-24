@@ -56,6 +56,7 @@ _PATH_TEXT = re.compile(
     rf"""(?ix) (?<![\w+.-])(?!file:)[a-z][a-z0-9+.-]+://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
         | (?<![\\$])(?:\$\$(?:\\.|[^\\$]|\$(?!\$))+?\$\$|\$(?![\s$])(?:\\.|[^\\$\r\n])+?(?<!\s)\$(?![\d$]))
         | (?<!\\)\\(?:\([^\r\n]*?\\\)|\[[\s\S]*?\\\])
+        | (?<![\w./\\-]) {_SUBJECT_TOKEN}(?<=[+−⁺⁻])[ \t]+/{_SUBJECT_TOKEN}(?<=[+−⁺⁻])(?=\s|[.,;!?)](?=\s|$)|\[\[|$)
         | (?<![\w./\\-]) (?<!\w[+−⁺⁻%]) (?:(?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)(?![A-Za-z0-9_])
             | (?P<bare>{_PATH_ROOT}{_PATH_DIRS}(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_COMPONENT})[/\\]?(?:{_LINE_SUFFIX})?) )""")
 
@@ -63,10 +64,9 @@ _PATH_TEXT = re.compile(
 def clean_report_prose(text: str) -> str:
     """Redact local paths. Quotes set an exact boundary, and bare paths use clause syntax near claims."""
     def replace(match: re.Match[str]) -> str:
-        quoted, bare = match.group("quoted", "bare")
-        if quoted:
+        if match["quoted"]:
             return f"{match['quote']}로컬 경로{match['quote']}"
-        if bare:
+        if bare := match["bare"]:
             return "로컬 경로" + re.search(rf"(?:{_LINE_SUFFIX})?[.]*$", bare).group()
         return match.group()
 

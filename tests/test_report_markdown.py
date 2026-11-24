@@ -133,10 +133,11 @@ def test_generated_report_redacts_paths_immediately_after_a_label_colon(path):
     assert add_references(source, "", []) == f"Source:로컬 경로. [[claim:s1/c1]]\n{links}"
 
 
-@pytest.mark.parametrize("ratio", ["CD4+/CD8+", "CD4⁺/CD8⁺"])
+@pytest.mark.parametrize("ratio", ["CD4+/CD8+", "CD4⁺/CD8⁺", "CD4+ /CD8+"])
 def test_reader_report_preserves_slash_in_biological_ratio(ratio):
     report = f"{ratio} ratio increased [[claim:s1/c1]]."
     assert add_references(report, "", []) == report
+    assert add_references(ratio, "", []) == ratio
 
 
 @pytest.mark.parametrize("path", [
@@ -216,6 +217,7 @@ def test_generated_report_redacts_extensionless_local_tail(path):
     ("/home/results/run", "5hmC levels increased"),
     ("/home/results/run", "CD4+/CD8+ ratio increased"),
     ("/home/results/run", "CD4+ / CD8+ ratio increased"),
+    ("/home/results/run", "CD4+ /CD8+ ratio increased"),
     ("/home/results/run", "CD4⁺  / CD8⁺ ratio increased"),
     ("/home/Example User/Project phase two", "Treatment produced lower counts"),
     ("/home/Example User/Project Alpha", "Both groups had similar expression"),
