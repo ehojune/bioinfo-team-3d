@@ -1690,11 +1690,11 @@ def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("shape", "resumable", "remote"), [
-    ("validation_after_analysis", True, False), ("validation_after_analysis", True, True),
-    ("parallel", True, False), ("parallel", False, False),
+@pytest.mark.parametrize(("shape", "resumable", "remote", "approve_cp2"), [
+    ("validation_after_analysis", True, False, True), ("validation_after_analysis", True, True, True),
+    ("parallel", True, False, True), ("parallel", False, False, True), ("parallel", True, False, False),
 ])
-async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable, remote):
+async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable, remote, approve_cp2):
     from types import SimpleNamespace
 
     from labhq.runner import report_artifacts
@@ -1706,6 +1706,23 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
     req = hub.requests["r"]
     req["research_options"] = {"compact_workflow": True}
     hub.supports_resume = lambda agent_id: resumable and agent_id == "worker"
+    saved = {}
+
+    def save_request(rid):
+        contract = hub.requests[rid].get("research_contract") or {}
+        saved["cp2"] = copy.deepcopy((contract.get("checkpoints") or {}).get("cp2"))
+        saved["draft"] = copy.deepcopy(contract.get("analysis_draft"))
+
+    hub.save_request = save_request
+    approve = hub.request_approval
+
+    async def approval(**kwargs):
+        decision = await approve(**kwargs)
+        if kwargs["kind"] == "research_evidence" and not approve_cp2:
+            decision.update(approved=False, choice="deny", note="Do not proceed")
+        return decision
+
+    hub.request_approval = approval
     received = {}
     if remote:
         hub.report_artifacts = received.get
@@ -1723,7 +1740,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         if kind == "analysis_draft":
             assert task.resume_session_id == "analysis-s1"
             assert not task.meta.get("workdir")
-            assert req["research_contract"]["checkpoints"]["cp2"]["decision"] == "approved"
+            assert saved["cp2"] == req["research_contract"]["checkpoints"]["cp2"]
+            assert saved["cp2"]["decision"] == "approved"
             assert "Sensitivity test reproduced the estimate" in task.context
             assert "### s1" in task.context and "### s2" in task.context
             [path] = task.meta["outputs"]
@@ -1752,6 +1770,7 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         if kind != "step":
             if kind == "review":
                 receipt = req["research_contract"]["analysis_draft"]
+                assert saved["draft"] == receipt
                 assert receipt["result"]["session_id"] == "analysis-s1"
                 assert receipt["path"] in receipt["result"]["output_sha256"]
             return await base_reply(task)
@@ -1784,7 +1803,11 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
     await Orchestrator(hub).run_request("r")
 
     req = hub.requests["r"]
-    if resumable:
+    if not approve_cp2:
+        assert _kinds(hub) == ["plan", "step", "step"]
+        assert req["outcome"] == "evidence_rejected" and req["status"] == "failed"
+        assert saved["cp2"]["choice"] == "deny" and saved["draft"] is None
+    elif resumable:
         assert _kinds(hub) == ["plan", "step", "step", "analysis_draft", "review"], req.get("error")
         assert req["status"] == "done" and later_finding in req["report"]
         assert old_figure not in req["report"] and not req["report_package"]["figures"]
@@ -1794,13 +1817,16 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         receipt = req["research_contract"]["analysis_draft"]
         if shape == "parallel":
             (tmp_path / "report" / receipt["path"]).write_bytes(b"Changed after the review.")
-        req["research_contract"]["analysis_draft"] = json.loads(json.dumps(receipt))
+        cp2_receipt = saved["cp2"]
+        req["research_contract"]["checkpoints"]["cp2"] = json.loads(json.dumps(cp2_receipt))
+        req["research_contract"]["analysis_draft"] = json.loads(json.dumps(saved["draft"]))
         _interrupt(hub)
         calls, approvals = len(hub.calls), len(hub.approvals)
         hub.supports_resume = lambda _: False
         await Orchestrator(hub).run_request("r", resume=True)
         req = hub.requests["r"]
         assert _kinds(hub, calls) == [] and hub.approvals[approvals:] == []
+        assert req["research_contract"]["checkpoints"]["cp2"] == cp2_receipt
         if shape == "parallel":
             assert req["status"] == "failed" and "differs from the collected SHA-256" in req["error"]
         else:

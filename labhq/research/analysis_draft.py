@@ -1,17 +1,21 @@
 """Select the analyst who writes the report and verify their collected draft."""
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from ..evidence import report_consistency
 from ..evidence.literal_check import MAX_SOURCE_BYTES, _source_bytes
 from ..models import Task, TaskResult
+from ..orchestrator.step_execution import upstream_inputs
 from ..recruit.provenance import restricted_input_steps
 from ..report_figures import image_links
 from ..report_format import PAPER_RULE
+from ..request_persistence import persist_request
 from ..result_storage import controlled_request
 from ..runner import report_artifacts
 from . import compact_workflow
+from .approval_notes import CP2_REPORT_NOTE_RULE, approval_note_block
 from .continuation import _ancestors
 from .contract import plan_sha256
 
@@ -87,6 +91,41 @@ def artifact_loader(hub, request: dict):
         return getattr(hub, "report_artifacts", None)
 
 
+async def collect(hub, rid: str, draft: AnalysisDraft, results: dict[str, TaskResult], *,
+                  cp2_report: str, cp2_notes: list[tuple[str, str]], render_evidence, restricted_inputs,
+                  session_origin, free_session, run_step, budget_denials) -> str | None:
+    """Read the collected draft, resuming its analyst if needed. None means the follow-up budget was denied."""
+    request = hub.requests[rid]
+    contract = request["research_contract"]
+    load = artifact_loader(hub, request)
+    analyst = results.get(draft.step_id)
+    saved = draft.restored(contract.get("analysis_draft") or {}, analyst)
+    if draft.inline or saved is not None:
+        return await asyncio.to_thread(draft.read, saved or analyst, load)
+
+    if not (analyst and analyst.ok and analyst.session_id and hub.supports_resume(analyst.agent_id)):
+        raise ValueError("the analysis session cannot be resumed after the remaining steps")
+    origin = session_origin(rid, analyst.agent_id, analyst.session_id)
+    session, _ = await free_session(analyst.agent_id, analyst.session_id, analyst.workdir,
+                                    rid=rid, step="analysis_draft")
+    if session != analyst.session_id or (getattr(hub, "store", None) is not None and not origin):
+        raise ValueError("the original analysis session or its runner is unavailable")
+    restricted = restricted_inputs()
+    context = render_evidence() + "\n\n" + cp2_report + approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE)
+    inputs = upstream_inputs(results, results)
+    if any(result.ok and result.outputs and sid not in inputs["upstream_artifacts"] for sid, result in results.items()):
+        raise ValueError("a collected report input has no workspace")
+    author = await run_step(draft.followup(rid, analyst, context, origin, restricted, bool(load), inputs))
+    if rid in budget_denials:
+        return None
+    if author.ok and author.session_id != session:
+        raise ValueError("the draft did not come from the original analysis session")
+    body = await asyncio.to_thread(draft.read, author, load)
+    contract["analysis_draft"] = draft.receipt(analyst, author)
+    await persist_request(hub, rid)
+    return body
+
+
 def transfer_meta(draft: AnalysisDraft | None, transfer: bool) -> dict:
     return {report_artifacts.RESULT_FIELD: draft.path if draft else True} if transfer else {}
 
@@ -107,6 +146,15 @@ def tables_for(report: str, results: dict, load) -> dict[str, str | None]:
             except ValueError:
                 pass
     return tables
+
+
+async def report_tables(hub, request: dict, report: str, results: dict) -> tuple[bool, dict[str, str | None]]:
+    """Report whether the compact draft is being finalized and read its linked tables."""
+    draft = request.get("outcome") == "research_reported" and for_request(request) is not None
+    load = artifact_loader(hub, request) if draft else None
+    tables = (await asyncio.to_thread(tables_for, report, results, load)
+              if load else report_consistency.tables_for(report, results))
+    return draft, tables
 
 
 def for_request(request: dict, plan: dict | None = None) -> AnalysisDraft | None:

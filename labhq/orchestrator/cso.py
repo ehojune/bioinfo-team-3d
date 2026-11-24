@@ -58,17 +58,16 @@ from ..report_contract import (available_result_files, build_report_package, rea
 from ..request_status import failed_step_ids, is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
                                  bind_result_artifacts, branch_plan_topology,
-                                 canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
-                                 normalize_result_plan_sha256,
+                                 canonical_plan_json, classify_intake, freeze_plan, normalize_result_plan_sha256,
                                  plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
-from ..research import analysis_draft, compact_workflow, independent_review
+from ..research import analysis_draft, compact_workflow, evidence_checkpoint, independent_review
 from ..research import precedent_texts
-from ..research.approval_notes import APPROVAL_NOTE_CHARS, approval_note, approval_note_block
+from ..research.approval_notes import APPROVAL_NOTE_CHARS, CP2_REPORT_NOTE_RULE, approval_note, approval_note_block
 from ..research.independent_review import (RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_PROMPT, REVIEW_SCHEMA,
                                            lenient_review, plan_digest as _research_plan_digest, valid_review,
                                            with_p1_verdict)
@@ -895,7 +894,6 @@ def _planning_prompt(template: str, settings, *, research: bool = False, replan:
     rules = RESEARCH_RECRUIT_RULES if research else GENERAL_RECRUIT_RULES
     return template.replace(rules, RECRUIT_DISABLED_RULE)
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
-CP2_MAX_ASKS = 3
 # One readable reason per research ending that is not a success. The office feed prints it after "요청이 실패했어요: ",
 # so a request that ends with a report (report_incomplete) or at a PI card (CP2) no longer shows an empty reason.
 RESEARCH_END_ERRORS = {
@@ -1339,9 +1337,6 @@ def with_pi_notes(task: Task, request: dict) -> Task:
 CP1_NOTE_RULE = ("The PI wrote this note when approving the frozen plan at CP1. Follow it where the frozen plan "
                  "allows. It does not change the frozen plan: if it asks for something the plan does not allow, do "
                  "the plan's work and name the conflict in `failures`.")
-CP2_REPORT_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Cover every point it asks of the report; "
-                        "a point the evidence cannot support goes under \"한계\" with the reason. It never makes an "
-                        "uncitable claim citable and does not change the frozen plan.")
 CONTINUE_NOTE_RULE = ("The PI wrote these on the previous round's cards. Use them in the new plan where they fit; the "
                       "PI approves the new plan at its own CP1.")
 
@@ -6285,39 +6280,14 @@ class Orchestrator:
             literal_checks = recorded.get('literal_checks') or literal_checks
             update_conclusion_depth()  # the saved CP2 refusal set is authoritative after a restart
         else:
-            cp2: str | None = None
-            decision: dict[str, Any] = {}
-            asks = 0
-            retry = ""
-            while cp2 is None and asks < CP2_MAX_ASKS:
-                asks += 1
-                decision = await self.hub.request_approval(
-                    kind="research_evidence", request_id=rid, detail=detail, summary=retry + summary)
-                cp2 = read_evidence_decision(decision)
-                if (cp2 == "revision_requested" and revise_continues and asks < CP2_MAX_ASKS
-                        and not str(decision.get("note") or "").strip()):
-                    # The new plan is written from the note, so a revise without one is asked again (R10).
-                    cp2, retry = None, ("수정 요청에 메모가 없어 다시 묻습니다. 무엇을 고칠지 메모에 적고 수정 요청을 "
-                                        "누르세요. ")
-                elif cp2 is None:
-                    retry = ("The previous CP2 answer had no readable approve/revise/deny choice and was not "
-                             "approved. ")
-            decided = cp2 or "unreadable"
-            note = str(decision.get("note") or "").strip()
-            # Kept per step in the receipt: a continuation reuses a step together with its salvage records (#90).
-            salvage = contract.pop("result_salvage", None) or {}
-            contract.setdefault("checkpoints", {})["cp2"] = {
-                "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
-                "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
-                "plan_sha256": contract["plan_sha256"], "asks": asks,
-                **({"warnings": warnings} if warnings else {}),
-                **({"refused_rows": refused_rows} if refused_rows else {}),
-                "refused_evidence": refused, "unsupported_claims": unsupported,
-                "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
-                **({'literal_checks': literal_checks} if literal_checks else {}),
-                **({"source_verification": source_verification,
-                    "source_verification_reports": source_reports} if live_resolver is not None else {}),
-                **({"result_salvage": salvage} if salvage else {})}
+            decided, note, asks, decision = await evidence_checkpoint.ask(self.hub, rid, detail, summary,
+                                                                        revise_continues)
+            evidence_checkpoint.record_receipt(
+                contract, decision, decided, note, asks, warnings=warnings, refused_rows=refused_rows,
+                refused=refused, unsupported=unsupported, artifact_sha256=artifact_sha256,
+                unreported_outputs=unreported_outputs, literal_checks=literal_checks,
+                source_verification=source_verification,
+                source_reports=source_reports if live_resolver is not None else None)
         req["outcome"] = f"evidence_{decided}"
         await persist_request(self.hub, rid)
         audit = f"CP2 evidence review: {decided}."
@@ -6468,38 +6438,17 @@ class Orchestrator:
         draft = analysis_draft.for_request(req)
         if draft:
             try:
-                load = analysis_draft.artifact_loader(self.hub, req)
-                analyst = results.get(draft.step_id)
-                saved = draft.restored(contract.get("analysis_draft") or {}, analyst)
-                author = saved or analyst
-                if not draft.inline and saved is None:
-                    if not (author and author.ok and author.session_id and self.hub.supports_resume(author.agent_id)):
-                        raise ValueError("the analysis session cannot be resumed after the remaining steps")
-                    origin = self._session_origin(rid, author.agent_id, author.session_id)
-                    session, _ = await self._free_session(author.agent_id, author.session_id, author.workdir,
-                                                          rid=rid, step="analysis_draft")
-                    if session != author.session_id or (getattr(self.hub, "store", None) is not None and not origin):
-                        raise ValueError("the original analysis session or its runner is unavailable")
-                    restricted = bool(self._external_guard(rid) and
-                                      restricted_input_steps(req["plan"]["steps"], *self._request_inputs(rid),
-                                                             self.hub.s))
-                    context = (independent_review.render_ledgers(steps, results, ledgers, refused, unsupported,
-                                                                   artifact_sha256, n, staged=True)
-                               + "\n\n" + cp2_report
-                               + approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE))
-                    inputs = step_execution.upstream_inputs(results, results)
-                    if any(r.ok and r.outputs and sid not in inputs["upstream_artifacts"] for sid, r in results.items()):
-                        raise ValueError("a collected report input has no workspace")
-                    author = await self.run_step(draft.followup(rid, author, context, origin, restricted, bool(load), inputs))
-                    if rid in self.budget_denials:
-                        await budget_denied("analysis draft", None)
-                        return
-                    if author.ok and author.session_id != session:
-                        raise ValueError("the draft did not come from the original analysis session")
-                draft_body = await asyncio.to_thread(draft.read, author, load)
-                if not draft.inline and saved is None:
-                    contract["analysis_draft"] = draft.receipt(analyst, author)
-                    await persist_request(self.hub, rid)
+                draft_body = await analysis_draft.collect(
+                    self.hub, rid, draft, results, cp2_report=cp2_report, cp2_notes=cp2_notes,
+                    render_evidence=lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True),
+                    restricted_inputs=lambda: bool(self._external_guard(rid) and restricted_input_steps(
+                        req["plan"]["steps"], *self._request_inputs(rid), self.hub.s)),
+                    session_origin=self._session_origin, free_session=self._free_session,
+                    run_step=self.run_step, budget_denials=self.budget_denials)
+                if draft_body is None:
+                    await budget_denied("analysis draft", None)
+                    return
             except ValueError as exc:
                 await end("research_failed", cp2_report + f"\n\nAnalysis draft unavailable: {exc}.",
                           False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc))
@@ -9023,10 +8972,7 @@ class Orchestrator:
         if style_note:
             req["execution_record"] += "\n\n" + style_note
         # What is left after the writer's one correction: the report front shows it as an unverified draft (#1374).
-        draft = req.get("outcome") == "research_reported" and analysis_draft.for_request(req)
-        loader = analysis_draft.artifact_loader(self.hub, req) if draft else None
-        tables = (await asyncio.to_thread(analysis_draft.tables_for, report, results, loader)
-                  if loader else report_consistency.tables_for(report, results))
+        draft, tables = await analysis_draft.report_tables(self.hub, req, report, results)
         consistency = req["report_consistency"] = report_consistency.check(report, tables)
         if left := report_consistency.record_lines(consistency):
             req["execution_record"] += "\n\n" + left
