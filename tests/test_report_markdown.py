@@ -74,6 +74,12 @@ def test_report_cleanup_preserves_only_the_exact_benchmark_closing_marker():
     )
 
 
+def test_reader_report_preserves_tex_beside_windows_rooted_path():
+    source = r"The model used \beta coefficients and \log transformation ($\beta = 1$) [[claim:s1/c1]]."
+    report = source + "\n" + r"Input was \Users\Example User\counts.tsv and \final results.tsv."
+    assert add_references(report, "", []) == source + "\nInput was 로컬 경로 and 로컬 경로."
+
+
 def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_and_evidence():
     source = (
         "# 결과\n\n## 요약\n\n"
@@ -169,6 +175,9 @@ def test_generated_report_redacts_extensionless_local_tail(path):
     ("/home/results/run", "Results indicate increased expression"),
     ("/home/results/run", "Protein levels increased"),
     ("/home/Example User/Project Alpha", "Gene expression increased"),
+    ("/home/results/run", "gene expression was higher"),
+    ("/home/results/run", "cell viability was reduced"),
+    ("/home/results/run", "treatment effect was significant"),
     ("/home/Example User/Project phase two", "Treatment produced lower counts"),
     ("/home/Example User/Project Alpha", "Both groups had similar expression"),
     ("/home/Example User/Project Alpha", "We found no evidence of treatment response"),

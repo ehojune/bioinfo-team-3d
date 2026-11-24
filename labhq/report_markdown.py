@@ -40,7 +40,7 @@ _LINE_SUFFIX = r":L\d+(?:-L\d+)?(?=\s|\[\[|[.,;](?=\s|$)|[)\]>]|$)"
 _PATH_EXTENSION = rf"\.[A-Z][A-Z0-9]{{0,9}}(?![A-Z0-9_-]|(?!{_LINE_SUFFIX}):[^\s])"
 _PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
 _PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|no)|[A-Z][A-Z0-9-]+)[ \t]+[a-z][a-z-]*[ \t]+\w"
-                r"|[A-Z][a-z-]+(?:[ \t]+(?!(?:contains?|and|or|but)\b)[a-z][a-z-]*)*"
+                r"|[A-Za-z][a-z-]+(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)[a-z][a-z-]*)*"
                 r"[ \t]+(?:is|are|was|were|has|have|had|indicate|suggest|show|[a-z]{2,}ed)"
                 r"(?=[ \t]+[a-z0-9]|[.!?]?(?:[ \t]*\[\[|[ \t]*$))"
                 r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w))"
@@ -49,7 +49,9 @@ _TAIL_GAP = rf"[ \t]+(?!(?:{_PROSE_START})[^\r\n]*\[\[\s*claim\s*:)"
 _PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
 _PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_WORD}(?:{_TAIL_GAP}{_PATH_WORD})*)"
 _PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
-_PATH_ROOT = rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\(?:[?.]\\(?:[A-Z]:[/\\])?)?|\\|~[A-Z0-9_.+-]*[/\\]|/{{2,}}|/(?={_PATH_COMPONENT}/)|(?<!<)/)"
+_PATH_ROOT = (
+    rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\(?:[?.]\\(?:[A-Z]:[/\\])?)?"
+    rf"|\\(?={_PATH_COMPONENT}[/\\]|{_PATH_FILE}|{_PATH_SPACED_FILE})|~[A-Z0-9_.+-]*[/\\]|/{{2,}}|/(?={_PATH_COMPONENT}/)|(?<!<)/)")
 _PATH_TEXT = re.compile(
     rf"""(?ix) https?://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
         | (?<![\w./\\:-]) (?:
@@ -65,9 +67,7 @@ def clean_report_prose(text: str) -> str:
         if quoted:
             return f"{match['quote']}로컬 경로{match['quote']}"
         if bare:
-            # Keep punctuation and source receipt line ranges.
-            suffix = re.search(rf"(?:{_LINE_SUFFIX})?[.]*$", bare).group()
-            return "로컬 경로" + suffix
+            return "로컬 경로" + re.search(rf"(?:{_LINE_SUFFIX})?[.]*$", bare).group()
         return match.group()
 
     return _PATH_TEXT.sub(replace, text)
