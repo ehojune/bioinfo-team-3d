@@ -43,10 +43,10 @@ _PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|
                 rf"|{_SUBJECT_TOKEN}(?:[ \t]*/[ \t]*{_SUBJECT_TOKEN})*(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)(?:[a-z][A-Za-z0-9-]*|[A-Z]))*"
                 r"[ \t]+(?:(?:am|is|are|was|were|has|have|had|do|does|did|can|could|may|might|must|shall|should|will|would)(?:n't)?"
                 r"|can't|won't|(?:differ|indicate|increase|decrease|remain|show|suggest)s?|fell|rose|[a-z]{2,}ed)"
-                r"(?=[ \t]+[a-z0-9]|[.!?]?(?:[ \t]*\[\[|[ \t]*$))"
-                r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w))"
+                r"(?=[ \t]+[a-z0-9](?![a-z0-9-]*[/\\])|[.!?]?[ \t]*(?:\[\[|[\r\n]|$))"
+                r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w(?![\w-]*[/\\])))"
                 r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])")
-_TAIL_GAP = rf"[ \t]+(?!(?:{_PROSE_START})[^\r\n]*\[\[\s*claim\s*:|(?:(?i:and|or)[ \t]+)?!?\[[^\]\r\n]*\]\()"
+_TAIL_GAP = rf"[ \t]+(?!{_PROSE_START}|(?:(?i:and|or)[ \t]+)?!?\[[^\]\r\n]*\]\()"
 _PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
 _PATH_COMPONENT = rf"{_PATH_WORD}(?:{_TAIL_GAP}{_PATH_WORD})*"
 _PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
@@ -62,7 +62,7 @@ _PATH_TEXT = re.compile(
 
 
 def clean_report_prose(text: str) -> str:
-    """Redact local paths. Quotes set an exact boundary, and bare paths use clause syntax near claims."""
+    """Redact local paths. Quotes set an exact boundary, and bare paths use clause syntax."""
     def replace(match: re.Match[str]) -> str:
         if match["quoted"]:
             return f"{match['quote']}로컬 경로{match['quote']}"

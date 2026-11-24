@@ -156,6 +156,7 @@ def test_reader_report_preserves_slash_in_biological_ratio(ratio):
     "C:/Users/Doe,Jane/run/results.tsv",
     "/data/owner:Example User/project/results.tsv",
     "/data/owner:Example User/project/results.tsv:L10.raw",
+    "/home/Project response increased expression/results.tsv",
 ])
 def test_reader_report_redacts_unquoted_path_components_with_spaces(path):
     report = f"Table source: {path} followed by Case/control counts. [[claim:s1/c1]]"
@@ -186,6 +187,7 @@ def test_generated_report_masks_local_link_target_and_preserves_its_label(target
     "/Example User",
     "C:/Users/Jane Doe/Project Alpha",
     "/home/results/Jane Doe/Project [phase 2]",
+    "/home/Project response increased expression/run",
 ])
 def test_generated_report_redacts_extensionless_local_tail(path):
     report = f"작업 폴더 {path}; 표본을 확인했습니다. [[claim:s1/c1]]"
@@ -239,6 +241,19 @@ def test_generated_report_keeps_unpunctuated_conclusion_after_local_path(path, c
     front = build_report_package({}, f"# 연구 보고서\n\n## 요약\n\n{source}")
     assert front.answer == "작업 위치 로컬 경로 " + " ".join(conclusion.split())
     assert front.evidence_notes == ["s1/c1"]
+
+
+@pytest.mark.parametrize(("path", "conclusion"), [
+    ("/home/results/run", "treatment increased expression"),
+    (r"C:\Users\Example User\Project Alpha", "Protein levels increased"),
+    ("/home/results/run", "CD4+ / CD8+ ratio increased"),
+])
+def test_generated_report_keeps_conclusion_after_path_without_anchor(path, conclusion):
+    source = f"작업 위치 {path} {conclusion}"
+    expected = f"작업 위치 로컬 경로 {conclusion}"
+    assert add_references(source, "", []) == expected
+    assert build_report_package({}, f"# 연구 보고서\n\n## 요약\n\n{source}").answer == expected
+
 
 @pytest.mark.parametrize("name", ["Project contains Private Data", "Project Results indicate Private Data"])
 def test_generated_report_masks_extensionless_name_that_contains_a_verb(name):
