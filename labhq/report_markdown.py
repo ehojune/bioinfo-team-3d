@@ -33,20 +33,20 @@ _ARTIFACT_WARNING = re.compile(
 )
 _PATH_CHAR = r"""[^\s/\\<>"'`|\[\](){},;!?]"""
 _PATH_CHUNK = (rf"(?:(?!\.(?=\s|$)){_PATH_CHAR}|"
-               r"\([^/\\\r\n()<>]*\)|\[(?!\[)[^/\\\r\n[\]<>]+\]|\{[^/\\\r\n{}<>]+\})")
+               r"\([^/\\\r\n()<>]*\)|\[(?!\[)[^/\\\r\n[\]<>]+\](?!\()|\{[^/\\\r\n{}<>]+\})")
 _PATH_WORD = rf"{_PATH_CHUNK}+(?:[',;!?]{_PATH_CHUNK}+)*"
 _PATH_COMPONENT = rf"{_PATH_WORD}(?:[ \t]+{_PATH_WORD})*"
 _LINE_SUFFIX = r":L\d+(?:-L\d+)?(?=\s|\[\[|[.,;](?=\s|$)|[)\]>]|$)"
 _PATH_EXTENSION = rf"\.[A-Z][A-Z0-9]{{0,9}}(?![A-Z0-9_-]|(?!{_LINE_SUFFIX}):[^\s])"
 _PATH_FILE = rf"{_PATH_WORD}{_PATH_EXTENSION}"
 _PROSE_START = (r"(?-i:(?:(?i:the|both|we|our|they|it|all|these|those|this|that|no)|[A-Z][A-Z0-9-]+)[ \t]+[a-z][a-z-]*[ \t]+\w"
-                r"|[A-Za-z][a-z-]+(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)[a-z][a-z-]*)*"
+                r"|[A-Za-zα-ωΑ-Ω][A-Za-z0-9α-ωΑ-Ω-]*[+−]?(?:[ \t]+(?!(?:contains?|and|or|but|the|both|we|our|they|it|all|these|those|this|that|no)\b)(?:[a-z][a-z-]*|[A-Z]))*"
                 r"[ \t]+(?:(?:am|is|are|was|were|has|have|had|do|does|did|can|could|may|might|must|shall|should|will|would)(?:n't)?"
                 r"|can't|won't|(?:differ|indicate|increase|decrease|remain|show|suggest)s?|fell|rose|[a-z]{2,}ed)"
                 r"(?=[ \t]+[a-z0-9]|[.!?]?(?:[ \t]*\[\[|[ \t]*$))"
                 r"|[a-z][a-z-]*[ \t]+[a-z]{2,}(?:ed|en|es|s)(?=[ \t]+\w))"
                 r"|[가-힣]+[ \t]+(?:[가-힣]+[ \t]+)*[가-힣]+(?:다|음)(?![가-힣])")
-_TAIL_GAP = rf"[ \t]+(?!(?:{_PROSE_START})[^\r\n]*\[\[\s*claim\s*:)"
+_TAIL_GAP = rf"[ \t]+(?!(?:{_PROSE_START})[^\r\n]*\[\[\s*claim\s*:|(?:(?i:and|or)[ \t]+)?!?\[[^\]\r\n]*\]\()"
 _PATH_SPACED_FILE = rf"(?:{_PATH_WORD}{_TAIL_GAP})+?{_PATH_FILE}"
 _PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_WORD}(?:{_TAIL_GAP}{_PATH_WORD})*)"
 _PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
