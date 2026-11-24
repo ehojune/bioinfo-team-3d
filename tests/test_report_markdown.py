@@ -4,7 +4,7 @@ import pytest
 
 from labhq.report_contract import build_report_package, reader_markdown
 from labhq.report_format import add_references, scientific_appendix
-from labhq.report_markdown import markdown_body, markdown_regions, rendered_markers
+from labhq.report_markdown import clean_report_prose, markdown_body, markdown_regions, rendered_markers
 
 
 @pytest.mark.parametrize("code", [
@@ -60,6 +60,18 @@ def test_code_regions_preserve_source_newlines(newline):
     rendered = reader_markdown(source)
     assert "> 앞 `[[claim:example/code]]` 뒤" + newline in rendered
     assert "실제 [근거 1]" in rendered
+
+
+def test_report_cleanup_preserves_only_the_exact_benchmark_closing_marker():
+    source = (
+        "Table: /tmp/results.tsv\n"
+        "<!-- /LABHQ_BENCH_RESULT/private -->\n"
+        "<!-- /labhq_bench_result -->\n"
+        "<!-- /LABHQ_BENCH_RESULT -->"
+    )
+    assert clean_report_prose(source) == (
+        "Table: 로컬 경로\n<!-- 로컬 경로>\n<!-- 로컬 경로>\n<!-- /LABHQ_BENCH_RESULT -->"
+    )
 
 
 def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_and_evidence():

@@ -51,7 +51,7 @@ _PATH_TAIL = rf"(?:{_PATH_FILE}|{_PATH_SPACED_FILE}|{_PATH_WORD}(?:{_TAIL_GAP}{_
 _PATH_DIRS = rf"(?:(?!(?:{_PATH_FILE}|{_PATH_SPACED_FILE})[ \t]){_PATH_COMPONENT}[/\\])*"
 _PATH_ROOT = rf"(?:file:/+(?:[A-Z]:[/\\])?|[A-Z]:[/\\]|\\\\(?:[?.]\\(?:[A-Z]:[/\\])?)?|~[A-Z0-9_.+-]*[/\\]|/(?={_PATH_COMPONENT}/)|(?<!<)/)"
 _PATH_TEXT = re.compile(
-    rf"""(?ix) https?://[^\s<>"'`|]+
+    rf"""(?ix) https?://[^\s<>"'`|]+ | (?-ix:<!-- /LABHQ_BENCH_RESULT -->)
         | (?<![\w./\\:-]) (?:
             (?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)(?![A-Za-z0-9_])
             | (?P<bare>{_PATH_ROOT}{_PATH_DIRS}{_PATH_TAIL}[/\\]?(?:{_LINE_SUFFIX})?) )"""
