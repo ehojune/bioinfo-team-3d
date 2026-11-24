@@ -26,6 +26,43 @@ _CODE_BLOCKS = {"code_block", "fence"}
 RENDERED_MARKERS = ("**", "__", "[[")
 READER_FILENAMES = {"readme.md", "report.md", "result.md"}
 
+_ARTIFACT_WARNING = re.compile(
+    r"(?im)^(?P<bullet> {0,3}(?:[-*+] +)?)"
+    r"(?:[\w./-]+: +)?(?:evidence +)?[\w.-]+ cites artifact [^\r\n]+? missing from artifact_refs"
+    r"[ .]*(?P<anchor> +\[\[\s*claim\s*:[^\]\r\n]+\]\])?[ \t]*(?=\r?$)"
+)
+_PATH_ROOT = r"(?:file:/+|[A-Z]:[/\\]|\\\\|~[/\\]|/(?=[\w.-]+/))"
+_PATH_TEXT = re.compile(
+    rf"""(?ix) https?://[^\s<>"'`]+
+        | (?<![\w./\\:-]) (?:
+            (?P<quote>["'`]) (?P<quoted>{_PATH_ROOT}[^\r\n]*?) (?P=quote)
+            | (?P<bare>{_PATH_ROOT}[^\s<>"'`|\])}},;!?]+) )"""
+)
+
+
+def clean_report_prose(text: str) -> str:
+    """Remove machine-local path text while leaving public URLs and claim syntax readable."""
+    def replace(match: re.Match[str]) -> str:
+        quoted, bare = match.group("quoted", "bare")
+        if quoted:
+            return f"{match['quote']}로컬 경로{match['quote']}"
+        if bare:
+            # Keep punctuation and source receipt line ranges.
+            suffix = re.search(r"(?::L\d+(?:-L\d+)?)?[.]*$", bare).group()
+            return "로컬 경로" + suffix
+        return match.group()
+
+    return _PATH_TEXT.sub(replace, text)
+
+
+def translate_report_warnings(text: str) -> str:
+    """Replace known engine diagnostics with the scientific limitation they report."""
+    def translate(match: re.Match[str]) -> str:
+        return (match["bullet"] + "일부 근거가 가리키는 산출물이 원장에 등록되지 않았습니다. 실행 기록 참고."
+                + (match["anchor"] or ""))
+
+    return replace_markdown_body(text, lambda body: _ARTIFACT_WARNING.sub(translate, body))
+
 
 @dataclass(frozen=True)
 class MarkdownRegion:

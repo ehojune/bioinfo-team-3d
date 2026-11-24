@@ -119,6 +119,10 @@ accept면 CSO가 결론·수치 문장마다 `[[claim:<step_id>/<claim_id>]]`를
 
 `labhq verify <request_id>`는 gateway의 요청 기록을 읽고, runner PC의 작업 폴더에서 산출을 같은 규칙(상한까지만 읽기, 링크·junction 안 따라감, 통제 구역 제외)으로 다시 해시해 기록과 비교합니다. 요청 묶음이 있으면 link·junction을 먼저 거부한 뒤 JSON 구조·reference·경로 containment, 요청 ID, MANIFEST 필수 필드 형식, 파일↔`MANIFEST.tsv`↔crate의 size·sha256을 검사합니다. crate가 `File`로 선언한 파일은 MANIFEST status와 상관없이 있는지와 hash를 보고, status가 crate 기록과 다르면 문제로 적습니다(#475). 너무 깊게 중첩된 metadata JSON은 오류로 끝나지 않고 문제로 적습니다. MANIFEST에 기록된 crate·README가 없거나 README를 읽지 못하면 이전 형식으로 간주하지 않습니다. 외부 입력은 `INPUTS.tsv`와 crate에 적힌 hash끼리만 대조하며 원본을 재해시했다고 표시하지 않습니다. crate가 없는 이전 묶음은 기존 판정을 유지합니다. 연구 요청은 보고서 앵커 검사도 다시 돌리고, 보고하지 않은 산출은 경고로 보입니다. 문제가 없으면 exit 0, 불일치·없는 파일·앵커 문제는 1, 요청이나 작업 폴더가 없어 끝까지 검사하지 못하면 2입니다. 그림 WARN은 판정을 바꾸지 않고 exit 0/1에서도 `--bundle`을 만듭니다. `--bundle out.zip`과 웹 요청 상세의 **감사 번들**은 `README.md`·`report.md`·`report_appendix.md`·`execution_record.md`·`claims.json`·`artifacts.json`을 담고 산출 파일은 넣지 않습니다. 예전 `부록: 실행 기록`도 만들 때 운전 기록으로 분리합니다. gateway에 작업 폴더가 없으면 기록만 담고 runner PC의 `labhq verify` 재검사를 안내합니다. 내장 MCP(hpc·ask)의 실패는 isError로 돌아가며 끝에 "이 실패는 증거도 부재 증명도 아닙니다"가 붙습니다. 일반 단계는 Findings·Evidence·Not established·Method changes 블록을 남기며, 모으지 않은 Evidence 경로와 실패한 도구 호출은 거부 대신 최종 보고서 경고로 올라갑니다(#58).
 
+`research.live_source_check`를 켠 연구 요청에서는 `labhq verify`가 본문·과학 부록·원장의 식별자도 조회합니다. 사람 유전자 기호는 `HGNC symbol: TP53`처럼 표시합니다. GO ID와 DOI도 검사합니다. 등록 기관이 일치 항목 없음을 확인하면 문제로, 통신 오류나 한도에 걸리면 미확인으로 남깁니다. 등록 확인은 주장에 대한 검증과 별개입니다.
+
+보고서의 로컬 경로와 산출물 등록 경고는 읽기 쉬운 문구로 바꿉니다. 결과표·그림 링크와 근거 표식은 유지합니다.
+
 ### 최종 초안 수용(CP4)
 
 `research.final_checkpoint: true`는 새 연구 실행 요청에만 적용합니다(기본 `false`). CP1-only·`plan_only`·simple·direct는 제외하며 생성 때 고정한 값과 계약 version은 설정 변경·재시작으로 바뀌지 않습니다.

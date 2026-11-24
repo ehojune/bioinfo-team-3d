@@ -14,7 +14,8 @@ from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from .report_markdown import markdown_body, render_marker_message, rendered_markers, replace_markdown_body
+from .report_markdown import (clean_report_prose, markdown_body, render_marker_message, rendered_markers,
+                              replace_markdown_body, translate_report_warnings)
 from .evidence.report_consistency import front_lines as consistency_front_lines
 from .reproduction_receipt import receipt_note, receipt_summary
 
@@ -148,6 +149,7 @@ def _without_front(report: str) -> str:
 def _plain(value: str) -> str:
     value = _ANCHOR.sub("", value)
     value = re.sub(r"!?\[([^\]]*)\]\([^)]+\)", r"\1", value)
+    value = clean_report_prose(value)
     # A footnote label is an identifier: stripping its underscores breaks the reference in the front page.
     parts = re.split(r"(\[\^[^\]\n]+\])", value)
     value = "".join(part if index % 2 else re.sub(r"[`*_>#]", "", part)
@@ -395,6 +397,18 @@ def _closing_fence(text: str, char: str, length: int, start: int) -> int | None:
     return None if found is None else found.end()
 
 
+def clean_reader_report(report: str) -> str:
+    """Clean text and link labels without discarding targets needed for bundle asset mapping."""
+    report = translate_report_warnings(report)
+    parts = []
+    cursor = 0
+    for match in _markdown_links(report):
+        start, end = match.span("target")
+        parts.extend((clean_report_prose(report[cursor:start]), report[start:end]))
+        cursor = end
+    return "".join([*parts, clean_report_prose(report[cursor:])])
+
+
 def reader_markdown(report: str, *, footnotes: bool = False) -> str:
     """Replace audit-only claim syntax; PDFs may also render Markdown footnotes as endnotes."""
     code: list[str] = []
@@ -403,7 +417,7 @@ def reader_markdown(report: str, *, footnotes: bool = False) -> str:
         code.append(value)
         return f"\x00labhq-code-{len(code) - 1}\x00"
 
-    rendered = report
+    rendered = clean_reader_report(report)
     if footnotes:
         pieces: list[str] = []
         last = 0

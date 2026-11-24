@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from labhq.report_contract import build_report_package, reader_markdown
+from labhq.report_format import add_references, scientific_appendix
 from labhq.report_markdown import markdown_body, markdown_regions, rendered_markers
 
 
@@ -59,3 +60,32 @@ def test_code_regions_preserve_source_newlines(newline):
     rendered = reader_markdown(source)
     assert "> 앞 `[[claim:example/code]]` 뒤" + newline in rendered
     assert "실제 [근거 1]" in rendered
+
+
+def test_reader_report_hides_local_prose_and_translates_warning_but_keeps_links_and_evidence():
+    source = (
+        "# 결과\n\n## 요약\n\n"
+        '작업 위치 "C:/Users/test name/run/data.tsv"와 \\\\pc\\share\\counts.tsv입니다. [[claim:s1/c1]]\n\n'
+        "- s1: ev_missing cites artifact outputs/check.json missing from artifact_refs\n"
+        "- 표본 짝을 확인하지 못한 점은 해석에 남습니다.\n\n"
+        "![그림](/tmp/labhq/outputs/fig.svg)\n"
+        "[표](steps/s1/outputs/stats.tsv) · https://example.org/Users/public · <b>라벨</b>\n"
+        "위치 /home/person/result.tsv:L10-L12\n"
+    )
+    stored = add_references(source, "", [])
+    rendered = reader_markdown(stored)
+    assert "test name" not in rendered and "\\\\pc" not in rendered and "/home/person" not in rendered
+    assert "missing from artifact_refs" not in rendered
+    assert "산출물이 원장에 등록되지 않았습니다" in rendered and "표본 짝을 확인" in rendered
+    assert "[근거 1]" in rendered and "s1/c1" in rendered and "[[claim:s1/c1]]" in stored
+    assert "![그림](/tmp/labhq/outputs/fig.svg)" in rendered  # bundle maps the declared target
+    assert "[표](steps/s1/outputs/stats.tsv)" in rendered
+    assert "https://example.org/Users/public" in rendered and "<b>라벨</b>" in rendered
+    assert "로컬 경로:L10-L12" in rendered
+    package = build_report_package({}, stored)
+    assert "test name" not in package.answer and package.evidence_notes == ["s1/c1"]
+
+
+def test_scientific_appendix_keeps_review_but_masks_machine_path():
+    report = scientific_appendix("", {}, {"issues": [{"problem": "See ~/local/run.csv", "request": "Check samples"}]}, "")
+    assert "Check samples" in report and "로컬 경로" in report and "~/local" not in report

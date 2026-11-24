@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from . import edition_sources
+from .report_contract import clean_reader_report
 
 PAPER_RULE = '''Use the basic paper format in this order: "제목", "요약(Abstract)", "서론", "방법", "결과",
 "논의", "결론", "참고", "부록". Start with the report's first heading: no preamble.
@@ -12,7 +13,8 @@ The abstract summarizes the question and findings; the introduction states the b
 Methods include seeds, tool/data versions and assumptions; results contain evidence, figures and tables.
 Discussion covers interpretation, reviewer concerns, limitations and what would change the conclusion.
 The conclusion gives the answer and concrete next steps. References name only supplied data accessions,
-PMIDs and DOIs, never invented citations. The scientific appendix contains only checklist tables, review
+PMIDs and DOIs, never invented citations. Label human gene symbols for registry checks (e.g. "HGNC symbol: TP53")
+and spell out GO identifiers. The scientific appendix contains only checklist tables, review
 verdict/issues and assumptions. Execution details, costs, warnings and bundle conversion belong to the
 separate operation record. Keep easy Korean (#569), about 4,000 characters unless results need more;
 state each result statistic once, in the results. Format comes first; do not invent background or findings.
@@ -55,11 +57,12 @@ def scientific_appendix(existing: str, req: dict, review: dict | None, checklist
         parts.append("### 가정\n" + "\n".join(
             f"- {a.get('choice') or a.get('assumption') or ''}: {a.get('reason') or ''}"
             if isinstance(a, dict) else f"- {a}" for a in assumptions))
-    return "## 부록\n\n" + "\n\n".join(p for p in parts if p)
+    return clean_reader_report("## 부록\n\n" + "\n\n".join(p for p in parts if p))
 
 
 def add_references(report: str, appendix: str, references: list) -> str:
     """Fill a new paper's reference section using the same extraction as SOURCES.md; leave old reports intact."""
+    report = clean_reader_report(report)
     heading = re.search(r"(?m)^## 참고[ \t]*$", report)
     if not heading:
         return report
