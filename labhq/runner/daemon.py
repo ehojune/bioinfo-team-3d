@@ -74,7 +74,7 @@ from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_a
 from ..tools.annot_alphagenome_atlas import credential, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
-from . import local_jobs
+from . import local_jobs, report_artifacts
 from ..hpc_login_budget import LoginLimitReached, budget_for, request_scope
 from ..hpc_session import queue_wait
 from .hpc_jobs import SharedStatusQueries, submit_job
@@ -810,7 +810,8 @@ class Runner:
         d = ev.model_dump(mode="json")
         ws = self.workspaces.get(ev.task_id or "")
         if ws:
-            ws.append_event(d)
+            ws.append_event({**d, "data": {k: v for k, v in d["data"].items() if k != report_artifacts.RESULT_FIELD}}
+                            if report_artifacts.RESULT_FIELD in d["data"] else d)
         elif ev.task_id in self.event_buffers:
             self.event_buffers[ev.task_id].append(d)
         if d.get("type") == "runner.roster":
@@ -2647,9 +2648,8 @@ class Runner:
                 await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
-            artifact_contract = (task.meta.get("kind") in {"step", "result_correction", "slot_repair"} and
-                                 isinstance(task.meta.get("upstream_artifacts"), dict))
-            from .step_handoff import required_hpc_revisions, require_hpc_snapshots
+            from .step_handoff import artifact_contract_for, required_hpc_revisions, require_hpc_snapshots
+            artifact_contract = artifact_contract_for(task)
             hpc_revisions = required_hpc_revisions(task, whole_hpc, artifact_contract)
             staged_inputs: list[str] = []
             for directory in ([] if artifact_contract else task.meta.get("upstream_dirs", [])):
@@ -2695,6 +2695,8 @@ class Runner:
                 unavailable.update({sid: f"inputs/{sid} unavailable (HPC ancestor missing)"
                                     for sid in hpc_revisions if sid not in artifacts})
                 require_hpc_snapshots(hpc_revisions, unavailable)
+                if task.meta.get("kind") == "analysis_draft" and artifacts.keys() & unavailable.keys():
+                    raise ValueError("A collected report input is unavailable")
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
                         "These copies are read-only; do not read sibling workspaces. "
                         "Save scripts and intermediate files only in outputs/ or .tmp/. "
@@ -3659,7 +3661,11 @@ class Runner:
                  ({"error": short(result.error, 200)} if result.error else {}))
         if result.error_kind == "halted":  # stopped by the PI and resumable, not a problem to show
             state, extra = "idle", {"halted": True}
-        await emit_final({"state": state, **extra}, result.model_dump(mode="json"))
+        result_data = result.model_dump(mode="json")
+        if task.meta.get(report_artifacts.RESULT_FIELD) and not restricted_task(task, self.s):
+            result_data[report_artifacts.RESULT_FIELD] = await asyncio.to_thread(
+                report_artifacts.collect, ws.dir, task.meta, result)
+        await emit_final({"state": state, **extra}, result_data)
         return result
 
     # ---------------- broker callbacks (from MCP tools) ----------------

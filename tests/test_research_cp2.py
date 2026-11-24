@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+from hashlib import sha256
 
 import pytest
 from pydantic import ValidationError
@@ -12,6 +13,7 @@ from labhq.bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
 from labhq.orchestrator import cso
 from labhq.orchestrator.cso import Orchestrator
 from labhq.evidence.verify import SourceRecord, SourceUpdate, StaticResolver
+from labhq.research import analysis_draft
 from labhq.research.contract import plan_sha256, research_result_errors, salvage_research_result
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
@@ -143,11 +145,18 @@ async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact, pha
 
     await Orchestrator(hub).run_request("r")
 
-    prompt = next(task.prompt for task in hub.calls if task.meta["kind"] == "step")
+    task = next(task for task in hub.calls if task.meta["kind"] == "step")
+    prompt = task.prompt
     for instruction in ("cross-check sample information against public records",
                         "record the controls and expected direction",
                         "compare results with published values in a table"):
         assert (instruction in prompt) is compact
+    assert ("save a draft for the PI" in prompt) is compact
+    drafts = [path for path in task.meta["optional_outputs"] if path.startswith("outputs/labhq-analysis-draft-")]
+    assert bool(drafts) is compact
+    req = hub.requests["r"]
+    assert req["research_contract"]["plan_sha256"] == plan_sha256(req["plan"])
+    assert not set(drafts).intersection(req["plan"]["steps"][0].get("optional_outputs", []))
     assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
 
 
@@ -1423,3 +1432,385 @@ async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeyp
     assert '재배정: worker에게 단계 배정' in card['summary']
     assert 'Paper skill: fixture' in card['summary']
     assert len(card['summary']) <= 699
+
+
+# Compact report handoff after the evidence checkpoint (#1490).
+
+def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None):
+    from tests.test_research_report import REPORT, _hub
+    from labhq.runner import report_artifacts
+
+    hub = _hub()
+    req = hub.requests["r"]
+    req["research_options"] = {"compact_workflow": True}
+    reply = hub.reply
+    approve = hub.request_approval
+    if gateway:
+        hub.report_artifacts = gateway.report_artifacts
+
+    async def with_draft(task):
+        result = await reply(task)
+        if task.meta["kind"] != "step":
+            return result
+        [path] = task.meta["optional_outputs"]
+        assert path in task.meta["outputs"] and path not in task.meta["required_outputs"]
+        assert path in task.prompt
+        target = tmp_path / path
+        target.parent.mkdir()
+        table = result.outputs[0]
+        (tmp_path / table).write_bytes(b"effect\n0.25\n")
+        body = {
+            "empty": " \n",
+            "anchor": "Unknown claim [[claim:s1/wrong]].",
+            "table": f"The [measured effect]({table}) was 0.75 [[claim:s1/c1]].",
+            "table_missing": "The [measured effect](outputs/missing.tsv) was 0.25 [[claim:s1/c1]].",
+            "portable": REPORT + f"\n\nThe [measured effect](steps/s1/{table}) was 0.25 [[claim:s1/c1]].",
+        }.get(problem, REPORT)
+        data = b"\xff" if problem == "encoding" else body.encode("utf-8")
+        target.write_bytes(data)
+        hashes = {**result.output_sha256, table: sha256(b"effect\n0.25\n").hexdigest()}
+        if problem != "unhashed":
+            hashes[path] = sha256(data).hexdigest()
+        result = result.model_copy(update={
+            "workdir": str(tmp_path),
+            "outputs": [*result.outputs, *([] if problem == "missing" else [path])],
+            "output_sha256": hashes,
+        })
+        if remote:
+            assert task.meta[report_artifacts.RESULT_FIELD] == path
+            if remote == "changed_source":
+                (tmp_path / table).write_bytes(b"effect\n0.5\n")
+            payload = report_artifacts.collect(tmp_path, task.meta, result)
+            if remote == "changed_source":
+                assert table not in payload
+            elif remote == "missing_draft":
+                del payload[path]
+            elif remote == "changed_draft":
+                payload[path] = payload[table]
+            elif remote == "changed_table":
+                payload[table] = payload[path]
+            elif remote == "wrong_dispatch":
+                result = result.model_copy(update={"agent_id": "unrelated"})
+            target.unlink()
+            (tmp_path / table).unlink()
+            wire = {"type": "task.result", "task_id": task.id, "request_id": task.request_id, "runner_seq": 1,
+                    "data": {**result.model_dump(mode="json"), report_artifacts.RESULT_FIELD: payload}}
+            sent = asyncio.create_task(gateway.dispatch(task))
+            await asyncio.wait_for(gateway.runners["remote"].dispatched.wait(), 5)
+            await gateway.on_runner_message("remote", json.loads(json.dumps(wire)),
+                                            gateway.runners["remote"], "remote-1")
+            result = await asyncio.wait_for(sent, 5)
+            journal = gateway.store.runner_inbox("remote", "remote-1", 1)
+            assert journal["state"] == "completed" and report_artifacts.RESULT_FIELD not in journal["message"]["data"]
+            events = gateway.store.events_since(0)
+            assert any(event["type"] == "task.result" for event in events)
+            assert all(report_artifacts.RESULT_FIELD not in event.get("data", {}) for event in events)
+        return result
+
+    async def after_step(**kwargs):
+        if problem == "changed" and kwargs["kind"] == "research_evidence":
+            draft = analysis_draft.for_request(req)
+            (tmp_path / draft.path).write_bytes(b"Changed after collection [[claim:s1/c1]].")
+        return await approve(**kwargs)
+
+    hub.reply = with_draft
+    hub.request_approval = after_step
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_compact_report_uses_collected_analyst_draft_without_cso_writing(tmp_path):
+    from tests.test_research_report import REPORT, _kinds
+
+    hub = _draft_hub(tmp_path)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert _kinds(hub) == ["plan", "step", "review"]
+    assert req["status"] == "done" and req["outcome"] == "research_reported"
+    assert hub.calls[1].agent_id == "worker"
+    assert req["report"].startswith(REPORT)
+    assert "no external cohort" in req["report"]
+    assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
+    assert req["research_contract"]["plan_sha256"] == plan_sha256(req["plan"])
+    assert analysis_draft.for_request(req).path in req["results"]["s1"]["output_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_inline_draft_uses_portable_result_links(tmp_path):
+    hub = _draft_hub(tmp_path, problem="portable")
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert "Use steps/<step_id>/outputs/<file> for every result link" in hub.calls[1].prompt
+    path = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
+    assert req["status"] == "done" and f"]({path})" in req["report"]
+    assert req["report_package"]["tables"][0]["path"] == path
+    assert req["report_consistency"]["checked"]["tables"] == [path]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remote", [
+    "complete", "missing_draft", "changed_draft", "changed_source", "changed_table", "wrong_dispatch",
+])
+async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path, remote):
+    from labhq.gateway.server import Hub
+
+    class Socket:
+        def __init__(self):
+            self.dispatched = asyncio.Event()
+
+        async def send_text(self, frame):
+            if json.loads(frame)["type"] == "task.dispatch":
+                self.dispatched.set()
+
+    settings = _settings()
+    settings.gateway.state_dir = str(tmp_path / "gateway")
+    gateway = Hub(settings)
+    runner_dir = tmp_path / "runner"
+    runner_dir.mkdir()
+    try:
+        gateway.register_runner("remote", Socket(), [{"id": "worker"}], incarnation="remote-1")
+        hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway)
+        await Orchestrator(hub).run_request("r")
+        req = hub.requests["r"]
+        task_id = req["results"]["s1"]["task_id"]
+        files = gateway.report_artifacts(task_id) or {}
+        assert gateway.report_artifacts("unrelated") is None
+    finally:
+        gateway.store.close()
+    table = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
+    assert not list((runner_dir / "outputs").iterdir())
+    if remote == "complete":
+        assert files[table.removeprefix("steps/s1/")] == "effect\n0.25\n"
+        assert req["status"] == "done" and req["outcome"] == "research_reported"
+        assert req["report_consistency"]["checked"]["tables"] == [table]
+        assert f"]({table})" in req["report"]
+    elif remote.endswith("_draft") or remote == "wrong_dispatch":
+        assert analysis_draft.for_request(req).path not in files
+        assert req["status"] == "failed" and req["outcome"] == "research_failed"
+        assert req["research_contract"]["failure"]["stage"] == "analysis_draft"
+    else:
+        assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
+        assert req["report_consistency"]["checked"]["unread_tables"] == [table]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("problem", "error"), [
+    ("missing", "did not deliver"),
+    ("unhashed", "no collected SHA-256"),
+    ("changed", "differs from the collected SHA-256"),
+    ("empty", "is empty"),
+    ("encoding", "unreadable as UTF-8"),
+    ("anchor", None),
+    ("table", None),
+    ("table_missing", None),
+])
+async def test_compact_report_rejects_missing_or_invalid_draft(tmp_path, problem, error):
+    from tests.test_research_report import _kinds
+
+    hub = _draft_hub(tmp_path, problem=problem)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert "synthesis" not in _kinds(hub)
+    if error:
+        assert req["outcome"] == "research_failed"
+        assert req["research_contract"]["failure"]["stage"] == "analysis_draft"
+        assert error in req["error"]
+    else:
+        assert req["outcome"] == "report_incomplete"
+        if problem == "anchor":
+            assert any("claim wrong" in line for line in req["research_contract"]["report_check"]["problems"])
+        elif problem == "table":
+            assert req["research_contract"]["report_consistency"]["findings"][0]["kind"] == "number"
+        else:
+            assert req["research_contract"]["report_consistency"]["checked"]["unread_tables"] == [
+                "outputs/missing.tsv"]
+
+
+@pytest.mark.asyncio
+async def test_compact_resumes_the_saved_draft_and_review(tmp_path):
+    from tests.test_research_report import _kinds
+
+    hub = _draft_hub(tmp_path)
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    report, saved_review = req["report"], req["research_contract"]["review"]
+    _interrupt(hub)
+    calls, approvals = len(hub.calls), len(hub.approvals)
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert _kinds(hub, calls) == [] and hub.approvals[approvals:] == []
+    assert req["status"] == "done" and req["report"] == report
+    assert req["research_contract"]["review"] == saved_review
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved", [None, {"compact_workflow": False}])
+async def test_legacy_report_and_plan_hash_follow_frozen_options(tmp_path, saved):
+    from tests.test_research_report import REPORT, _hub, _kinds
+
+    compact = _draft_hub(tmp_path)
+    await Orchestrator(compact).run_request("r")
+    legacy = _hub()
+    legacy.s.research.compact_workflow = True
+    if saved is not None:
+        legacy.requests["r"]["research_options"] = saved
+    await Orchestrator(legacy).run_request("r")
+
+    req = legacy.requests["r"]
+    assert _kinds(legacy) == ["plan", "step", "review", "synthesis"]
+    assert req["status"] == "done" and req["report"].startswith(REPORT)
+    assert req["plan"] == compact.requests["r"]["plan"]
+    assert req["research_contract"]["plan_sha256"] == compact.requests["r"]["research_contract"]["plan_sha256"]
+
+
+def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
+    plan = valid_plan(steps=3)
+    preparation, analysis, validation = plan["steps"]
+    preparation["phase"] = "evidence"
+    analysis["depends_on"] = ["s1"]
+    validation.update(phase="validation", depends_on=["s2"])
+    plan["steps"] = [validation, analysis, preparation]
+    req = {"plan": plan, "research_options": {"compact_workflow": True}, "research_contract": {"round": 1}}
+
+    draft = analysis_draft.for_request(req)
+    assert draft.step_id == "s2" and not draft.inline
+    req["research_contract"]["round"] = 2
+    assert analysis_draft.for_request(req).path != draft.path
+    assert list(analysis_draft.new_round_rerun(req, plan)) == ["s2"]
+    analysis["phase"] = "evidence"
+    assert analysis_draft.for_request(req).step_id == "s3" and analysis_draft.for_request(req).inline
+    plan["branches"] = [{"id": "a"}]
+    assert analysis_draft.for_request(req) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("shape", "resumable", "remote"), [
+    ("validation_after_analysis", True, False), ("validation_after_analysis", True, True),
+    ("parallel", True, False), ("parallel", False, False),
+])
+async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable, remote):
+    from types import SimpleNamespace
+
+    from labhq.runner import report_artifacts
+    from labhq.runner.step_handoff import artifact_contract_for
+    from labhq.runner.step_inputs import stage_inputs
+    from tests.test_research_report import REPORT, _hub, _kinds
+
+    hub = _hub()
+    req = hub.requests["r"]
+    req["research_options"] = {"compact_workflow": True}
+    hub.supports_resume = lambda agent_id: resumable and agent_id == "worker"
+    received = {}
+    if remote:
+        hub.report_artifacts = received.get
+    plan = valid_plan(steps=2)
+    if shape == "validation_after_analysis":
+        plan["steps"][1].update(phase="validation", depends_on=["s1"])
+    base_reply = hub.reply
+    later_finding = "Sensitivity test reproduced the estimate [[claim:s2/c2]]."
+    old_figure = "![Earlier conclusion](steps/s1/outputs/graphical_abstract.svg)"
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+        if kind == "analysis_draft":
+            assert task.resume_session_id == "analysis-s1"
+            assert not task.meta.get("workdir")
+            assert req["research_contract"]["checkpoints"]["cp2"]["decision"] == "approved"
+            assert "Sensitivity test reproduced the estimate" in task.context
+            assert "### s1" in task.context and "### s2" in task.context
+            [path] = task.meta["outputs"]
+            target = tmp_path / "report" / path
+            target.parent.mkdir(parents=True)
+            assert artifact_contract_for(task)
+            inputs = task.meta["upstream_artifacts"]
+            assert set(inputs) == {"s1", "s2"}
+            _, refused = stage_inputs(SimpleNamespace(task=task, dir=tmp_path / "report"),
+                                      inputs, tmp_path, [], [], 1024, 4096)
+            assert not refused
+            for sid, row in inputs.items():
+                table = row["outputs"][0].removeprefix("outputs/")
+                assert f"inputs/{sid}/{table}" in task.context
+                assert (tmp_path / "report" / "inputs" / sid / table).read_bytes() == sid.encode()
+            data = f"{REPORT}\n\n{old_figure}\n\n{later_finding}".encode("utf-8")
+            target.write_bytes(data)
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, workdir=str(tmp_path / "report"),
+                                session_id=task.resume_session_id, text=f"Draft saved at {path}", outputs=[path],
+                                output_sha256={path: sha256(data).hexdigest()})
+            if remote:
+                payload = report_artifacts.collect(tmp_path / "report", task.meta, result)
+                received[task.id] = report_artifacts.receive(payload, task.meta, result)
+                target.unlink()
+            return result
+        if kind != "step":
+            if kind == "review":
+                receipt = req["research_contract"]["analysis_draft"]
+                assert receipt["result"]["session_id"] == "analysis-s1"
+                assert receipt["path"] in receipt["result"]["output_sha256"]
+            return await base_reply(task)
+        assert not task.meta["optional_outputs"]
+        sid = task.meta["step_id"]
+        ledger = _cp2_result(hub, task)
+        [path] = task.meta["required_outputs"]
+        if sid == "s2":
+            ledger["claims"][0].update(id="c2", statement="Sensitivity test reproduced the estimate.")
+            ledger["links"][0]["claim_id"] = "c2"
+            ledger["evidence"][0].update(id="e2", slots=["e2"])
+            ledger["links"][0]["evidence_id"] = "e2"
+        ledger["artifact_refs"][0]["path"] = path
+        workdir = tmp_path / sid
+        (workdir / path).parent.mkdir(parents=True)
+        (workdir / path).write_bytes(sid.encode())
+        hashes = {path: sha256(sid.encode()).hexdigest()}
+        if sid == "s1":
+            figure = "outputs/graphical_abstract.svg"
+            (workdir / figure).write_bytes(b"<svg/>")
+            hashes[figure] = sha256(b"<svg/>").hexdigest()
+        (workdir / "manifest.json").write_text(json.dumps({
+            "task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}},
+        }), encoding="utf-8")
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                          workdir=str(workdir), outputs=list(hashes), output_sha256=hashes,
+                          session_id=f"analysis-{sid}")
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    if resumable:
+        assert _kinds(hub) == ["plan", "step", "step", "analysis_draft", "review"], req.get("error")
+        assert req["status"] == "done" and later_finding in req["report"]
+        assert old_figure not in req["report"] and not req["report_package"]["figures"]
+        assert "outputs/graphical_abstract.svg" in req["results"]["s1"]["outputs"]
+        assert req["research_contract"]["report_check"] == {"anchors": 2, "problems": []}
+        report = req["report"]
+        receipt = req["research_contract"]["analysis_draft"]
+        if shape == "parallel":
+            (tmp_path / "report" / receipt["path"]).write_bytes(b"Changed after the review.")
+        req["research_contract"]["analysis_draft"] = json.loads(json.dumps(receipt))
+        _interrupt(hub)
+        calls, approvals = len(hub.calls), len(hub.approvals)
+        hub.supports_resume = lambda _: False
+        await Orchestrator(hub).run_request("r", resume=True)
+        req = hub.requests["r"]
+        assert _kinds(hub, calls) == [] and hub.approvals[approvals:] == []
+        if shape == "parallel":
+            assert req["status"] == "failed" and "differs from the collected SHA-256" in req["error"]
+        else:
+            assert req["status"] == "done" and req["report"] == report
+        if remote:
+            received[receipt["result"]["task_id"]][receipt["path"]] = "Y2hhbmdlZA=="
+            _interrupt(hub)
+            await Orchestrator(hub).run_request("r", resume=True)
+            assert _kinds(hub, calls) == []
+            assert req["status"] == "failed" and "differs from the collected SHA-256" in req["error"]
+    else:
+        assert _kinds(hub) == ["plan", "step", "step"]
+        assert req["status"] == "failed" and "cannot be resumed" in req["error"]
