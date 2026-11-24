@@ -1550,11 +1550,13 @@ async def test_inline_draft_uses_portable_result_links(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("remote", [
-    "complete", "missing_draft", "changed_draft", "changed_source", "changed_table", "wrong_dispatch",
+@pytest.mark.parametrize(("remote", "audit"), [
+    ("complete", False), ("missing_draft", False), ("changed_draft", False), ("changed_source", False),
+    ("changed_table", False), ("wrong_dispatch", False), ("complete", True),
 ])
-async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path, remote):
+async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path, remote, audit):
     from labhq.gateway.server import Hub
+    from tests.test_research_report import ACCEPT
 
     class Socket:
         def __init__(self):
@@ -1572,6 +1574,18 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
     try:
         gateway.register_runner("remote", Socket(), [{"id": "worker"}], incarnation="remote-1")
         hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway)
+        if audit:
+            hub.requests["r"]["research_options"]["audit_before_cp2"] = True
+            reply = hub.reply
+
+            async def audit_reply(task):
+                if task.meta["kind"] != "review":
+                    return await reply(task)
+                assert [card["kind"] for card in hub.approvals] == ["research_plan"]
+                assert "Automated checks of the draft" in task.prompt
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ACCEPT)
+
+            hub.reply = audit_reply
         await Orchestrator(hub).run_request("r")
         req = hub.requests["r"]
         task_id = req["results"]["s1"]["task_id"]
@@ -1586,6 +1600,9 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
         assert req["status"] == "done" and req["outcome"] == "research_reported"
         assert req["report_consistency"]["checked"]["tables"] == [table]
         assert f"]({table})" in req["report"]
+        if audit:
+            checks = hub.approvals[1]["detail"]["independent_audit"]["checks"]
+            assert checks["table_consistency"]["checked"]["tables"] == [table]
     elif remote.endswith("_draft") or remote == "wrong_dispatch":
         assert analysis_draft.for_request(req).path not in files
         assert req["status"] == "failed" and req["outcome"] == "research_failed"

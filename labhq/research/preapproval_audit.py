@@ -65,7 +65,7 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
                for sid, result in results.items() if result.ok}
     complete = all(re.fullmatch(r"[0-9a-f]{64}", digest or "")
                    for files in outputs.values() for digest in files.values())
-    inventory = {sid: results[sid].model_dump(include={"task_id", "workdir", "workdir_id", "outputs",
+    inventory = {sid: results[sid].model_dump(include={"task_id", "workdir", "workdir_id", "ok", "outputs",
                                                        "output_sha256"}) for sid in outputs}
     if not draft.inline:
         inventory["@draft"] = {"task_id": collected.task_id, "workdir": collected.workdir,
@@ -76,7 +76,7 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
         if file["status"] == MISMATCH:
             raise ValueError(f"Collected output changed: {file['step_id']}/{file['path']}")
     verified = complete and all(file["status"] == OK for file in observed["files"])
-    tables = await analysis_draft.check_tables(hub, request, body, results)
+    tables = await analysis_draft.check_tables(hub, request, body, {sid: inventory[sid] for sid in outputs})
     checks = {"claims": check_report(body, **claim_context),
               "table_consistency": report_consistency.check(body, tables)}
     binding = {"plan_sha256": contract["plan_sha256"],
