@@ -25,7 +25,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 TABLE_SUFFIXES = {".tsv", ".csv"}
-MAX_TABLE_BYTES = 2_000_000  # a larger table is not read for the check (said so in the result)
+MAX_TABLE_BYTES = 3_000_000  # local and transferred tables above this limit are reported as unread
 MAX_FINDINGS = 40
 # A Markdown link: "<...>" destinations may hold spaces (the report contract allows them), plain ones may not.
 _LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^<>\n]+)>|([^()\s<>]+))(?:\s+\"[^\"]*\")?\s*\)")
