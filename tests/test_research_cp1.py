@@ -322,6 +322,8 @@ async def test_cp1_planner_and_correction_use_the_saved_option(compact):
     assert f"at most {limit} steps" in prompt
     split_rule = "Keep the biological interpretation, an independent technical or scientific QC step"
     assert (split_rule in prompt) is not compact
+    assert ("Plan claim_ids that cover the expected report statements and table rows" in prompt) is compact
+    assert ("Put their exact outputs/<file> paths in outputs and in the step instructions" in prompt) is compact
     assert [task.meta["kind"] for task in hub.calls] == ["plan"] * (2 if compact else 1)
     if compact:
         assert "research plan has 4 steps; maximum is 3" in hub.calls[1].prompt

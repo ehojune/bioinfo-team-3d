@@ -151,7 +151,9 @@ async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact, pha
     prompt = task.prompt
     for instruction in ("cross-check sample information against public records",
                         "record the controls and expected direction",
-                        "compare results with published values in a table"):
+                        "compare results with published values in a table",
+                        "write and read back the declared evidence outputs",
+                        "set source.locator to its exact row and column"):
         assert (instruction in prompt) is compact
     assert ("save a draft for the PI" in prompt) is compact
     drafts = [path for path in task.meta["optional_outputs"] if path.startswith("outputs/labhq-analysis-draft-")]
@@ -1551,6 +1553,126 @@ async def test_inline_draft_uses_portable_result_links(tmp_path):
     assert req["report_consistency"]["checked"]["tables"] == [path]
 
 
+@pytest.mark.parametrize("case", ["linked", "mixed_evidence", "unreported", "wrong_file", "unanchored", "unsupported"])
+async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_path, case):
+    from labhq.research.independent_review import render_ledgers
+    from tests.test_research_report import _kinds
+
+    hub = _audit_hub(tmp_path)
+    hub.s.research.literal_source_check = True
+    hub.s.research.result_corrections = 0
+    plan = valid_plan()
+    summary, table, qc = ("outputs/run_summary.json", "outputs/sensitivity.tsv", "outputs/qc.tsv")
+    files = {summary: b'{"input_rows": 4321}\n', table: b'check\teffect\nsubset\t0.64\n',
+             qc: b'sample\treads\ncontrol\t80\n'}
+    if case == "mixed_evidence":
+        files[qc] = b"check\teffect\nalternative\t-0.2\n"
+    plan["steps"][0].update(outputs=[path for path in files if case != "unreported" or path != summary],
+                            claim_ids=["c1", "c2"])
+    base_reply = hub.reply
+    row_mark = "" if case == "unanchored" else " [[claim:s1/c2]]"
+    body = (f"[Input summary](steps/s1/{summary}) recorded 4,321 input rows [[claim:s1/c1]].\n\n"
+            f"| Check | Effect |\n| --- | --- |\n| [Subset](steps/s1/{table}) | 0.64{row_mark} |\n")
+    if case == "unanchored":
+        body += "\nThe initial count was 4,321.\n"
+    if case == "unsupported":
+        body += "\nThe method supports the proposed mechanism [[claim:s1/mechanism]].\n"
+
+    async def reply(task):
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+        if task.meta["kind"] != "step":
+            return await base_reply(task)
+        ledger = _cp2_result(hub, task)
+        draft_path, = task.meta["optional_outputs"]
+        evidence_path = qc if case == "wrong_file" else summary
+        ledger["artifact_refs"] = [{"artifact_id": "a1", "path": evidence_path},
+                                   {"artifact_id": "a2", "path": table}]
+        claim, = ledger["claims"]
+        claim["statement"] = "The input contained 4,321 rows."
+        ledger["claims"].append({**claim, "id": "c2", "statement": "The subset effect was 0.64."})
+        ledger["links"].append({**ledger["links"][0], "claim_id": "c2", "evidence_id": "e2"})
+        evidence, = ledger["evidence"]
+        evidence.update(source={"artifact_id": "a1", "locator": "input_rows"},
+                        observation="Input row count",
+                        quantities=[{"id": "q1", "measure": "input row count", "value": 4321, "unit": "rows",
+                                     "conditions": ["before filtering"], "denominator": "whole input"}])
+        ledger["evidence"].append({**evidence, "id": "e2", "slots": [], "independence_group": "subset",
+                                   "source": {"artifact_id": "a2", "locator": "line 2, effect"},
+                                   "observation": "Subset effect",
+                                   "quantities": [{"id": "q2", "measure": "effect", "value": 0.64,
+                                                   "unit": "dimensionless", "conditions": ["subset"],
+                                                   "denominator": "subset samples"}]})
+        if case == "mixed_evidence":
+            ledger["claims"][1].update(status="partially_supported", status_reason="alternative disagrees")
+            ledger["artifact_refs"].append({"artifact_id": "a3", "path": qc})
+            subset = ledger["evidence"][1]
+            ledger["evidence"].append({**subset, "id": "e3", "independence_group": "alternative",
+                                       "source": {"artifact_id": "a3", "locator": "line 2, effect"},
+                                       "observation": "Alternative effect",
+                                       "quantities": [{**subset["quantities"][0], "id": "q3", "value": -0.2,
+                                                       "conditions": ["alternative"], "denominator": "alternative samples"}]})
+            ledger["links"].append({**ledger["links"][1], "evidence_id": "e3", "relation": "contradicts",
+                                    "rationale": "the alternative shows the opposite direction"})
+        written = {**files, draft_path: body.encode("utf-8")}
+        for path, data in written.items():
+            target = tmp_path / path
+            target.parent.mkdir(exist_ok=True)
+            target.write_bytes(data)
+        # Model the runner's declaration-based collection with real bytes, receipts and one unreported file.
+        collected = [path for path in task.meta["outputs"] if path in written]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                          workdir=str(tmp_path), workdir_id=tmp_path.name, outputs=collected,
+                          output_sha256={path: sha256(written[path]).hexdigest() for path in collected},
+                          unreported_outputs=[path for path in written if path not in collected])
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    contract = req["research_contract"]
+    accepted = case in {"linked", "mixed_evidence"}
+    assert req["outcome"] == ("research_reported" if accepted else "report_incomplete")
+    assert _kinds(hub) == ["plan", "step", "review"]
+    cp2 = contract["checkpoints"]["cp2"]
+    states = {check["evidence_id"]: check["state"] for check in cp2["literal_checks"]}
+    expected = {"unreported": "unverified", "wrong_file": "mismatch"}.get(case, "matched")
+    assert states == {"e1": expected, "e2": "matched", **({"e3": "matched"} if case == "mixed_evidence" else {})}
+    assert cp2["unreported_outputs"]["s1"] == ([summary] if case == "unreported" else [])
+    problems = contract["report_check"]["problems"]
+    assert problems == cp2["independent_audit"]["checks"]["claims"]["problems"]
+    result = TaskResult.model_validate(req["results"]["s1"])
+    context = render_ledgers(req["plan"]["steps"], {"s1": result}, {"s1": result.structured},
+                             cp2["refused_evidence"], cp2["unsupported_claims"], cp2["artifact_sha256"], 2000,
+                             staged=True)
+    assert "chars clipped" in context
+    marks = context.split("Available claim anchors (read their evidence before use):\n", 1)[1].split("Ledger:\n", 1)[0]
+    marks = dict(line.split(" ", 1) for line in marks.splitlines())
+    linked_evidence = json.loads(marks["[[claim:s1/c2]]"])["evidence"]
+    assert linked_evidence["e2"]["artifact_path"] == "inputs/s1/sensitivity.tsv"
+    assert linked_evidence["e2"]["locator"] == "line 2, effect"
+    assert linked_evidence["e2"]["relation"] == "supports"
+    if case == "mixed_evidence":
+        assert linked_evidence["e3"]["artifact_path"] == "inputs/s1/qc.tsv"
+        assert linked_evidence["e3"]["locator"] == "line 2, effect"
+        assert linked_evidence["e3"]["relation"] == "contradicts"
+    assert ("[[claim:s1/c1]]" in marks) == (expected == "matched")
+    if accepted:
+        assert problems == []
+        assert cp2["artifact_sha256"]["s1/a1"] == sha256(files[summary]).hexdigest()
+        assert cp2["artifact_sha256"]["s1/a2"] == sha256(files[table]).hexdigest()
+        assert req["report_consistency"]["checked"]["tables"] == [f"steps/s1/{table}"]
+    elif case in {"unreported", "wrong_file"}:
+        assert len(problems) == 1 and problems[0].startswith("[[claim:s1/c1]]:")
+        assert [row["evidence_id"] for row in cp2["refused_evidence"]] == ["e1"]
+    elif case == "unanchored":
+        assert len(problems) == 2
+        assert problems[0].startswith("numeric prose needs a claim anchor")
+        assert problems[1].startswith("table row needs a claim anchor")
+    else:
+        assert len(problems) == 1 and "mechanism is not in step s1's ledger" in problems[0]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("remote", "audit"), [
     ("complete", False), ("missing_draft", False), ("changed_draft", False), ("changed_source", False),
@@ -2099,7 +2221,7 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         hub.report_artifacts = received.get
     plan = valid_plan(steps=2)
     if shape == "validation_after_analysis":
-        plan["steps"][1].update(phase="validation", depends_on=["s1"])
+        plan["steps"][1].update(phase="validation", depends_on=["s1"], outputs=list(plan["steps"][0]["outputs"]))
     base_reply = hub.reply
     later_finding = "Sensitivity test reproduced the estimate [[claim:s2/c2]]."
     old_figure = "![Earlier conclusion](steps/s1/outputs/graphical_abstract.svg)"
@@ -2118,6 +2240,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
                 assert saved["cp2"]["decision"] == "approved"
             assert "Sensitivity test reproduced the estimate" in task.context
             assert "### s1" in task.context and "### s2" in task.context
+            assert "Available claim anchors (read their evidence before use):\n[[claim:s1/c1]]" in task.context
+            assert "Available claim anchors (read their evidence before use):\n[[claim:s2/c2]]" in task.context
             [path] = task.meta["outputs"]
             target = tmp_path / "report" / path
             target.parent.mkdir(parents=True)
@@ -2131,6 +2255,11 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
                 table = row["outputs"][0].removeprefix("outputs/")
                 assert f"inputs/{sid}/{table}" in task.context
                 assert (tmp_path / "report" / "inputs" / sid / table).read_bytes() == sid.encode()
+            binding = next(line for line in task.context.splitlines() if line.startswith("[[claim:s2/c2]] "))
+            evidence_path = json.loads(binding.split(" ", 1)[1])["evidence"]["e2"]["artifact_path"]
+            producer = "s1" if shape == "validation_after_analysis" else "s2"
+            assert evidence_path == f"inputs/{producer}/{inputs[producer]['outputs'][0].removeprefix('outputs/')}"
+            assert (tmp_path / "report" / evidence_path).read_bytes() == producer.encode()
             data = f"{REPORT}\n\n{old_figure}\n\n{later_finding}".encode("utf-8")
             if audit:
                 data = b"\xef\xbb\xbf" + data
@@ -2164,6 +2293,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
             ledger["evidence"][0].update(id="e2", slots=["e2"])
             ledger["links"][0]["evidence_id"] = "e2"
         ledger["artifact_refs"][0]["path"] = path
+        if sid == "s2" and shape == "validation_after_analysis":
+            ledger["artifact_refs"][0]["path"] = f"s1/{path}" if audit else str(tmp_path / "s1" / path)
         workdir = tmp_path / sid
         (workdir / path).parent.mkdir(parents=True)
         (workdir / path).write_bytes(sid.encode())

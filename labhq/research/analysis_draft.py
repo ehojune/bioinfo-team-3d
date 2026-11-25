@@ -28,8 +28,9 @@ class AnalysisDraft:
 
     def prompt(self, *, repairing: bool = False) -> str:
         if self.inline:
-            handoff = ("Return the result ledger. Put graphical_abstract.svg below the title and include key figures "
-                       "if produced.")
+            handoff = ("Finish the result ledger using declared outputs and read it back before writing. Return "
+                       "that same ledger with your result. Put graphical_abstract.svg below the title and include "
+                       "key figures if produced.")
         else:
             handoff = "Read the final results from inputs/<step_id>/. "
             if not repairing:
@@ -38,9 +39,16 @@ class AnalysisDraft:
         return (
             f"\n\nIn this session, after analysis and QC, save a draft for the PI as UTF-8 Markdown at {self.path}. "
             f"{handoff} Omit the draft if you have to stop for a decision. Use only collected artifacts and "
-            "accepted sources. Include exact [[claim:<step_id>/<claim_id>]] anchors for conclusions, numbers "
-            "and table rows. Link table claims to their tables. Use steps/<step_id>/outputs/<file> for every "
-            "result link, including your own outputs. State what could not be established and why. "
+            "accepted sources. Before writing, map each factual sentence and table row to the ledger claim that "
+            "supports it and read its linked evidence at the recorded location. Use a supporting or contradicting "
+            "link appropriate to the claim's status, with context links used only for context. Include material "
+            "counterevidence and preserve the limits recorded in the ledger. Include exact "
+            "[[claim:<step_id>/<claim_id>]] anchors on each numeric or conclusion sentence and in each table data row. "
+            "Cite every claim needed for a comparison. Match the artifact's value, units and denominator. "
+            "Link table claims to their tables. Use steps/<step_id>/outputs/<file> for every "
+            "result link, including your own outputs. During readback, remove any unsourced number, narrow wording "
+            "to what the linked evidence establishes, and state unresolved findings as unverified without a guessed "
+            "value. Keep benchmarks, observations and hypotheses distinct. "
             "The CSO adds approval and review records.\n" + PAPER_RULE
         )
 

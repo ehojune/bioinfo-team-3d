@@ -8,6 +8,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..evidence.claims import STATUS_NEEDS, normalize_artifact_path
+from ..evidence.report_check import accepted_evidence_ids, anchor, claim_rows
 from ..models import Task, TaskResult
 from ..request_persistence import persist_request
 from ..util import clip, extract_json, input_relpath
@@ -208,6 +210,55 @@ def _without_empty(value: Any) -> Any:
     return value
 
 
+def _staged_artifact(sid: str, ref: dict, results: dict[str, TaskResult]) -> str | None:
+    """Resolve a CP2 artifact binding to the path staged for the report writer."""
+    if not (digest := ref["artifact_sha256"]):
+        return None
+    name = normalize_artifact_path(ref["path"])
+    matches = set()
+    for producer, result in results.items():
+        if not result.ok or not result.workdir:
+            continue
+        for path in result.outputs:
+            if result.output_sha256.get(path) != digest:
+                continue
+            aliases = [f"{root}/{path}" for root in (result.workdir_id, result.workdir) if root]
+            if producer == sid:
+                aliases.append(path)
+            if name in map(normalize_artifact_path, aliases) and (staged := input_relpath(producer, path)):
+                matches.add(staged)
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _draft_claim_lines(sid: str, ledger: dict, unsupported: list[dict], refused: list[dict],
+                       results: dict[str, TaskResult], limit: int) -> str:
+    """Keep each advertised anchor together with its evidence locations, even if the ledger clips."""
+    citable, _ = claim_rows({sid: ledger}, unsupported, refused=refused)
+    accepted = accepted_evidence_ids(ledger, sid, refused)
+    sources = {row["id"]: row.get("source") or {} for row in ledger.get("evidence", [])}
+    paths = {ref["artifact_id"]: path for ref in ledger["artifact_refs"] if (path := _staged_artifact(sid, ref, results))}
+    unstaged = {eid for eid, source in sources.items()
+                if (artifact_id := source.get("artifact_id")) and artifact_id not in paths}
+    lines = []
+    for row in citable:
+        claim = row["claim"]
+        relations = {link["evidence_id"]: link["relation"] for link in ledger.get("links", [])
+                     if link["claim_id"] == claim["id"] and link["relation"] != "context"
+                     and link["evidence_id"] in accepted}
+        if STATUS_NEEDS[claim["status"]] not in relations.values() or unstaged.intersection(relations):
+            continue
+        locations = {eid: {**sources[eid], "relation": relation,
+                           "artifact_path": paths.get(sources[eid].get("artifact_id"))}
+                     for eid, relation in relations.items()}
+        detail = {"statement": claim["statement"], "status": claim["status"], "scope": claim["scope"],
+                  "limitations": claim.get("limitations"), "evidence": locations}
+        line = f"{anchor(sid, claim['id'])} {json.dumps(_without_empty(detail), ensure_ascii=False)}\n"
+        if len(line) <= limit:
+            lines.append(line)
+            limit -= len(line)
+    return "".join(lines)
+
+
 def render_ledgers(steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
                    refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
                    n: int, *, staged: bool = False, draft_path: str | None = None) -> str:
@@ -229,8 +280,13 @@ def render_ledgers(steps: list[dict], results: dict[str, TaskResult], ledgers: d
                           str(Path(result.workdir) / path) + (
                               f" (SHA-256: {result.output_sha256.get(path) or 'unrecorded'})" if draft_path else "")
                           for path in result.outputs if path != draft_path) if result.workdir else ""
-        parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n"
-                     f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), n)}")
+        marks, remaining = "", n
+        if staged:
+            bindings = _draft_claim_lines(sid, ledger, unsupported, refused, results, n // 2)
+            remaining -= len(bindings)
+            marks = "Available claim anchors (read their evidence before use):\n" + (bindings or "(none)\n")
+        parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n{marks}"
+                     f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), remaining)}")
     return "\n\n".join(parts)
 
 
