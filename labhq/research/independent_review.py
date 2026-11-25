@@ -242,13 +242,14 @@ def _draft_claim_lines(sid: str, ledger: dict, unsupported: list[dict], refused:
     lines = []
     for row in citable:
         claim = row["claim"]
-        supporting = dict.fromkeys(link["evidence_id"] for link in ledger.get("links", [])
-                                   if link["claim_id"] == claim["id"] and link["relation"] == STATUS_NEEDS[claim["status"]]
-                                   and link["evidence_id"] in accepted)
-        if not supporting or unstaged.intersection(supporting):
+        relations = {link["evidence_id"]: link["relation"] for link in ledger.get("links", [])
+                     if link["claim_id"] == claim["id"] and link["relation"] != "context"
+                     and link["evidence_id"] in accepted}
+        if STATUS_NEEDS[claim["status"]] not in relations.values() or unstaged.intersection(relations):
             continue
-        locations = {eid: {**sources[eid], "artifact_path": paths.get(sources[eid].get("artifact_id"))}
-                     for eid in supporting}
+        locations = {eid: {**sources[eid], "relation": relation,
+                           "artifact_path": paths.get(sources[eid].get("artifact_id"))}
+                     for eid, relation in relations.items()}
         detail = {"statement": claim["statement"], "status": claim["status"], "scope": claim["scope"],
                   "limitations": claim.get("limitations"), "evidence": locations}
         line = f"{anchor(sid, claim['id'])} {json.dumps(_without_empty(detail), ensure_ascii=False)}\n"

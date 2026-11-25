@@ -1553,7 +1553,7 @@ async def test_inline_draft_uses_portable_result_links(tmp_path):
     assert req["report_consistency"]["checked"]["tables"] == [path]
 
 
-@pytest.mark.parametrize("case", ["linked", "unreported", "wrong_file", "unanchored", "unsupported"])
+@pytest.mark.parametrize("case", ["linked", "mixed_evidence", "unreported", "wrong_file", "unanchored", "unsupported"])
 async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_path, case):
     from labhq.research.independent_review import render_ledgers
     from tests.test_research_report import _kinds
@@ -1565,6 +1565,8 @@ async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_pa
     summary, table, qc = ("outputs/run_summary.json", "outputs/sensitivity.tsv", "outputs/qc.tsv")
     files = {summary: b'{"input_rows": 4321}\n', table: b'check\teffect\nsubset\t0.64\n',
              qc: b'sample\treads\ncontrol\t80\n'}
+    if case == "mixed_evidence":
+        files[qc] = b"check\teffect\nalternative\t-0.2\n"
     plan["steps"][0].update(outputs=[path for path in files if case != "unreported" or path != summary],
                             claim_ids=["c1", "c2"])
     base_reply = hub.reply
@@ -1601,6 +1603,17 @@ async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_pa
                                    "quantities": [{"id": "q2", "measure": "effect", "value": 0.64,
                                                    "unit": "dimensionless", "conditions": ["subset"],
                                                    "denominator": "subset samples"}]})
+        if case == "mixed_evidence":
+            ledger["claims"][1].update(status="partially_supported", status_reason="alternative disagrees")
+            ledger["artifact_refs"].append({"artifact_id": "a3", "path": qc})
+            subset = ledger["evidence"][1]
+            ledger["evidence"].append({**subset, "id": "e3", "independence_group": "alternative",
+                                       "source": {"artifact_id": "a3", "locator": "line 2, effect"},
+                                       "observation": "Alternative effect",
+                                       "quantities": [{**subset["quantities"][0], "id": "q3", "value": -0.2,
+                                                       "conditions": ["alternative"], "denominator": "alternative samples"}]})
+            ledger["links"].append({**ledger["links"][1], "evidence_id": "e3", "relation": "contradicts",
+                                    "rationale": "the alternative shows the opposite direction"})
         written = {**files, draft_path: body.encode("utf-8")}
         for path, data in written.items():
             target = tmp_path / path
@@ -1618,26 +1631,33 @@ async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_pa
 
     req = hub.requests["r"]
     contract = req["research_contract"]
-    assert req["outcome"] == ("research_reported" if case == "linked" else "report_incomplete")
+    accepted = case in {"linked", "mixed_evidence"}
+    assert req["outcome"] == ("research_reported" if accepted else "report_incomplete")
     assert _kinds(hub) == ["plan", "step", "review"]
     cp2 = contract["checkpoints"]["cp2"]
     states = {check["evidence_id"]: check["state"] for check in cp2["literal_checks"]}
     expected = {"unreported": "unverified", "wrong_file": "mismatch"}.get(case, "matched")
-    assert states == {"e1": expected, "e2": "matched"}
+    assert states == {"e1": expected, "e2": "matched", **({"e3": "matched"} if case == "mixed_evidence" else {})}
     assert cp2["unreported_outputs"]["s1"] == ([summary] if case == "unreported" else [])
     problems = contract["report_check"]["problems"]
     assert problems == cp2["independent_audit"]["checks"]["claims"]["problems"]
     result = TaskResult.model_validate(req["results"]["s1"])
     context = render_ledgers(req["plan"]["steps"], {"s1": result}, {"s1": result.structured},
-                             cp2["refused_evidence"], cp2["unsupported_claims"], cp2["artifact_sha256"], 1600,
+                             cp2["refused_evidence"], cp2["unsupported_claims"], cp2["artifact_sha256"], 2000,
                              staged=True)
     assert "chars clipped" in context
     marks = context.split("Available claim anchors (read their evidence before use):\n", 1)[1].split("Ledger:\n", 1)[0]
     marks = dict(line.split(" ", 1) for line in marks.splitlines())
-    assert json.loads(marks["[[claim:s1/c2]]"])["evidence"]["e2"]["artifact_path"] == "inputs/s1/sensitivity.tsv"
-    assert json.loads(marks["[[claim:s1/c2]]"])["evidence"]["e2"]["locator"] == "line 2, effect"
+    linked_evidence = json.loads(marks["[[claim:s1/c2]]"])["evidence"]
+    assert linked_evidence["e2"]["artifact_path"] == "inputs/s1/sensitivity.tsv"
+    assert linked_evidence["e2"]["locator"] == "line 2, effect"
+    assert linked_evidence["e2"]["relation"] == "supports"
+    if case == "mixed_evidence":
+        assert linked_evidence["e3"]["artifact_path"] == "inputs/s1/qc.tsv"
+        assert linked_evidence["e3"]["locator"] == "line 2, effect"
+        assert linked_evidence["e3"]["relation"] == "contradicts"
     assert ("[[claim:s1/c1]]" in marks) == (expected == "matched")
-    if case == "linked":
+    if accepted:
         assert problems == []
         assert cp2["artifact_sha256"]["s1/a1"] == sha256(files[summary]).hexdigest()
         assert cp2["artifact_sha256"]["s1/a2"] == sha256(files[table]).hexdigest()
