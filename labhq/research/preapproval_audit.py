@@ -11,6 +11,7 @@ from pathlib import Path
 from ..evidence import report_consistency
 from ..evidence.audit import MISMATCH, OK, verify_request
 from ..evidence.report_check import check_report
+from ..models import TaskResult
 from . import analysis_draft
 
 
@@ -49,10 +50,10 @@ class AuditDraft:
 
 async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body: str, results: dict, *,
                   claim_context: dict, earlier_notes: list[tuple[str, str]], restricted: bool,
-                  claim_body: str | None) -> AuditDraft:
+                  claim_body: str | None, candidate: TaskResult | None = None) -> AuditDraft:
     contract = request["research_contract"]
     analyst = results[draft.step_id]
-    collected = draft.restored(contract.get("analysis_draft") or {}, analyst) or analyst
+    collected = candidate or draft.restored(contract.get("analysis_draft") or {}, analyst) or analyst
     draft_hash = sha256(body.encode("utf-8")).hexdigest()
     if draft_hash != collected.output_sha256[draft.path]:
         raise ValueError("Audit draft differs from the collected SHA-256")
@@ -62,7 +63,7 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
                    for files in outputs.values() for digest in files.values())
     inventory = {sid: results[sid].model_dump(include={"task_id", "workdir", "workdir_id", "ok", "outputs",
                                                        "output_sha256"}) for sid in outputs}
-    if not draft.inline and collected.task_id != analyst.task_id:
+    if collected.task_id != analyst.task_id:
         inventory["@draft"] = {"task_id": collected.task_id, "workdir": collected.workdir,
                                "workdir_id": Path(collected.workdir).name, "outputs": [draft.path],
                                "output_sha256": {draft.path: collected.output_sha256[draft.path]}}

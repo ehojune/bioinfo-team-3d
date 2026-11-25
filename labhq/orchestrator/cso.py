@@ -6321,6 +6321,14 @@ class Orchestrator:
                 return independent_review.render_ledgers(
                     steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True)
 
+            async def prepare_draft(body, candidate=None):
+                return await preapproval_audit.prepare(
+                    self.hub, req, draft, body, results, earlier_notes=earlier_notes,
+                    restricted=self._restricted_draft_inputs(rid), candidate=candidate,
+                    claim_body=_split_report_appendix(draft.for_report(body))[0] if repair_enabled else None,
+                    claim_context={"ledgers": ledgers, "refused": refused, "unsupported": unsupported,
+                                   "artifact_sha256": artifact_sha256, "literal_checks": literal_checks})
+
             try:
                 if not reviewer or reviewer not in self.hub.agents:
                     raise ValueError("Research reviewer unavailable")
@@ -6328,12 +6336,7 @@ class Orchestrator:
                     rid, draft, results, cp2_report, earlier_notes, staged_ledgers, raw=True)
                 if body is None:
                     raise ValueError(self.budget_denials[rid])
-                prepared = await preapproval_audit.prepare(
-                    self.hub, req, draft, body, results, earlier_notes=earlier_notes,
-                    restricted=self._restricted_draft_inputs(rid),
-                    claim_body=_split_report_appendix(draft.for_report(body))[0] if repair_enabled else None,
-                    claim_context={"ledgers": ledgers, "refused": refused, "unsupported": unsupported,
-                                   "artifact_sha256": artifact_sha256, "literal_checks": literal_checks})
+                prepared = await prepare_draft(body)
                 review, reason = await independent_review.run(
                     self.hub, rid, text, reviewer=reviewer, refs=reference_meta(req), packs=packs,
                     cp2_notes=earlier_notes,
@@ -6359,14 +6362,15 @@ class Orchestrator:
                 if recorded.get("plan_sha256") != contract["plan_sha256"] or not recorded.get("decision"):
                     problems = prepared.checks["claims"]["problems"]
                     recheck, repair_record = await audit_repair.repair_once(
-                        self.hub, rid, draft, review, results,
+                        self.hub, rid, draft, body, review, results,
                         restricted=prepared.restricted, session_origin=self._session_origin,
                         free_session=self._free_session, budget_error=BudgetExceeded,
-                        claim_problems=problems, render_evidence=staged_ledgers,
+                        claim_problems=problems, render_evidence=staged_ledgers, prepare_draft=prepare_draft,
                         run_step=lambda task: self._run_compact_handoff(task, draft, results))
                     if recheck:
                         return await self._research_after_steps(rid, text, all_steps, results, n, serialized, packs)
-                    if problems:
+                    rejected = repair_record.get("rejected_problems") or []
+                    if problems or rejected:
                         contract["failure"] = {
                             "stage": "preapproval_report_check", "plan_sha256": contract["plan_sha256"],
                             "claims": prepared.checks["claims"],
@@ -6376,6 +6380,7 @@ class Orchestrator:
                         }
                         req.update(outcome="report_incomplete", execution_record=(
                             "Claim check before CP2:\n" + "\n".join(_problem_lines(problems, "- "))
+                            + ("\nRejected draft:\n" + "\n".join(_problem_lines(rejected, "- ")) if rejected else "")
                             + audit_repair.card(repair_record)[1]))
                         await self._finish(rid, _execution_warning_summary(preaudited[0], compact=True),
                                            serialized(), ok=False, review=review,

@@ -27,15 +27,14 @@ class AnalysisDraft:
     inline: bool
 
     def prompt(self, *, repairing: bool = False) -> str:
-        if self.inline:
+        if self.inline and not repairing:
             handoff = ("Finish the result ledger using declared outputs and read it back before writing. Return "
                        "that same ledger with your result. Put graphical_abstract.svg below the title and include "
                        "key figures if produced.")
         else:
-            handoff = "Read the final results from inputs/<step_id>/. "
-            if not repairing:
-                handoff += "Write the draft only. "
-            handoff += "Omit the figures from individual steps and explain the omission."
+            handoff = "Read the final results from inputs/<step_id>/. Write the draft only. "
+            if not self.inline:
+                handoff += "Omit the figures from individual steps and explain the omission."
         return (
             f"\n\nIn this session, after analysis and QC, save a draft for the PI as UTF-8 Markdown at {self.path}. "
             f"{handoff} Omit the draft if you have to stop for a decision. Use only collected artifacts and "
@@ -68,7 +67,7 @@ class AnalysisDraft:
                           **transfer_meta(self, transfer)})
 
     def restored(self, receipt: dict, analyst: TaskResult | None) -> TaskResult | None:
-        if (self.inline or not analyst or not analyst.ok or receipt.get("path") != self.path
+        if (not analyst or not analyst.ok or receipt.get("path") != self.path
                 or receipt.get("parent_task") != analyst.task_id):
             return None
         result = TaskResult.model_validate(receipt.get("result"))
