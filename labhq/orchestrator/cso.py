@@ -65,7 +65,7 @@ from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARC
                                  missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
-from ..research import analysis_draft, compact_workflow, evidence_checkpoint, independent_review, preapproval_audit
+from ..research import analysis_draft, audit_repair, compact_workflow, evidence_checkpoint, independent_review, preapproval_audit
 from ..research import precedent_texts
 from ..research.approval_notes import APPROVAL_NOTE_CHARS, CP2_REPORT_NOTE_RULE, approval_note, approval_note_block
 from ..research.independent_review import (RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_PROMPT, REVIEW_SCHEMA,
@@ -3984,6 +3984,7 @@ class Orchestrator:
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
                                 {"paper_skill", "recruit_check", "plan_recruit"})
+        repairing_audit = task.meta.get("kind") == audit_repair.KIND
 
         async def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -4072,15 +4073,23 @@ class Orchestrator:
             retry_answers = []
             tool_errors: list[str] = []
             for attempt in range(first_attempt, limit + 1):
-                if optional_support:
+                if repairing_audit:
+                    self._count_recorded_costs(rid)
+                    remaining = self._request_budget_remaining(rid)
+                    if rid in self.budget_denials or (remaining is not None and remaining < float(_CENT)):
+                        raise BudgetExceeded("audit repair budget exhausted")
+                    current = current.model_copy(update={"budget_usd": min(
+                        cap for cap in (self._turn_cap(current, 0), remaining) if cap is not None)})
+                elif optional_support:
                     if not self._diagnosis_budget_available(rid):
                         raise BudgetExceeded("facilities diagnosis budget exhausted")
                 else:
                     await self._check_budget(rid)
                 login_hold = getattr(self.hub, "login_hold", lambda _engine: None)(engine)
-                if optional_support and login_hold:
+                if (optional_support or repairing_audit) and login_hold:
                     return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
-                                      error="facilities engine login required")
+                                      error="optional turn engine login required" if repairing_audit else
+                                            "facilities engine login required")
                 if login_hold:
                     deadline = (await login_deadline(current))
                     if not await self.hub.wait_login(rid, key, engine,
@@ -4091,8 +4100,9 @@ class Orchestrator:
                         return await login_failure(current, "engine login wait exceeded the configured maximum")
                     await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
-                if optional_support and hold:
-                    return quota_failure(current, "facilities engine quota unavailable")
+                if (optional_support or repairing_audit) and hold:
+                    return quota_failure(current, "optional turn engine quota unavailable" if repairing_audit else
+                                         "facilities engine quota unavailable")
                 if hold:
                     deadline = (await quota_deadline())
                     if not await self.hub.wait_quota(rid, key, engine,
@@ -4177,7 +4187,7 @@ class Orchestrator:
                         proofs[execution_step] = None  # sticky mixed-input attempts
                     await persist_request(self.hub, rid)
                 # Last await before the send: hold this attempt's whole cap now (#862, opt-in).
-                attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
+                attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support or repairing_audit)
                 self._note_inflight_cap(rid, attempt_task)
                 try:
                     placement = self.first_step_dispatch.get(rid) if execution_step else None
@@ -4257,6 +4267,8 @@ class Orchestrator:
                     tool_errors = list(dict.fromkeys([*tool_errors, *res.tool_errors]))
                 if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
+                if repairing_audit and (res.cost_usd or 0) > attempt_task.budget_usd:
+                    return res.model_copy(update={"ok": False, "error_kind": "audit_repair_budget"})
                 # Audit even failed/exceptional attempts. Keep answered asks across
                 # every retry, including engines without session resume.
                 answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
@@ -4273,7 +4285,7 @@ class Orchestrator:
                         retry_answers.append(update)
                 # A finished turn of the last step is judged once run_step knows no wake turn follows it: one that
                 # still waits on an answer or job is not final, and the next turn's gate decides (PR #527 review).
-                if not optional_support and not (kind is None and final_step):
+                if not (optional_support or repairing_audit) and not (kind is None and final_step):
                     await self._check_budget(rid, block=False)
                 previous_result = res
                 if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
@@ -4497,6 +4509,13 @@ class Orchestrator:
                 tool_errors.extend(res.tool_errors)
                 res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
+        if repairing_audit:
+            if engine not in {"claude_code", "mock"}:
+                raise BudgetExceeded("audit repair requires an engine with a per-turn spending cap")
+            result = await dispatch_with_retry(task, max_attempts=1)
+            if result.pending_jobs:
+                await self._release_step_jobs(result.task_id)
+            return result
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
         if not res.ok and (res.exit_code in (0xC000013A, -1073741510) or res.early_exit_attempted):
             if final_step:
@@ -6264,6 +6283,7 @@ class Orchestrator:
                                    f"only; their content was not checked ({', '.join(pinned[:5])}"
                                    f"{', ...' if len(pinned) > 5 else ''}).")
         preaudited, audit_record = None, None
+        recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
         if preapproval_audit.enabled(req) and (draft := analysis_draft.for_request(req)):
             reviewer = self.cfg.reviewer_agent
             cp2_report = self.format_results(steps, results, n)
@@ -6301,11 +6321,22 @@ class Orchestrator:
             audit_record = detail["independent_audit"] = prepared.card(reviewer, review)
             detail["analysis_draft"] = body
             summary += f"\n독립 감사 {review['verdict']} · 남은 지적 {len(review['issues'])}건"
+            if audit_repair.enabled(req):
+                repair_record = audit_repair.record_for(contract, draft)
+                if recorded.get("plan_sha256") != contract["plan_sha256"] or not recorded.get("decision"):
+                    recheck, repair_record = await audit_repair.repair_once(
+                        self.hub, rid, draft, review, results,
+                        restricted=prepared.restricted, session_origin=self._session_origin,
+                        free_session=self._free_session, run_step=self.run_step, budget_error=BudgetExceeded)
+                    if recheck:
+                        return await self._research_after_steps(rid, text, all_steps, results, n, serialized, packs)
+                if repair_record:
+                    audit_record["repair"], note = audit_repair.card(repair_record)
+                    summary += note
             summary += "\n승인 메모는 보고서 본문에 인용합니다."
             if revise_continues:
                 summary += " 초안을 고치려면 수정 요청을 고르세요."
 
-        recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
         audit_changed = bool(audit_record and (not audit_record["artifacts_verified"]
                                               or recorded.get("independent_audit") != audit_record))
         source_changed = ((live_resolver is not None or self.hub.s.research.literal_source_check)

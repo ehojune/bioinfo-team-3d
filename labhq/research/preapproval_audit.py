@@ -12,7 +12,7 @@ from pathlib import Path
 from ..evidence import report_consistency
 from ..evidence.audit import MISMATCH, OK, verify_request
 from ..evidence.report_check import check_report
-from . import analysis_draft
+from . import analysis_draft, audit_repair
 
 
 OPTION = "audit_before_cp2"
@@ -22,6 +22,7 @@ def capture(request: dict) -> None:
     """Keep the switch separate from the frozen plan and preserve it on resume."""
     if os.environ.get("LABHQ_AUDIT_BEFORE_CP2") == "1":
         request.setdefault("research_options", {}).setdefault(OPTION, True)
+    audit_repair.capture(request)
 
 
 def enabled(request: dict) -> bool:
@@ -67,7 +68,7 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
                    for files in outputs.values() for digest in files.values())
     inventory = {sid: results[sid].model_dump(include={"task_id", "workdir", "workdir_id", "ok", "outputs",
                                                        "output_sha256"}) for sid in outputs}
-    if not draft.inline:
+    if not draft.inline and collected.task_id != analyst.task_id:
         inventory["@draft"] = {"task_id": collected.task_id, "workdir": collected.workdir,
                                "workdir_id": Path(collected.workdir).name, "outputs": [draft.path],
                                "output_sha256": {draft.path: collected.output_sha256[draft.path]}}

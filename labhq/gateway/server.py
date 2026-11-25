@@ -4937,6 +4937,9 @@ class Hub:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error="request cancelled")
         if not _runner_ready_for(self, task.agent_id, task.meta):
+            if task.meta.get("kind") == "audit_repair":
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
+                                  cost_known=True, error="the original analysis runner is unavailable")
             stopped = await self.offer_wsl_setup(task)  # the local WSL runner is not ready: one PI card, not a wait
             if stopped is not None:
                 return stopped

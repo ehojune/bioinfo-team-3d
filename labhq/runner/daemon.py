@@ -2619,7 +2619,8 @@ class Runner:
                                   **({"error": short(result.error, 200)} if result.error else {})},
                                  result.model_dump(mode="json"))
                 return result
-            extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
+            extra_dirs = ([] if task.meta.get("kind") == "audit_repair" else
+                          [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]])
             task, consult_error = self._stage_consult_refs(task, ws)
             if agent.id == "facilities" and not consult_error:
                 task = task.model_copy(update={"context": task.context + "\n\n" + self._facilities_doctor_context()})
@@ -2695,7 +2696,7 @@ class Runner:
                 unavailable.update({sid: f"inputs/{sid} unavailable (HPC ancestor missing)"
                                     for sid in hpc_revisions if sid not in artifacts})
                 require_hpc_snapshots(hpc_revisions, unavailable)
-                if task.meta.get("kind") == "analysis_draft" and artifacts.keys() & unavailable.keys():
+                if task.meta.get("kind") in {"analysis_draft", "audit_repair"} and artifacts.keys() & unavailable.keys():
                     raise ValueError("A collected report input is unavailable")
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
                         "These copies are read-only; do not read sibling workspaces. "
