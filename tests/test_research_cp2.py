@@ -1618,10 +1618,11 @@ def test_compact_draft_flags_unanchored_text_in_bibliography(bibliography_draft,
     ("pmid", "12345678", "PMID 87654321"),
     ("geo", "GSE12345", "GSE54321"),
 ])
-async def test_compact_bibliography_rejects_identifier_from_another_source(tmp_path, scheme, recorded, citation):
+@pytest.mark.parametrize("heading", ["참고", "참고문헌 및 자료", "References and data"])
+async def test_compact_bibliography_rejects_identifier_from_another_source(tmp_path, scheme, recorded, citation, heading):
     from tests.test_research_report import REPORT
 
-    hub = _draft_hub(tmp_path, draft_body=f"{REPORT}\n\n## 참고\n\n- {citation} [[claim:s1/c1]]\n",
+    hub = _draft_hub(tmp_path, draft_body=f"{REPORT}\n\n## {heading}\n\n- {citation} [[claim:s1/c1]]\n",
                      source={"id_scheme": scheme, "id_value": recorded, "accessed_at": "2026-10-01"})
     await Orchestrator(hub).run_request("r")
 

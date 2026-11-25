@@ -30,6 +30,7 @@ from .portfolio import (PRIVATE_PATH_PATTERN, EditionCheckError, broken_markdown
                         internal_data_steps, portfolio_report, publish_file_allowed, request_uses_internal_data,
                         scan_publish_files, source_uses_internal_data, table_allowed)
 from .evidence import wiki_exposure
+from .evidence.report_check import BIBLIOGRAPHY_TITLE
 from .intake import reference_dirs
 from .recruit.provenance import touches_restricted
 from .report_abstract import abstract_first, build_graphical_abstract, with_abstract_link
@@ -642,7 +643,7 @@ def draft_documents(req: dict, settings, included=None, assets=None, *, abstract
                     for entry in req.get("replan_history") or []],
                     "review_progress": req.get("review_progress") or {}}),
                 "", "## 검토", _json_block(req.get("review") or {})]
-    bibliography = re.search(r"(?im)^#{1,6}\s+(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)[^\n]*\n", report)
+    bibliography = re.search(rf"(?im)^#{{1,6}}\s+{BIBLIOGRAPHY_TITLE}[^\n]*\n", report)
     citations = re.split(r"(?m)^#{1,6}\s+", report[bibliography.end():], maxsplit=1)[0] if bibliography else ""
     found = edition_sources.collect(
         [report, str(req.get("report_appendix") or "")], req.get("references") or [],

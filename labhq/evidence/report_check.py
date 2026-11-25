@@ -376,7 +376,8 @@ def _unanchored_table_rows(report: str) -> list[str]:
 ASSEMBLED_COMPACT = "assembled_compact"
 REPORT_CONTEXT = "<!-- LABHQ_REPORT_CONTEXT -->"
 _CONTEXT_END = "<!-- LABHQ_REPORT_CONTEXT_END -->"
-_BIBLIOGRAPHY = re.compile(r"(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)\s*[:：]?", re.I)
+BIBLIOGRAPHY_TITLE = r"(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)"
+_BIBLIOGRAPHY = re.compile(BIBLIOGRAPHY_TITLE, re.I)
 _GEO_ID = re.compile(rf"\b{ID_FORMATS['geo']}\b", re.I)
 _BIBLIOGRAPHIC_SCHEMES = {"doi", "pmid", "geo"}
 
@@ -398,7 +399,7 @@ def _bibliography_entries(report: str) -> Iterable[tuple[str, str, set[tuple[str
     for index, token in enumerate(tokens):
         if token.type == "heading_open" and token.level == 0:
             rank = int(token.tag[1])
-            if _BIBLIOGRAPHY.fullmatch(tokens[index + 1].content.strip()):
+            if _BIBLIOGRAPHY.match(tokens[index + 1].content.strip()):
                 level = rank
             elif rank <= level:
                 level = 0
