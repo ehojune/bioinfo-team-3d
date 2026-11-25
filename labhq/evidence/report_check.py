@@ -488,20 +488,23 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
         evidence = {row.get("id"): row for row in _rows(ledgers[step_id], "evidence")}
         accepted = accepted_evidence_ids(ledgers[step_id], step_id, refused)
         for link in _rows(ledgers[step_id], "links"):
-            if link.get("claim_id") != claim_id or link.get("relation") != STATUS_NEEDS[status]:
+            required = link.get("relation") == STATUS_NEEDS[status]
+            if link.get("claim_id") != claim_id or not (required or bibliography):
                 continue
             row = evidence.get(link.get("evidence_id"))
             if row is None or str(row.get("id")) not in accepted:
                 continue
-            if mismatch := literal_mismatches.get((step_id, str(row.get('id')))):
+            mismatch = literal_mismatches.get((step_id, str(row.get('id'))))
+            if required and mismatch:
                 problems.append(f"{mark}: evidence {row.get('id')} literal mismatch: "
                                 + '; '.join(mismatch.get('problems') or []))
             source = row.get("source") if isinstance(row.get("source"), Mapping) else {}
             artifact = source.get("artifact_id")
-            if artifact and not hashes.get(f"{step_id}/{artifact}"):
+            missing_hash = artifact and not hashes.get(f"{step_id}/{artifact}")
+            if required and missing_hash:
                 problems.append(f"{mark}: evidence {row.get('id')} cites artifact {artifact}, which has no "
                                 "recorded artifact_sha256")
-            elif bibliography and not mismatch:
+            if bibliography and not (mismatch or missing_hash):
                 backed = sources.setdefault(f"{step_id}/{claim_id}", set())
                 scheme, value = source.get("id_scheme"), source.get("id_value")
                 if scheme in _BIBLIOGRAPHIC_SCHEMES and isinstance(value, str):

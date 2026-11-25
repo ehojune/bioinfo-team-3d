@@ -1580,6 +1580,24 @@ def test_compact_draft_accepts_bibliography_entry_with_recorded_source(bibliogra
     assert check_report(f"{body}{entry} [[claim:s1/c1]]\n", ledgers) == {"anchors": 2, "problems": []}
 
 
+def test_compact_bibliography_accepts_linked_counterevidence_until_refused(bibliography_draft):
+    from labhq.evidence.report_check import check_report
+    from tests.test_research_report import _literature
+
+    body, _, ledgers = bibliography_draft
+    ledger = ledgers["s1"]
+    ledger["claims"][0]["status"] = "partially_supported"
+    doi = "10.1000/counterevidence"
+    ledger["evidence"].append(_literature("e2", source={"id_value": doi}))
+    ledger["links"].append({"claim_id": "c1", "evidence_id": "e2", "relation": "contradicts"})
+    body += f"- [Counterevidence](https://doi.org/{doi}) [[claim:s1/c1]]\n"
+    assert check_report(body, ledgers, bibliography=True)["problems"] == []
+    assert check_report(body, ledgers, bibliography=True,
+                        refused=[{"step_id": "s1", "evidence_id": "e2"}])["problems"] == [
+        f"bibliography DOI {doi} has no accepted evidence linked to its anchors",
+    ]
+
+
 @pytest.mark.parametrize("case", ["unmarked_entry", "judgment"])
 def test_compact_draft_flags_unanchored_text_in_bibliography(bibliography_draft, case):
     from labhq.evidence.report_check import check_report
