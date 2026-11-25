@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 04:13 | [`3e9d971`](https://github.com/ehojune/bioinfo-team-3d/pull/1519/commits/3e9d971) | **한·영 연구 매뉴얼에 큰 결과표의 검사와 전송 한도를 적었습니다.**<br>gateway 버전별 한도와 일부 표를 받지 못했을 때의 report_incomplete 판정을 설명합니다. |
+| 03:52 | [`52a3a75`](https://github.com/ehojune/bioinfo-team-3d/pull/1519/commits/52a3a75) | **구버전 gateway에 큰 결과표를 보내지 않습니다.**<br>gateway가 새 전송 한도를 알린 task에만 확대 한도를 쓰고, 구버전 연결에서는 초안을 전송해 검사하지 못한 표를 기록합니다. |
+| 03:48 | [`1bb0bbe`](https://github.com/ehojune/bioinfo-team-3d/pull/1519/commits/1bb0bbe) | **결과표의 UTF-8 행 읽기를 문서 검사에서 확인합니다.**<br>행 읽기 메서드 이름을 바꿔 파일 열기 호출과 구분합니다. |
+| 03:41 | [`2daf6ce`](https://github.com/ehojune/bioinfo-team-3d/pull/1519/commits/2daf6ce) | **연구 보고서에 연결된 큰 결과표도 마지막 행까지 대조합니다.**<br>로컬에서 표를 한 행씩 읽고 runner 전송에는 크기와 SHA-256을 확인합니다. 합성 55 MB 표로 전송과 마지막 행 대조를 검증했습니다. |
 | 03:05 | [`946aa58`](https://github.com/ehojune/bioinfo-team-3d/commit/946aa58) | **연구 보고서에서 3 MB까지 연결된 결과표를 끝까지 대조합니다.**<br>2.3 MB 표의 마지막 행으로 회귀시험을 했습니다. 수정본에서 표와 맞지 않거나 표를 읽지 못하면 결과 승인 전에 미완료로 끝납니다. |
 | 01:56 | [`677963e`](https://github.com/ehojune/bioinfo-team-3d/commit/677963e) | **연구 보고서 자동 수정에서 근거를 보존한 채 초안만 고칩니다.**<br>원래 원장과 표로 수정본을 검사합니다. 통과한 초안은 재감사와 CP2에 쓰고, 근거가 맞지 않으면 CP2 전에 미완료로 끝냅니다. |
 | 00:33 | [`4be7608`](https://github.com/ehojune/bioinfo-team-3d/commit/4be7608) | **간소화 연구 보고서에서 근거 검사가 발견한 문제를 원래 분석 세션에서 고칩니다.**<br>감사 P1과 근거 검사 수정은 합쳐서 두 번까지, 한 번에 최대 $5를 씁니다. 재검사에 실패하면 근거 승인 전에 미완료로 끝냅니다. CRLF 참고 목록에도 확인된 식별자 링크를 붙입니다. |
