@@ -1,5 +1,9 @@
 pr: 1519
 rows:
+  - sha: '3e9d971'
+    at: '2026-11-26 04:13'
+    summary: 한·영 연구 매뉴얼에 큰 결과표의 검사와 전송 한도를 적었습니다.
+    text: gateway 버전별 한도와 일부 표를 받지 못했을 때의 report_incomplete 판정을 설명합니다.
   - sha: '52a3a75'
     at: '2026-11-26 03:52'
     summary: 구버전 gateway에 큰 결과표를 보내지 않습니다.
