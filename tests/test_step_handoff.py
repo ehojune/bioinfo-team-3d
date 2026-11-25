@@ -15,7 +15,7 @@ from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
 from labhq.orchestrator.step_execution import upstream_inputs
 from labhq.runner.daemon import Runner
-from labhq.runner.step_handoff import required_hpc_revisions
+from labhq.runner.step_handoff import project_hpc_outputs, required_hpc_revisions
 from labhq.runner.step_inputs import stage_inputs
 from labhq.runner.workspace import TaskWorkspace
 from tests.test_cso import FakeHub
@@ -32,6 +32,12 @@ def _row(path, contents):
     return {'path': path, 'bytes': len(contents), 'sha256': _sha(contents)}
 
 
+def test_direct_and_nested_remote_names_cannot_claim_the_same_pc_input():
+    inventory = {'files': [_row('table.tsv', b'1\n'), _row('outputs/table.tsv', b'1\n')]}
+    with pytest.raises(ValueError, match='outputs/table.tsv: ambiguous HPC output'):
+        project_hpc_outputs([inventory], ['outputs/table.tsv'])
+
+
 def _restart(runner, settings, agent, monkeypatch):
     runner.store.close()
     runner = Runner(settings)
@@ -41,14 +47,20 @@ def _restart(runner, settings, agent, monkeypatch):
 
 @pytest.mark.parametrize(('mixed', 'case'), [
     (False, 'ok'), (False, 'oversize'), (True, 'ok'), (True, 'oversize'), (True, 'wrap_up'),
-], ids=['receipt-only', 'receipt-oversize', 'mixed-dag', 'mixed-oversize', 'mixed-wrap-up'])
+    (True, 'nested'), (True, 'nested_with_copy'), (True, 'nested_tampered'), (True, 'nested_oversize'),
+], ids=['receipt-only', 'receipt-oversize', 'mixed-dag', 'mixed-oversize', 'mixed-wrap-up',
+        'mixed-nested', 'mixed-nested-with-copy', 'mixed-nested-tampered', 'mixed-nested-oversize'])
 async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, monkeypatch, mixed, case):
-    oversize = case == 'oversize'
+    oversize = case in {'oversize', 'nested_oversize'}
+    nested = case.startswith('nested')
+    expected_error = ('outputs/results/z.tsv.*fetch size limit' if oversize else
+                      'outputs/results/z.tsv: input hash differs' if case == 'nested_tampered' else None)
     settings = _settings(site.tmp)
     settings.hpc = site.settings.hpc
     settings.policy.approvals.hpc_core_hours_threshold = 1000
     agent = AgentSpec(id='worker', name='Worker', role='test', engine=Engine.mock, builtin_mcp=['hpc'])
     contents = {'results/a.tsv': b'a\n', 'results/z.tsv': b'z' * (1024 * 1024 + 1) if oversize else b'z\n'}
+    remote_contents = {'outputs/' + name: data for name, data in contents.items()} if nested else contents
     reads = []
     row_paths = ['outputs/' + name for name in contents]
     refs = site.tmp / 'reference'
@@ -67,12 +79,14 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                             folder, action, config], check=True, timeout=30)
             return
         data = json.loads(site.remote(f'{folder}/{config}').read_text(encoding='utf-8'))
-        files = [_row(name, site.remote(data['data'] + '/' + name).read_bytes()) for name in contents]
+        files = [_row(name, site.remote(data['data'] + '/' + name).read_bytes()) for name in remote_contents
+                 if action == 'scan' or name in {row['path'] for row in data['files']}]
         if action == 'verify':
             assert data['files'] == files
         else:
             assert action == 'scan'
-            data.update(files=files, directories=['results'], bytes=sum(row['bytes'] for row in files))
+            directories = ['outputs', 'outputs/results'] if nested else ['results']
+            data.update(files=files, directories=directories, bytes=sum(row['bytes'] for row in files))
             site.remote(f'{folder}/remote-data.json').write_text(json.dumps(data), encoding='utf-8')
 
     monkeypatch.setattr(ht, '_remote_data_command', scanning_fixture)
@@ -90,6 +104,7 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                 return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=False, error='turn limit',
                                   error_kind='error_max_turns', session_id='consumer-session')
             reads.extend((ctx.workdir / 'inputs/producer' / name).read_bytes() for name in contents)
+            assert not (ctx.workdir / 'inputs/producer/slurm_job.log').exists()
             if case == 'wrap_up':
                 assert ctx.task.meta['kind'] == 'wrap_up'
                 (ctx.workdir / 'outputs/PARTIAL_STATUS.md').write_text('saved', encoding='utf-8')
@@ -98,11 +113,18 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
             job = await runner._on_submit_raw({'task_id': ctx.task.id, 'agent_id': agent.id, 'request_id': 'r',
                                                'script': str(write_script(site))})
             assert job.get('submitted'), job
-            for name, data in contents.items():
+            for name, data in remote_contents.items():
                 target = site.remote(job['transfer']['data'] + '/' + name)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(data)
             return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, session_id='producer-session')
+        elif nested:
+            if case == 'nested_with_copy':
+                for name in contents:
+                    target = ctx.workdir / 'outputs' / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes((ctx.workdir / 'outputs/outputs' / name).read_bytes())
+            (ctx.workdir / 'outputs/slurm_job.log').write_bytes(b'local diagnostic\n')
         return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True, text='done')
 
     monkeypatch.setattr(MockAdapter, 'run', adapter_run)
@@ -120,9 +142,9 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                     outcome = await runner.run_task(task)
                     observed[task.id] = outcome
                     return outcome
-                if not oversize:
+                if not expected_error:
                     return await runner.run_task(task)
-                with pytest.raises(ValueError, match='outputs/results/z.tsv.*fetch size limit') as exc:
+                with pytest.raises(ValueError, match=expected_error) as exc:
                     await runner.run_task(task)
                 return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=str(exc.value))
 
@@ -148,6 +170,8 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
             producer, consumer = plan['steps']
             producer.update(id='producer', execution='hpc', outputs=['outputs/results'],
                             instruction='prepare the mock data; PC input is ' + refs.as_posix())
+            if nested:
+                producer['optional_outputs'] = ['outputs/slurm_job.log']
             consumer.update(id='consumer', depends_on=['producer'], outputs=[])
             request = hub.requests['r']
             request.update(plan=plan, research_contract=approved(plan),
@@ -162,6 +186,8 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
             assert results['producer'].ok, results['producer'].error
             assert results['producer'].provenance['hpc_step_revision'] == 2
             source = Path(results['producer'].workdir)
+            if case == 'nested_tampered':
+                (source / 'outputs/outputs/results/z.tsv').write_bytes(b'x\n')
             # Both sides restart. The PC adapter receives only the verified copies and the local reference.
             runner = _restart(runner, settings, agent, monkeypatch)
             monkeypatch.setattr(runner.scheduler, 'transfer', lambda: pytest.fail('PC handoff called the scheduler'))
@@ -169,8 +195,8 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
             results = {key: TaskResult.model_validate(row) for key, row in persisted.items()}
             await Orchestrator(hub).run_dag('r', 'PC reference ' + refs.as_posix(), plan['steps'], results,
                                            only={'consumer'})
-            assert results['consumer'].ok == (case == 'ok'), results['consumer'].error
-            assert reads == ([] if oversize else list(contents.values()))
+            assert results['consumer'].ok == (case != 'wrap_up' and expected_error is None), results['consumer'].error
+            assert reads == ([] if expected_error else list(contents.values()))
             expected = ['step', 'step', 'step']
             if case == 'wrap_up':
                 assert results['consumer'].partial_results

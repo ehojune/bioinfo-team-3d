@@ -17,7 +17,7 @@ from ..adapters.owned import plain_directory, write_owned_bytes
 from ..intake import overlaps_zone
 from ..private_paths import _managed_operand, credential_path
 from ..util import INPUT_STEP_ID, output_relpath
-from .step_handoff import verified_hpc_sizes
+from .step_handoff import verified_hpc_inputs
 
 INVENTORY = '.labhq-inputs.json'
 
@@ -624,9 +624,12 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 raise ValueError('invalid collected output list')
             if len(outputs) > MAX_FILES:
                 raise ValueError(f'{len(outputs)} collected files exceed the input limit of {MAX_FILES}')
-            hpc_sizes = verified_hpc_sizes(run, artifact, ws.task.request_id, hpc_revisions[step]) if from_hpc else {}
+            hpc_inputs = (verified_hpc_inputs(run, artifact, ws.task.request_id, hpc_revisions[step])
+                          if from_hpc else {})
             files = []
             for raw in outputs:
+                if from_hpc and raw not in hpc_inputs:
+                    continue
                 relative = output_relpath(raw)
                 if not relative or not relative.startswith('outputs/'):
                     raise ValueError('invalid collected output path')
@@ -635,21 +638,23 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 expected = hashes.get(raw)
                 if not isinstance(expected, str) or not re.fullmatch('[a-f0-9]{64}', expected):
                     raise ValueError('collected artifact hash is missing')
-                if (credential_path(relative) or overlaps_zone(source / relative, zones) or
-                        not _managed_operand(relative, str(source), private_paths, [str(source / 'outputs')])):
+                source_rel = hpc_inputs[raw][1] if from_hpc else relative
+                if any(credential_path(path) or overlaps_zone(source / path, zones) or
+                       not _managed_operand(path, str(source), private_paths, [str(source / 'outputs')])
+                       for path in {relative, source_rel}):
                     raise ValueError('artifact path is protected')
-                files.append((relative, name, expected))
-            if len({name.casefold() for _, name, _ in files}) != len(files):
+                files.append((relative, source_rel, name, expected))
+            if len({name.casefold() for _, _, name, _ in files}) != len(files):
                 raise ValueError('collected input names collide')
             needed = 0
-            for relative, _, _ in files:
+            for relative, source_rel, _, _ in files:
                 try:
-                    size = _size(root, (*source_parts, *_parts(relative)))
+                    size = _size(root, (*source_parts, *_parts(source_rel)))
                 except FileNotFoundError as exc:
                     if from_hpc:
                         raise ValueError(f'{relative}: received file is missing') from exc
                     raise
-                if relative in hpc_sizes and size != hpc_sizes[relative]:
+                if from_hpc and size != hpc_inputs[relative][0]:
                     raise ValueError(f'{relative}: received file size differs from the HPC manifest')
                 needed += size
             if needed > remaining[0]:
@@ -658,10 +663,10 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 raise ValueError(f'cumulative input budget: this ancestor needs {needed} bytes, {remaining[0]} bytes '
                                  f'are left of the {max_total} bytes a step takes in all after earlier inputs')
             _room(ws.dir, needed)
-            _reset(ws.dir, step, [name for _, name, _ in files])
-            for relative, name, expected in files:
+            _reset(ws.dir, step, [name for _, _, name, _ in files])
+            for relative, source_rel, name, expected in files:
                 try:
-                    _copy(root, (*source_parts, *_parts(relative)), ws.dir,
+                    _copy(root, (*source_parts, *_parts(source_rel)), ws.dir,
                           f'inputs/{step}/{name}', expected, max_file, remaining)
                 except ValueError as exc:
                     if from_hpc:

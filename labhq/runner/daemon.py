@@ -3394,29 +3394,24 @@ class Runner:
                 result.ok = False
                 result.error = "incomplete: " + str(exc)
         remote_manifests = []
+        remote_paths = []
         nested_candidates = []
         retained_text = ""
         if whole_hpc and _should_check_declared_outputs(result):
+            from .step_handoff import local_hpc_output_receipt
             try:
                 remote_manifests = await asyncio.to_thread(self._remote_step_outputs, ws)
+                if remote_manifests:
+                    remote_paths, receipt, conflicts = await asyncio.to_thread(
+                        local_hpc_output_receipt, ws, remote_manifests, hashed, output_records)
             except Exception as exc:
+                remote_manifests = []
                 result.ok = False
                 result.error = "incomplete: remote outputs could not be verified: " + self._hide_text(str(exc))[:300]
             if remote_manifests:
-                from .hpc_fetch import missing_received_outputs
-                declared_rels = [rel for name in [*declared, *required_declared, *optional_declared]
-                                 if (rel := output_relpath(name))]
-                missing_received = missing_received_outputs(declared_rels, remote_manifests, hashed)
+                missing_received = receipt["omissions"]
                 nested_candidates = [item for manifest in remote_manifests
                                      for item in manifest.pop("_nested_candidates", [])]
-                from ..hpc_transfer import local_copy_conflicts
-                remote_paths = ["outputs/" + row["path"]
-                                for manifest in remote_manifests for row in manifest["files"]]
-                receipts = {"outputs/" + path: digest for manifest in remote_manifests
-                            for path, digest in manifest.pop("_local_copy_sha256", {}).items()}
-                for manifest in remote_manifests:
-                    manifest.pop("_fetch_skipped", None)
-                conflicts = await asyncio.to_thread(local_copy_conflicts, ws.dir, remote_paths, hashed, receipts)
                 if conflicts:
                     result.ok = False
                     result.error = ("incomplete: local/remote output conflict or unverified local copy: " +
@@ -3429,8 +3424,7 @@ class Runner:
                                             if path not in refused}
                 found = list(dict.fromkeys([*found, *remote_paths]))
                 result.outputs = list(dict.fromkeys([*result.outputs, *remote_paths]))
-                ws.stage_run(task.id, hpc_remote_outputs=remote_manifests,
-                             hpc_local_receipt={"sha256": receipts, "omissions": missing_received})
+                ws.stage_run(task.id, hpc_remote_outputs=remote_manifests, hpc_local_receipt=receipt)
                 transfer = self.scheduler.transfer()
                 retained_text = "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
                     f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} known bytes retained "
@@ -3456,7 +3450,7 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
-        remote_files = {"outputs/" + row["path"] for manifest in remote_manifests for row in manifest["files"]}
+        remote_files = set(remote_paths)
         if _should_check_declared_outputs(result):
             def has_output(rel: str) -> bool:
                 # A declared folder is there when a file with a hash is under it: a later step stages only those.
@@ -4730,6 +4724,7 @@ class Runner:
     def _remote_step_outputs(self, ws) -> list[dict]:
         """Only runner-owned, successful remote jobs of this workspace and revision can satisfy outputs."""
         from ..hpc_transfer import TransferError, validate_remote_manifest, verify_remote_data
+        from .step_handoff import mixed_hpc_step
 
         manifests, paths, directory_paths = [], set(), set()
         path_owners = {}
@@ -4775,6 +4770,9 @@ class Runner:
                 declared = {("" if rel == "outputs" else rel.removeprefix("outputs/")) for name in [
                     *ws.task.meta.get("outputs", []), *ws.task.meta.get("optional_outputs", [])]
                     if (rel := output_relpath(name))}
+                if mixed_hpc_step(ws.task):
+                    # Match declarations in either job layout while keeping raw names for remote verification.
+                    declared |= {"outputs/" + name if name else "outputs" for name in declared}
                 directories = set(manifest.get("directories", []))
                 declared_dirs = declared & directories
                 if "" in declared:
