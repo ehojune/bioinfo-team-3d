@@ -1962,11 +1962,12 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
     ("resolved", 1, "resolved"), ("unclassified", 1, "resolved"), ("limit", 2, "limit"),
     ("reference_drift", 1, "resolved"),
     ("no_session", 0, "session_unavailable"),
-    ("new_session", 1, "session_unavailable"), ("bad_ledger", 1, "invalid_result"),
+    ("new_session", 1, "session_unavailable"), ("ignored_ledger", 1, "resolved"),
     ("interrupted", 1, "interrupted"), ("budget", 1, "budget_exceeded"),
     ("no_engine_cap", 0, "budget_unavailable"),
     ("design", 0, "ineligible"), ("off", 0, None), ("unset", 0, None), ("audit_off", 0, None),
-    ("claims_only", 1, "resolved"), ("claims_and_p1", 1, "resolved"), ("claims_after_p1", 2, "limit"),
+    ("claims_only", 1, "resolved"), ("claims_and_p1", 1, "resolved"),
+    ("claims_after_p1", 1, "invalid_result"), ("replacement_table", 1, "invalid_result"),
     ("claims_off", 0, None), ("claims_no_session", 0, "session_unavailable"),
 ])
 async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, status):
@@ -2001,7 +2002,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     base_reply = hub.reply
     generations = []
     audits = []
-    resolved = case in {"resolved", "unclassified", "reference_drift", "claims_only", "claims_and_p1"}
+    resolved = case in {"resolved", "unclassified", "reference_drift", "claims_only", "claims_and_p1", "ignored_ledger"}
 
     def save_manifest(task, result):
         manifest = {"task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}}}
@@ -2030,10 +2031,13 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
             if len(generations) > 1:
                 assert "review" not in req["research_contract"]
                 assert task.meta["parent_task"] == latest.task_id
-                assert latest.output_sha256[latest.outputs[0]] in task.prompt
+                draft_path = analysis_draft.for_request(req).path
+                assert latest.output_sha256[draft_path] in task.prompt
+                assert generations[0].output_sha256[generations[0].outputs[0]] in task.prompt
+                assert str(Path(latest.workdir, draft_path)) in task.prompt
+                assert original in map(Path, task.meta["upstream_dirs"])
             findings = (ACCEPT if case in {"claims_only", "claims_off", "claims_no_session"}
-                        or (resolved and len(generations) == 2)
-                        or (case == "claims_after_p1" and len(generations) > 1) else REVISE)
+                        or (resolved and len(generations) == 2) else REVISE)
             issues = [*findings["issues"]] if findings == ACCEPT else [*findings["issues"], *ACCEPT["issues"]]
             if "requires_plan_change" in task.output_schema["properties"]["issues"]["items"]["properties"]:
                 if case != "unclassified" or len(audits) > 1:
@@ -2044,7 +2048,10 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         assert kind == "audit_repair" and task.agent_id == "worker"
         assert task.resume_session_id == "original-session" and task.budget_usd == (4 if case == "budget" else 5)
         assert task.meta["parent_task"] == generations[-1].task_id and not task.meta.get("workdir")
-        automated = initial_claim_problems or (case == "claims_after_p1" and len(generations) > 1)
+        assert task.output_schema is None and "Write the draft only." in task.prompt
+        if len(generations) > 1:
+            assert "Revised analysis." in task.context
+        automated = initial_claim_problems
         assert ("add the column" in task.prompt) == (not automated or case == "claims_and_p1")
         assert "no external cohort" not in task.prompt
         assert ("Automated claim check findings:" in task.prompt) == automated
@@ -2061,31 +2068,40 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         if case == "interrupted":
             req["results"] = {"s1": generations[0].model_dump(mode="json")}
             raise asyncio.CancelledError
-        last = generations[-1]
+        first = generations[0]
         folder = tmp_path / f"repair{len(generations)}"
         folder.mkdir()
         ws = SimpleNamespace(dir=folder, task=task)
         _, unavailable = stage_inputs(ws, task.meta["upstream_artifacts"], tmp_path, [], [], 1_000_000, 1_000_000)
         assert not unavailable
-        path, draft_path = task.meta["required_outputs"]
+        path = first.outputs[0]
+        draft_path, = task.meta["required_outputs"]
+        assert task.meta["outputs"] == [draft_path]
         assert (folder / "inputs" / "s1" / path.removeprefix("outputs/")).is_file()
-        data = {path: f"effect\n0.{len(generations)}\n".encode(),
-                draft_path: (REPORT + "\n\nRevised analysis." +
-                             (bad_text if case == "claims_after_p1" else "")).encode()}
+        body = REPORT + "\n\nRevised analysis."
+        if case == "claims_after_p1":
+            body += bad_text
+        if case == "replacement_table":
+            body += f"\n\nThe [measured effect](steps/s1/{path}) was 0.99 [[claim:s1/c1]]."
+        data = {draft_path: body.encode()}
+        if case in {"ignored_ledger", "replacement_table"}:
+            data[path] = b"effect\n0.99\n"
         (folder / "outputs").mkdir()
         for name, body in data.items():
             (folder / name).write_bytes(body)
-        ledger = copy.deepcopy(last.structured)
-        ledger["claims"][0]["statement"] = f"Donor-level effect confirmed in revision {len(generations)}."
-        if case == "bad_ledger":
-            ledger["plan_sha256"] = "b" * 64
+        ledger = None
+        if case == "ignored_ledger":
+            ledger = copy.deepcopy(first.structured)
+            ledger["method_changes"].append({"reason": "rewritten by repair"})
+            ledger["claims"][0]["statement"] = "This substituted claim must never reach CP2."
         result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
-                            session_id="other-session" if case == "new_session" else last.session_id,
+                            text=f"Draft saved at {draft_path}",
+                            session_id="other-session" if case == "new_session" else first.session_id,
                             workdir=str(folder), workdir_id=folder.name, outputs=list(data),
                             output_sha256={name: sha256(body).hexdigest() for name, body in data.items()},
                             cost_usd=4.01 if case == "budget" else 1)
         save_manifest(task, result)
-        if case not in {"new_session", "bad_ledger", "budget"}:
+        if case not in {"new_session", "budget", "claims_after_p1", "replacement_table"}:
             generations.append(result)
         return result
 
@@ -2103,15 +2119,26 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     assert _kinds(hub).count("audit_repair") == attempts
     assert len(audits) == len(generations) + (case == "unclassified")
     latest = generations[-1]
-    assert req["results"]["s1"]["task_id"] == latest.task_id
-    if case in {"claims_after_p1", "claims_no_session", "claims_off"}:
+    first = generations[0]
+    assert req["results"]["s1"]["task_id"] == first.task_id
+    assert req["results"]["s1"]["structured"] == first.structured
+    assert req["results"]["s1"]["output_sha256"] == first.output_sha256
+    if case in {"claims_after_p1", "replacement_table", "claims_no_session", "claims_off"}:
         approval_kinds = [row["kind"] for row in hub.approvals]
         assert approval_kinds == ["research_plan"] + (["research_evidence"] if case == "claims_off" else [])
         assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
         check = rerun_report_check(req)
         assert check["same"] is True
-        assert any("numeric prose needs a claim anchor" in problem for problem in check["recorded"]["problems"])
-        assert "bibliography PMID 87654321 has no accepted evidence linked to its anchors" in check["recorded"]["problems"]
+        if case in {"claims_after_p1", "replacement_table"}:
+            assert check["recorded"]["problems"] == []
+            rejected = contract["audit_repair"]["rejected_problems"]
+            expected = "numeric prose needs a claim anchor" if case == "claims_after_p1" else "0.99"
+            assert any(expected in problem for problem in rejected)
+            assert "analysis_draft" not in contract
+            assert "Revised analysis." not in req["report"]
+        else:
+            assert any("numeric prose needs a claim anchor" in problem for problem in check["recorded"]["problems"])
+            assert "bibliography PMID 87654321 has no accepted evidence linked to its anchors" in check["recorded"]["problems"]
         if status:
             assert contract["audit_repair"]["status"] == status
             assert "cp2" not in (contract.get("checkpoints") or {})
@@ -2124,11 +2151,18 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     if case != "audit_off":
         assert audit == contract["checkpoints"]["cp2"]["independent_audit"]
         assert audit["draft_sha256"] == sha256(detail["analysis_draft"].encode()).hexdigest()
-        assert detail["results"]["s1"]["claims"][0]["statement"] == latest.structured["claims"][0]["statement"]
+        assert detail["results"]["s1"] == first.structured
+        assert detail["artifact_sha256"]["s1/a1"] == first.output_sha256[first.outputs[0]]
         assert [x["priority"] for x in audit["issues"]] == (["P2"] if resolved else ["P3", "P1", "P2"])
         assert detail["analysis_draft"].endswith("Revised analysis.") == (resolved or case == "limit")
     assert (original / generations[0].outputs[0]).read_bytes() == b"effect\n0.25\n"
     if resolved or case == "limit":
+        receipt = contract["analysis_draft"]
+        assert receipt["parent_task"] == first.task_id
+        assert receipt["result"]["task_id"] == latest.task_id
+        assert receipt["result"]["outputs"] == [analysis_draft.for_request(req).path]
+        if resolved:
+            assert "Revised analysis." in req["report"]
         calls, approvals = len(hub.calls), len(hub.approvals)
         _interrupt(hub)
         await Orchestrator(hub).run_request("r", resume=True)
@@ -2333,7 +2367,7 @@ def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
 
     draft = analysis_draft.for_request(req)
     assert draft.step_id == "s2" and not draft.inline
-    assert "Write the draft only." in draft.prompt() and "Write the draft only." not in draft.prompt(repairing=True)
+    assert "Write the draft only." in draft.prompt() and "Write the draft only." in draft.prompt(repairing=True)
     req["research_contract"]["round"] = 2
     assert analysis_draft.for_request(req).path != draft.path
     assert list(analysis_draft.new_round_rerun(req, plan)) == ["s2"]
