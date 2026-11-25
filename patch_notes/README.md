@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 23:12 | [`a3dbbc8`](https://github.com/ehojune/bioinfo-team-3d/commit/a3dbbc8) | **참고문헌 표의 각 행을 그 행에 달린 주장과 대조합니다.**<br>다른 행의 claim 표식으로 서지 식별자를 통과시킬 수 없도록 했습니다. |
+| 23:08 | [`6f5e020`](https://github.com/ehojune/bioinfo-team-3d/commit/6f5e020) | **참고문헌 제목 뒤에 설명이 붙어도 서지 검사를 합니다.**<br>결과 저장과 간소화 보고서 검사가 같은 한·영 참고문헌 제목 규칙을 사용합니다. |
+| 22:58 | [`9a56986`](https://github.com/ehojune/bioinfo-team-3d/commit/9a56986) | **승인된 반대 근거도 참고문헌에 인용할 수 있게 했습니다.**<br>주장의 인용 가능성 검사와 별도로, 서지 식별자는 그 주장에 연결된 승인 근거 전체와 대조합니다. |
+| 22:50 | [`0085a38`](https://github.com/ehojune/bioinfo-team-3d/commit/0085a38) | **간소화 연구 보고서의 참고문헌 식별자를 승인된 근거와 대조합니다.**<br>DOI·PMID·GEO 식별자는 연결된 근거로 확인하며, 조립한 보고서를 저장하기 전에 다시 검사합니다. |
 | 21:32 | [`71e1f43`](https://github.com/ehojune/bioinfo-team-3d/commit/71e1f43) | **경로를 가린 선택 로그가 PC 단계로 넘길 필수 파일을 막지 않습니다.**<br>수신 기록에서 가림을 확인한 선택 로그만 PC 입력에서 빼고, 필수 파일의 크기와 SHA-256은 계속 대조한다. |
 | 20:05 | [`5fd202f`](https://github.com/ehojune/bioinfo-team-3d/commit/5fd202f) | **받을 파일이 모두 선택 산출이면 빈 입력으로 PC 단계를 계속합니다.**<br>검증을 마친 수신 기록에 복사할 파일이 없으면 입력 폴더를 열지 않고 PC 단계를 실행한다. |
 | 19:56 | [`6755cc1`](https://github.com/ehojune/bioinfo-team-3d/commit/6755cc1) | **크기 상한을 넘긴 선택 파일이 있어도 PC가 필수 결과를 읽습니다.**<br>원격 목록과 수신 누락 기록에 크기 상한이 확인된 선택 파일만 입력 복사에서 건너뛴다. |
@@ -23,6 +27,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 11:54 | [`9d7e882`](https://github.com/ehojune/bioinfo-team-3d/commit/9d7e882) | **혼합 실행의 초안을 PC에서 쓸 수 있는지 계획 승인 전에 확인합니다.**<br>초안 작성 단계를 HPC 생산 단계와 같은 runner의 PC로 배정하도록 교정한다. 조건에 어긋난 저장 계획은 재개 카드에서 함께 승인하지 않는다. |
 | 11:46 | [`74afcab`](https://github.com/ehojune/bioinfo-team-3d/commit/74afcab) | **혼합 실행의 보고서 초안과 감사 수정에서도 HPC 수신 기록을 확인합니다.**<br>CP1에서 승인한 PC 분석 runner에 작업을 배정한다. HPC 생산 단계의 revision과 수신 체크섬이 맞아야 복사한다. |
 | 11:36 | [`76bc1ef`](https://github.com/ehojune/bioinfo-team-3d/commit/76bc1ef) | **혼합 실행 브랜치를 최신 연구 검토 코드에 맞췄습니다.**<br>이어가기의 단계별 입력 확인과 PC 부분 결과의 HPC 수신 검사를 유지하고, CP2에 최신 감사 상세를 표시한다. |
+| 11:22 | [`e3b1b98`](https://github.com/ehojune/bioinfo-team-3d/commit/e3b1b98) | **간소화 연구 보고서의 참고문헌 줄마다 근거 표식을 달도록 안내합니다.**<br>원장에 근거가 담긴 출처만 참고 목록에 적고, 출처에 대한 판정과 비교는 표식과 함께 본문에 씁니다. |
 | 10:49 | [`f79e6cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/f79e6cc) | **후속 초안에서 지지 근거와 반대 근거를 함께 읽습니다.**<br>원장이 잘려도 제공한 표식마다 승인된 지지·반대 관계와 각 출처 위치가 남는다. |
 | 10:43 | [`240b1c8`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/240b1c8) | **후속 초안에서 원본 단계의 근거 파일을 바로 찾습니다.**<br>결과 승인에 기록된 경로와 해시로 생산 단계를 찾아 후속 작업공간의 입력 경로를 표시한다. |
 | 10:37 | [`1b192d0`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/1b192d0) | **후속 초안에 주장 표식과 근거 위치를 함께 전달합니다.**<br>긴 원장의 일부가 잘려도 초안 작성자가 제시된 표식의 파일과 위치를 찾도록 한 줄로 묶었다. |
