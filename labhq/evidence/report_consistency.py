@@ -69,7 +69,7 @@ class _LocalTable:
     output: str
 
     @contextmanager
-    def open(self):
+    def open_lines(self):
         with _open_source(self.workdir, self.output) as source:
             before = os.fstat(source.fileno())
             with io.TextIOWrapper(source, encoding="utf-8-sig", newline="") as text:
@@ -235,7 +235,7 @@ def check(report: str, tables: Mapping[str, Table]) -> dict[str, Any]:
         relevant = {i: sentence for i, sentence in enumerate(sentences) if name in links[i]}
         try:
             if isinstance(table, _LocalTable):
-                with table.open() as lines:
+                with table.open_lines() as lines:
                     result = _scan_table(lines, delimiter, relevant)
             else:
                 lines = (line[0] for line in _TABLE_LINE.finditer(table, int(table.startswith("\ufeff"))))
