@@ -980,6 +980,13 @@ class Runner:
                         "engine_cli_versions": dict(self.engine_versions or {}),
                         "platform": sys.platform,
                         "environment": {key: os.environ[key] for key in LOGIN_PATH_ENV if os.environ.get(key)}}
+        if self.s.hpc.scheduler in {"slurm", "sge", "pbs"}:
+            try:
+                transfer = self.scheduler.transfer()
+            except RuntimeError:
+                pass  # An unavailable profile has no verified upload limit.
+            else:
+                capabilities["hpc_upload_max_bytes"] = transfer.limits.upload_max_bytes if transfer else None
         # The runner registers the AlphaGenome tools, so it is the one that knows whether they exist: the key file on its
         # account and the client in its Python. Only the fact travels; the gateway never looks for the key (#1200).
         try:
@@ -2415,8 +2422,10 @@ class Runner:
         input_refusal = ("HPC request inputs require a verified scheduler-readable request-input snapshot"
                          if whole_hpc and (agent.project_dirs or task.meta.get("project_dirs")
                                            or task.meta.get("reference_dirs")) else None)
+        from .step_handoff import mixed_step_input_refusal
+        isolated_refusal = mixed_step_input_refusal(task, agent, self.s.runner.id)
         input_approval = task.meta.get("hpc_input_approval")
-        if input_refusal and not agent.project_dirs and isinstance(input_approval, dict):
+        if input_refusal and not isolated_refusal and not agent.project_dirs and isinstance(input_approval, dict):
             from ..research.input_proof import capture
             from ..wsl_paths import message_paths
             descriptor = {key: task.meta.get(key) or [] for key in ("reference_dirs", "project_dirs")}
@@ -2429,6 +2438,7 @@ class Runner:
         if whole_hpc and task.meta.get("precedent_texts"):
             # Scheduler jobs never read precedent texts; drop them instead of refusing the step (#1336).
             task.meta = {key: value for key, value in task.meta.items() if key != "precedent_texts"}
+        input_refusal = isolated_refusal or input_refusal
         refusal = input_refusal or (read_only_refusal(agent.id, agent.engine) if read_only else None)
         # A contract hire works only once active, and staff that send data to external services never take restricted
         # inputs (#424); the gateway refuses both first.
@@ -3384,29 +3394,24 @@ class Runner:
                 result.ok = False
                 result.error = "incomplete: " + str(exc)
         remote_manifests = []
+        remote_paths = []
         nested_candidates = []
         retained_text = ""
         if whole_hpc and _should_check_declared_outputs(result):
+            from .step_handoff import local_hpc_output_receipt
             try:
                 remote_manifests = await asyncio.to_thread(self._remote_step_outputs, ws)
+                if remote_manifests:
+                    remote_paths, receipt, conflicts = await asyncio.to_thread(
+                        local_hpc_output_receipt, ws, remote_manifests, hashed, output_records)
             except Exception as exc:
+                remote_manifests = []
                 result.ok = False
                 result.error = "incomplete: remote outputs could not be verified: " + self._hide_text(str(exc))[:300]
             if remote_manifests:
-                from .hpc_fetch import missing_received_outputs
-                declared_rels = [rel for name in [*declared, *required_declared, *optional_declared]
-                                 if (rel := output_relpath(name))]
-                missing_received = missing_received_outputs(declared_rels, remote_manifests, hashed)
+                missing_received = receipt["omissions"]
                 nested_candidates = [item for manifest in remote_manifests
                                      for item in manifest.pop("_nested_candidates", [])]
-                from ..hpc_transfer import local_copy_conflicts
-                remote_paths = ["outputs/" + row["path"]
-                                for manifest in remote_manifests for row in manifest["files"]]
-                receipts = {"outputs/" + path: digest for manifest in remote_manifests
-                            for path, digest in manifest.pop("_local_copy_sha256", {}).items()}
-                for manifest in remote_manifests:
-                    manifest.pop("_fetch_skipped", None)
-                conflicts = await asyncio.to_thread(local_copy_conflicts, ws.dir, remote_paths, hashed, receipts)
                 if conflicts:
                     result.ok = False
                     result.error = ("incomplete: local/remote output conflict or unverified local copy: " +
@@ -3419,8 +3424,7 @@ class Runner:
                                             if path not in refused}
                 found = list(dict.fromkeys([*found, *remote_paths]))
                 result.outputs = list(dict.fromkeys([*result.outputs, *remote_paths]))
-                ws.stage_run(task.id, hpc_remote_outputs=remote_manifests,
-                             hpc_local_receipt={"sha256": receipts, "omissions": missing_received})
+                ws.stage_run(task.id, hpc_remote_outputs=remote_manifests, hpc_local_receipt=receipt)
                 transfer = self.scheduler.transfer()
                 retained_text = "\n\nRetained HPC data (delete only by user decision):\n" + "\n".join(
                     f"{transfer.path(m['data'])}: {m.get('retained_bytes', m['bytes'])} known bytes retained "
@@ -3446,7 +3450,7 @@ class Runner:
         result.output_tool_use_ids = {row["path"]: row["tool_use_id"] for row in observed_outputs
                                       if isinstance(row.get("tool_use_id"), str)}
         collected = set(result.outputs)
-        remote_files = {"outputs/" + row["path"] for manifest in remote_manifests for row in manifest["files"]}
+        remote_files = set(remote_paths)
         if _should_check_declared_outputs(result):
             def has_output(rel: str) -> bool:
                 # A declared folder is there when a file with a hash is under it: a later step stages only those.
@@ -3646,6 +3650,8 @@ class Runner:
         result.provenance = ws.provenance()
         if remote_manifests:
             result.provenance["hpc_remote_data"] = remote_manifests
+            if location.get('scope') == 'step':
+                result.provenance['hpc_step_revision'] = task.meta.get('revision', 0)
         if task.meta.get("paper_skills"):
             ws.clear_paper_skills()  # before task.result can release a dependent step
         if tool_errors:
@@ -4690,6 +4696,8 @@ class Runner:
                     j["remote_manifest"] = manifest["remote"]
                 j["fetched_sha256"] = {row["path"]: row["sha256"] for row in manifest.get("fetched", [])
                                        if isinstance(row.get("sha256"), str)}
+                j["fetched_redacted"] = {row["path"]: row["remote_sha256"] for row in manifest.get("fetched", [])
+                                          if row.get("redacted") is True}
                 j["fetched_paths"] = [row["path"] for row in manifest.get("fetched", []) if isinstance(row.get("path"), str)]
                 j["fetch_skipped"] = [row for row in manifest.get("skipped", [])
                                       if row.get("path") not in spec.get("logs", [])]
@@ -4718,6 +4726,7 @@ class Runner:
     def _remote_step_outputs(self, ws) -> list[dict]:
         """Only runner-owned, successful remote jobs of this workspace and revision can satisfy outputs."""
         from ..hpc_transfer import TransferError, validate_remote_manifest, verify_remote_data
+        from .step_handoff import mixed_hpc_step
 
         manifests, paths, directory_paths = [], set(), set()
         path_owners = {}
@@ -4763,6 +4772,9 @@ class Runner:
                 declared = {("" if rel == "outputs" else rel.removeprefix("outputs/")) for name in [
                     *ws.task.meta.get("outputs", []), *ws.task.meta.get("optional_outputs", [])]
                     if (rel := output_relpath(name))}
+                if mixed_hpc_step(ws.task):
+                    # Match declarations in either job layout while keeping raw names for remote verification.
+                    declared |= {"outputs/" + name if name else "outputs" for name in declared}
                 directories = set(manifest.get("directories", []))
                 declared_dirs = declared & directories
                 if "" in declared:
@@ -4809,6 +4821,7 @@ class Runner:
                 manifest["_local_copy_sha256"] = {row["path"]: copied[row["path"]]
                                                   for row in files if row["path"] in copied}
                 manifest["_fetch_skipped"] = job.get("fetch_skipped", [])
+                manifest["_fetch_redacted"] = job.get("fetched_redacted", {})
                 manifest["_nested_candidates"] = pending_candidates
                 file_paths = {row["path"].casefold() for row in manifest["files"]}
                 current_dirs = {directory.casefold() for directory in manifest["directories"]}
