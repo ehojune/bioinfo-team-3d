@@ -342,14 +342,14 @@ def test_only_sentences_that_link_a_table_are_compared_and_counts_are_kept():
 
 
 def test_tables_are_read_only_from_a_steps_declared_outputs_in_its_own_folder(tmp_path):
-    from labhq.evidence.report_consistency import tables_for
+    from labhq.evidence.report_consistency import check, tables_for
     step = tmp_path / "s3"
     (step / "outputs").mkdir(parents=True)
     (step / "outputs" / "de.tsv").write_text(DE_TABLE, encoding="utf-8")
     (step / "outputs" / "secret.tsv").write_text("x\n", encoding="utf-8")
     report = "[a](steps/s3/outputs/de.tsv) [b](steps/s3/outputs/secret.tsv) [c](steps/s3/outputs/../../x.tsv)"
     found = tables_for(report, {"s3": {"workdir": str(step), "outputs": ["outputs/de.tsv"]}})
-    assert {k: v for k, v in found.items() if v is not None} == {"steps/s3/outputs/de.tsv": DE_TABLE}
+    assert check(report, found)["checked"]["tables"] == ["steps/s3/outputs/de.tsv"]
     # undeclared or escaping links are not read, and are kept as "linked but not compared"
     assert sorted(k for k, v in found.items() if v is None) == [
         "steps/s3/outputs/../../x.tsv", "steps/s3/outputs/secret.tsv"]

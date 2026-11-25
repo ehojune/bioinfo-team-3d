@@ -20,13 +20,19 @@ from __future__ import annotations
 import csv
 import io
 import math
+import os
 import re
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
+from .literal_check import _open_source
+
 TABLE_SUFFIXES = {".tsv", ".csv"}
-MAX_TABLE_BYTES = 3_000_000  # local and transferred tables above this limit are reported as unread
+MAX_TABLE_BYTES = 3_000_000  # bounded reads by the standalone preregistration checker
 MAX_FINDINGS = 40
+_TABLE_LINE = re.compile(r"[^\r\n]*(?:\r\n?|\n|$)")
 # A Markdown link: "<...>" destinations may hold spaces (the report contract allows them), plain ones may not.
 _LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^<>\n]+)>|([^()\s<>]+))(?:\s+\"[^\"]*\")?\s*\)")
 _CODE = re.compile(r"```.*?```|~~~.*?~~~|`[^`\n]*`", re.S)  # backtick and tilde fences, inline code
@@ -55,6 +61,25 @@ _ENDPOINT = re.compile(r"반응|response|관해|remission|\bORR\b|\bCR\b|\bPR\b"
 _HAZARD = re.compile(r"^(?:HR|hazard\s+ratio)", re.I)
 _LOG_COLUMN = re.compile(r"^(?:log2[\s_.]*f(?:old)?[\s_.]*c(?:hange)?|log2fc|l2fc|lfc|logfc|log2foldchange)$", re.I)
 _YEARS = range(1900, 2101)
+
+
+@dataclass(frozen=True)
+class _LocalTable:
+    workdir: Path
+    output: str
+
+    @contextmanager
+    def open_lines(self):
+        with _open_source(self.workdir, self.output) as source:
+            before = os.fstat(source.fileno())
+            with io.TextIOWrapper(source, encoding="utf-8-sig", newline="") as text:
+                yield text
+                after = os.fstat(source.fileno())
+                if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                    raise ValueError("table changed during the scan")
+
+
+Table = str | _LocalTable | None
 
 
 def _value(text: str) -> float | None:
@@ -89,7 +114,7 @@ def _sentences(report: str) -> list[str]:
     return [part.strip() for part in _SENTENCE_END.split("\n".join(lines)) if part and part.strip()]
 
 
-def _linked_tables(sentence: str, tables: Mapping[str, list[list[str]]]) -> list[str]:
+def _linked_tables(sentence: str, tables: Mapping[str, Table]) -> list[str]:
     found = []
     for target in _targets(sentence):
         path = target.replace("\\", "/").removeprefix("./")
@@ -99,21 +124,9 @@ def _linked_tables(sentence: str, tables: Mapping[str, list[list[str]]]) -> list
     return list(dict.fromkeys(found))
 
 
-def _table_numbers(rows: list[list[str]]) -> list[float]:
-    return [value for row in rows for cell in row if (value := _value(cell)) is not None]
-
-
-def _matches(text: str, value: float, pool: Iterable[float]) -> str | None:
-    """"exact" when the sentence's number is a table value as the sentence rounds it (or a fraction shown as %),
-    "sign" when only its magnitude is (the sentence flipped or dropped the sign), else None."""
+def _numeric_targets(text: str, value: float) -> list[tuple[float, float]]:
     tolerance = 0.5 * 10 ** -_decimals(text) + 1e-9
-    targets = [(value, tolerance)] + ([(value / 100, tolerance / 100)] if text.strip().endswith("%") else [])
-    pool = list(pool)
-    if any(abs(number - target) <= allowed for number in pool for target, allowed in targets):
-        return "exact"
-    if any(abs(abs(number) - abs(target)) <= allowed for number in pool for target, allowed in targets):
-        return "sign"
-    return None
+    return [(value, tolerance)] + ([(value / 100, tolerance / 100)] if text.endswith("%") else [])
 
 
 def _checkable_numbers(sentence: str) -> list[tuple[str, float]]:
@@ -142,60 +155,113 @@ def _direction(sentence: str) -> str | None:
     return "up" if up and not down else "down" if down and not up else None
 
 
-def _row_effects(sentence: str, tables: Mapping[str, list[list[str]]], names: list[str]) -> list[tuple[str, float]]:
-    """(identifier, log fold change) of each linked table row whose identifier the sentence names."""
-    words = set(re.findall(r"[A-Za-z][A-Za-z0-9.\-]{2,}", sentence))
-    effects = []
-    for name in names:
-        rows = tables[name]
-        if not rows:
-            continue
-        header = [cell.strip() for cell in rows[0]]
-        columns = [i for i, cell in enumerate(header) if _LOG_COLUMN.fullmatch(cell)]
-        if not columns:
-            continue
-        for row in rows[1:]:
-            ids = [cell.strip() for i, cell in enumerate(row) if i not in columns and cell.strip() in words]
-            if ids and (value := _value(row[columns[0]] if columns[0] < len(row) else "")) is not None:
-                effects.append((ids[0], value))
-    return effects
+@dataclass
+class _RowCheck:
+    words: set[str]
+    said: str
+    checked: int = 0
+    conflict: tuple[str, float] | None = None
+
+    def compare(self, identifiers: list[str], effect: float) -> None:
+        identifier = next((word for word in identifiers if word in self.words), None)
+        if identifier is not None:
+            self.checked += 1
+            if (self.said == "up" and effect < 0) or (self.said == "down" and effect > 0):
+                self.conflict = identifier, effect
 
 
-def check(report: str, tables: Mapping[str, str | None]) -> dict[str, Any]:
-    """``tables`` maps a report link path to the table's text. Returns ``{"findings": [...], "checked": {...}}``."""
-    parsed: dict[str, list[list[str]]] = {}
+def _match_row(row: list[str], targets: dict[str, list[tuple[float, float]]], matches: dict[str, str]) -> None:
+    pool = [value for cell in row if (value := _value(cell)) is not None]
+    found = []
+    for raw, ranges in targets.items():
+        if any(abs(number - target) <= allowed for number in pool for target, allowed in ranges):
+            matches[raw] = "exact"
+            found.append(raw)
+        elif raw not in matches and any(abs(abs(number) - abs(target)) <= allowed
+                                        for number in pool for target, allowed in ranges):
+            matches[raw] = "sign"
+    for raw in found:
+        del targets[raw]
+
+
+@dataclass
+class _TableScan:
+    numbers: dict[str, str]
+    directions: dict[int, _RowCheck]
+
+
+def _scan_table(lines: Iterable[str], delimiter: str, sentences: dict[int, str]) -> _TableScan:
+    """Read to EOF, keeping only matches for claims in the report."""
+    targets = {raw: _numeric_targets(raw, value) for sentence in sentences.values()
+               for raw, value in _checkable_numbers(sentence)}
+    matches: dict[str, str] = {}
+    row_checks = {i: _RowCheck(set(re.findall(r"[A-Za-z][A-Za-z0-9.\-]{2,}", sentence)), said)
+                  for i, sentence in sentences.items() if (said := _direction(sentence))}
+    rows = (row for row in csv.reader(lines, delimiter=delimiter, strict=True) if any(cell.strip() for cell in row))
+    header = next(rows, [])
+    columns = [i for i, cell in enumerate(header) if _LOG_COLUMN.fullmatch(cell.strip())]
+    _match_row(header, targets, matches)
+    for row in rows:
+        if targets:
+            _match_row(row, targets, matches)
+        if not row_checks or not columns or columns[0] >= len(row):
+            continue
+        effect = _value(row[columns[0]])
+        if effect is not None:
+            ids = [cell.strip() for i, cell in enumerate(row) if i not in columns]
+            for row_check in row_checks.values():
+                if row_check.conflict is None:
+                    row_check.compare(ids, effect)
+    return _TableScan(matches, row_checks)
+
+
+def _direction_finding(shown: str, said: str, label: str, value: float) -> dict[str, Any]:
+    return {"kind": "direction", "sentence": shown, "value": f"{label} {value:g}",
+            "detail": f"본문은 {'증가' if said == 'up' else '감소'}라고 썼지만 "
+                      f"{label} {value:g}은(는) 반대 방향입니다"}
+
+
+def check(report: str, tables: Mapping[str, Table]) -> dict[str, Any]:
+    """Compare the report with in-memory copies or local files, reading each table to EOF."""
+    sentences = _sentences(report)
+    links = [_linked_tables(sentence, tables) for sentence in sentences]
+    parsed: dict[str, _TableScan] = {}
     unread = []
-    for name, text in tables.items():
-        suffix = PurePosixPath(name).suffix.casefold()
-        if text is None:  # linked but not readable here (too large, not a declared output, missing): not checked
+    for name, table in tables.items():
+        if table is None:
             unread.append(name)
             continue
+        delimiter = "\t" if PurePosixPath(name).suffix.casefold() == ".tsv" else ","
+        relevant = {i: sentence for i, sentence in enumerate(sentences) if name in links[i]}
         try:
-            parsed[name] = [row for row in csv.reader(io.StringIO(text), delimiter="\t" if suffix == ".tsv" else ",")
-                            if any(cell.strip() for cell in row)]
-        except csv.Error:
+            if isinstance(table, _LocalTable):
+                with table.open_lines() as lines:
+                    result = _scan_table(lines, delimiter, relevant)
+            else:
+                lines = (line[0] for line in _TABLE_LINE.finditer(table, int(table.startswith("\ufeff"))))
+                result = _scan_table(lines, delimiter, relevant)
+        except (OSError, csv.Error, ValueError):
             unread.append(name)
-    pools = {name: _table_numbers(rows) for name, rows in parsed.items()}
+        else:
+            parsed[name] = result
+
     findings: list[dict[str, Any]] = []
-    sentences = numbers = directions = 0
-    for sentence in _sentences(report):
-        sentences += 1
+    numbers = directions = 0
+    for i, sentence in enumerate(sentences):
         shown = re.sub(r"\s+", " ", sentence)[:240]
-        linked = _linked_tables(sentence, parsed)
+        linked = [name for name in links[i] if name in parsed]
+        said = _direction(sentence)
         if linked:
-            pool = [value for name in linked for value in pools[name]]
-            worded = _direction(sentence) is not None
-            for raw, value in _checkable_numbers(sentence):
+            for raw, _ in _checkable_numbers(sentence):
                 numbers += 1
-                matched = _matches(raw, value, pool)
-                if matched is None:
+                matches = {parsed[name].numbers.get(raw) for name in linked}
+                if "exact" not in matches and "sign" not in matches:
                     findings.append({"kind": "number", "sentence": shown, "value": raw, "tables": linked,
                                      "detail": f"본문 수치 {raw}이(가) 연결된 표({', '.join(linked)})에 없습니다"})
-                elif matched == "sign" and not worded:
+                elif "exact" not in matches and said is None:
                     # "2.1배 감소" may drop a sign the words carry (checked below); a bare "log2FC 1.8" may not.
                     findings.append({"kind": "sign", "sentence": shown, "value": raw, "tables": linked,
                                      "detail": f"본문 수치 {raw}은(는) 연결된 표의 값과 부호가 다릅니다"})
-        said = _direction(sentence)
         if said is None:
             continue
         effects = [("log2FC", value, value > 0, value < 0) for value in
@@ -210,17 +276,20 @@ def check(report: str, tables: Mapping[str, str | None]) -> dict[str, Any]:
             flipped = survival and hazard
             effects.append((m.group(0).split()[0], value, (value < 1) if flipped else (value > 1),
                             (value > 1) if flipped else (value < 1)))
-        effects += [(identifier, value, value > 0, value < 0)
-                    for identifier, value in _row_effects(sentence, parsed, linked)]
         for label, value, up, down in effects:
             directions += 1
             if (said == "up" and down) or (said == "down" and up):
-                findings.append({"kind": "direction", "sentence": shown, "value": f"{label} {value:g}",
-                                 "detail": f"본문은 {'증가' if said == 'up' else '감소'}라고 썼지만 "
-                                           f"{label} {value:g}은(는) 반대 방향입니다"})
+                findings.append(_direction_finding(shown, said, label, value))
                 break  # one direction finding per sentence: the stated value and its table row are the same fact
+        else:
+            for name in linked:
+                row_check = parsed[name].directions[i]
+                directions += row_check.checked
+                if row_check.conflict:
+                    findings.append(_direction_finding(shown, said, *row_check.conflict))
+                    break
     return {"schema_version": 1, "findings": findings[:MAX_FINDINGS], "more": max(0, len(findings) - MAX_FINDINGS),
-            "checked": {"sentences": sentences, "numbers": numbers, "directions": directions,
+            "checked": {"sentences": len(sentences), "numbers": numbers, "directions": directions,
                         "tables": sorted(parsed), "unread_tables": unread}}
 
 
@@ -234,20 +303,19 @@ def _plain_file(base: Path, relative: str) -> Path | None:
             path = path / part
             if path.is_symlink():
                 return None
-        return path if path.is_file() and path.stat().st_size <= MAX_TABLE_BYTES else None
+        return path if path.is_file() else None
     except (OSError, ValueError):
         return None
 
 
-def tables_for(report: str, results: Mapping[str, Any]) -> dict[str, str | None]:
-    """The text of every result table the report links, read from the step folder that produced it.
+def tables_for(report: str, results: Mapping[str, Any]) -> dict[str, _LocalTable | None]:
+    """Locate each linked result table in the step folder that produced it.
 
     A link names ``steps/<step>/<output>``, ``<workdir_id>/<output>`` or just ``<output>``; only an output a step
-    declared is read, from that step's own folder, without following links. A linked table that cannot be read that
-    way (not declared, too large, a link, missing) maps to None, so the check reports it as not compared."""
+    declared is used, from that step's own folder, without following links. Unresolved tables map to None."""
     wanted = {target.replace("\\", "/").removeprefix("./") for target in _targets(report)
               if PurePosixPath(target).suffix.casefold() in TABLE_SUFFIXES and "://" not in target}
-    found: dict[str, str | None] = {}
+    found: dict[str, _LocalTable | None] = {}
     for step_id, result in (results or {}).items():
         get = result.get if isinstance(result, Mapping) else (lambda key, r=result: getattr(r, key, None))
         workdir, outputs = get("workdir"), get("outputs") or []
@@ -260,10 +328,7 @@ def tables_for(report: str, results: Mapping[str, Any]) -> dict[str, str | None]
                 if link in {output, f"{owner}/{output}", f"steps/{step_id}/{output}"} and link not in found:
                     path = _plain_file(Path(workdir), output)
                     if path is not None:
-                        try:
-                            found[link] = path.read_text(encoding="utf-8", errors="replace")
-                        except OSError:
-                            pass
+                        found[link] = _LocalTable(Path(workdir), output)
     return {**{link: None for link in sorted(wanted)}, **found}
 
 
