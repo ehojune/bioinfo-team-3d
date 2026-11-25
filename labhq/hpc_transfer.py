@@ -27,13 +27,14 @@ import shlex
 import stat
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Callable, Iterable
 
 from .adapters.held_dir import HeldDir
 
 SAFE_PART = re.compile(r"[A-Za-z0-9][A-Za-z0-9._@+=,:%-]*")  # one path component: no space, quote, glob or leading dash
+DEFAULT_UPLOAD_MAX_BYTES = 512 * 1024
 
 
 class TransferError(RuntimeError):
@@ -54,7 +55,7 @@ class HashMismatch(TransferError):
 
 @dataclass(frozen=True)
 class Limits:
-    upload_max_bytes: int = 512 * 1024  # one file; a larger one is the site transfer method's job
+    upload_max_bytes: int = DEFAULT_UPLOAD_MAX_BYTES  # one file; a larger one is the site transfer method's job
     fetch_max_bytes: int = 1024 * 1024  # one file
     fetch_total_bytes: int = 8 * 1024 * 1024  # all files of one job
     chunk_chars: int = 2400  # one command line (a terminal line holds about 4096 characters)
@@ -201,8 +202,11 @@ class Transfer:
     # ---- upload ------------------------------------------------------------------------------------------------
     def upload_bytes(self, rel: str, data: bytes, *, executable: bool = False) -> dict:
         """Write ``data`` to ``rel`` under the root. The file appears only once the far side's sha256 equals ours."""
-        if len(data) > self.limits.upload_max_bytes:
-            raise TooLarge(f"{rel}: {len(data)} bytes is over the {self.limits.upload_max_bytes} byte limit; use the site "
+        return self._upload_bytes(rel, data, max_bytes=self.limits.upload_max_bytes, executable=executable)
+
+    def _upload_bytes(self, rel: str, data: bytes, *, max_bytes: int, executable: bool = False) -> dict:
+        if len(data) > max_bytes:
+            raise TooLarge(f"{rel}: {len(data)} bytes is over the {max_bytes} byte limit; use the site "
                            "profile's file transfer method (a login of its own) and put it under the work folder")
         path = confine(rel)
         folder = str(path.parent) if str(path.parent) != "." else ""
@@ -233,27 +237,31 @@ class Transfer:
                 pass
         return {"path": rel, "bytes": len(data), "sha256": want}
 
-    def upload_file(self, local: Path, rel: str, *, root: Path | None = None, executable: bool = False) -> dict:
+    def upload_file(self, local: Path, rel: str, *, root: Path | None = None, executable: bool = False,
+                    max_bytes: int | None = None) -> dict:
         """Upload a regular local file. With ``root``, the file is read inside it through folder handles held open (no
         link on the way, none swapped in after the check, no ``..``)."""
         local = Path(local)
+        limit = self.limits.upload_max_bytes if max_bytes is None else min(max_bytes, self.limits.upload_max_bytes)
         if root is not None:
             try:
                 relative = local.resolve(strict=False).relative_to(Path(root).resolve())
             except (ValueError, OSError) as error:
                 raise PathRejected(f"{local} is outside {root}") from error
-            data = read_confined(Path(root), str(PurePosixPath(*relative.parts)), self.limits.upload_max_bytes)
+            data = read_confined(Path(root), str(PurePosixPath(*relative.parts)), limit)
             return self.upload_bytes(rel, data, executable=executable)
         try:
             if local.is_symlink() or not local.is_file():
                 raise PathRejected(f"{local} is not a plain file")
             size = local.stat().st_size
-            if size > self.limits.upload_max_bytes:
-                raise TooLarge(f"{local.name}: {size} bytes is over the {self.limits.upload_max_bytes} byte limit; use the "
+            if size > limit:
+                raise TooLarge(f"{local.name}: {size} bytes is over the {limit} byte limit; use the "
                                "site profile's file transfer method")
             data = local.read_bytes()
         except OSError as error:
             raise TransferError(f"cannot read {local.name}: {error}") from error
+        if len(data) > limit:
+            raise TooLarge(f"{local.name}: grew past the {limit} byte limit while it was read")
         return self.upload_bytes(rel, data, executable=executable)
 
     # ---- fetch -------------------------------------------------------------------------------------------------
@@ -370,7 +378,9 @@ def read_confined(root: Path, rel: str, limit: int) -> bytes:
                 if info.st_size > limit:
                     raise TooLarge(f"{rel}: {info.st_size} bytes is over the {limit} byte limit; use the site profile's "
                                    "file transfer method")
-                data = handle.read(limit + 1)
+                data = handle.read(info.st_size + 1)
+                if info.st_size < len(data) <= limit:
+                    raise TransferError(f"{rel}: grew while it was read")
     except TransferError:
         raise
     except OSError as error:  # a link, a missing file or folder, or one that is not what it was
@@ -668,11 +678,8 @@ def verify_remote_data(transfer: Transfer, manifest: dict, request_id: str) -> s
     # Check the runner's saved names/sizes without reading the large files.
     config = f"verify-{uuid.uuid4().hex[:12]}.json"
     payload = json.dumps(manifest).encode()
-    metadata = Transfer(transfer.run, transfer.root, replace(transfer.limits, upload_max_bytes=4 * 1024 * 1024),
-                        redact=transfer._redact, long_run=transfer.long_run)
-    metadata.deadline = transfer.deadline
-    metadata.upload_bytes(f"{folder}/{config}", payload)
-    transfer.upload_bytes(f"{folder}/remote-data.py", REMOTE_DATA_HELPER.encode())
+    transfer._upload_bytes(f"{folder}/{config}", payload, max_bytes=4 * 1024 * 1024)
+    transfer._upload_bytes(f"{folder}/remote-data.py", REMOTE_DATA_HELPER.encode(), max_bytes=DEFAULT_UPLOAD_MAX_BYTES)
     _remote_data_command(transfer, folder, "verify", config)
     return transfer.path(manifest["data"])
 
@@ -723,7 +730,10 @@ def _upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pa
     inputs = list(inputs or [])
     if len(inputs) > MAX_INPUTS:
         raise TooLarge(f"{len(inputs)} inputs is more than {MAX_INPUTS}; use the site profile's file transfer method")
-    sent, total = [], 0
+    sent = []
+    upload_limit = transfer.limits.upload_max_bytes
+    total_limit = remaining = max(INPUTS_TOTAL_BYTES, upload_limit)
+    spec["upload_max_bytes"] = upload_limit  # classify unchanged inputs even after a profile edit
     spec["inputs"] = {}  # work-relative name -> sha256 of what was uploaded: those are not results when the job ends
     transfer.deadline = time.monotonic() + budget_s  # a slow link stops the upload before the caller gives up waiting
     try:
@@ -735,21 +745,31 @@ def _upload_job(transfer: Transfer, spec: dict, script_text: str, local_root: Pa
                 verify_remote_data(transfer, manifest, spec["request_id"])
         for rel in inputs:
             name = str(confine(str(rel)))
-            info = transfer.upload_file(Path(local_root) / name, f"{spec['work']}/{name}", root=Path(local_root))
-            total += info["bytes"]
-            if total > INPUTS_TOTAL_BYTES:
-                raise TooLarge(f"the inputs total more than {INPUTS_TOTAL_BYTES} bytes; use the site profile's file "
-                               "transfer method")
+            try:
+                info = transfer.upload_file(Path(local_root) / name, f"{spec['work']}/{name}", root=Path(local_root),
+                                            max_bytes=remaining)
+            except TooLarge as error:
+                if remaining < upload_limit:
+                    raise TooLarge(f"the inputs total more than {total_limit} bytes; use the site profile's file "
+                                   "transfer method") from error
+                raise
+            remaining -= info["bytes"]
             spec["inputs"][name] = info["sha256"]
             sent.append(info)
         sent.append(transfer.upload_bytes(spec["script"], script_text.encode("utf-8"), executable=True))
         if spec.get("request_id"):
-            transfer.upload_bytes(f"{spec['dir']}/remote-data.py", REMOTE_DATA_HELPER.encode())
-            transfer.upload_bytes(f"{spec['dir']}/remote-config.json", json.dumps(
-                {"request_id": spec["request_id"], "data": spec["data"], "inputs": spec["inputs"]}).encode())
+            _upload_remote_inventory_helper(transfer, spec)
     finally:
         transfer.deadline = None
     return sent
+
+
+def _upload_remote_inventory_helper(transfer: Transfer, spec: dict) -> None:
+    """Internal inventory files keep their own bounds even when the site limits user uploads."""
+    folder = spec["dir"]
+    transfer._upload_bytes(f"{folder}/remote-data.py", REMOTE_DATA_HELPER.encode(), max_bytes=DEFAULT_UPLOAD_MAX_BYTES)
+    config = {"request_id": spec["request_id"], "data": spec["data"], "inputs": spec.get("inputs", {})}
+    transfer._upload_bytes(f"{folder}/remote-config.json", json.dumps(config).encode(), max_bytes=DEFAULT_UPLOAD_MAX_BYTES)
 
 
 def safe_local_root(base: Path, root: Path) -> Path:
@@ -792,9 +812,7 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         manifest["logs"].append(transfer.fetch_log(rel, logs_dir, tail=True, name=PurePosixPath(rel).name))
     if spec.get("request_id"):
         transfer.plain_dir(spec["dir"])
-        transfer.upload_bytes(f"{spec['dir']}/remote-data.py", REMOTE_DATA_HELPER.encode())
-        transfer.upload_bytes(f"{spec['dir']}/remote-config.json", json.dumps(
-            {"request_id": spec["request_id"], "data": spec["data"], "inputs": spec.get("inputs", {})}).encode())
+        _upload_remote_inventory_helper(transfer, spec)
         _remote_data_command(transfer, spec["dir"], "scan", "remote-config.json")
         data, _ = transfer.fetch_bytes(f"{spec['dir']}/remote-data.json", max_bytes=4 * 1024 * 1024)
         remote = validate_remote_manifest(json.loads(data), spec["request_id"])
@@ -805,8 +823,7 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         # Compare the scan's digest with the uploaded input's digest.
         uploaded = spec.get("inputs") or {}
         remote["unchanged_inputs"] = [row["path"] for row in remote["files"]
-            if row["path"] in uploaded and row["bytes"] <= transfer.limits.upload_max_bytes
-            and row["sha256"] == uploaded[row["path"]]]
+            if row["path"] in uploaded and row["sha256"] == uploaded[row["path"]]]
         manifest["remote"] = remote
         total = 0
         for row in remote["files"]:
@@ -840,9 +857,10 @@ def fetch_results(transfer: Transfer, spec: dict, logs_dir: Path, fetch_to: Path
         manifest["skipped"].append({"path": name, "reason": f"deeper than {transfer.limits.list_depth} folders: use the "
                                                             "site profile's file transfer method"})
     uploaded = spec.get("inputs") or {}
+    upload_limit = spec.get("upload_max_bytes", DEFAULT_UPLOAD_MAX_BYTES)
     for name, size in transfer.list_files(spec["work"]):
         rel = f"{spec['work']}/{name}"
-        if name in uploaded and size <= transfer.limits.upload_max_bytes and transfer.remote_sha256(rel) == uploaded[name]:
+        if name in uploaded and size <= upload_limit and transfer.remote_sha256(rel) == uploaded[name]:
             continue  # an input the job did not change is not a result
         try:
             confine(name)

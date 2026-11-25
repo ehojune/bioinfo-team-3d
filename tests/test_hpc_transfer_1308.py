@@ -456,6 +456,66 @@ def test_inputs_given_to_the_tool_reach_the_cluster(site, monkeypatch):
         encoding="utf-8") == "reference"
 
 
+@pytest.mark.parametrize("override", [None, 10 * 1024 * 1024])
+def test_site_upload_limit_accepts_exact_size_and_refuses_one_more(site, monkeypatch, override):
+    if override is not None:
+        profile = hpc_site.load_profile("fake")
+        profile.upload_max_bytes = override
+        hpc_site.save_profile(profile)
+    limit = override if override is not None else 512 * 1024
+    path = site.workdir / "input.bin"
+    path.write_bytes(b"x" * (limit + 1))
+    with pytest.raises(Exception, match=rf"{limit + 1} bytes is over the {limit} byte limit"):
+        run_tool(site, monkeypatch, inputs=[path.name])
+    assert not (site.tmp / "slurm.json").exists()
+    assert not list(site.remote("t1").glob(f"job-*/work/{path.name}"))
+
+    data = b"x" * limit
+    path.write_bytes(data)
+    result = run_tool(site, monkeypatch, inputs=[path.name])
+    assert result["submitted"]
+    assert next(site.remote("t1").glob(f"job-*/work/{path.name}")).read_bytes() == data
+
+
+def test_job_rejects_an_input_over_the_remaining_total_before_upload(site, monkeypatch):
+    monkeypatch.setattr(ht, "INPUTS_TOTAL_BYTES", 512 * 1024 + 1024)
+    for name in ("first.bin", "extra.bin"):
+        (site.workdir / name).write_bytes(b"x" * (512 * 1024 // 2 + 1024))
+    result = submit(site, write_script(site), inputs=["first.bin", "extra.bin"])
+    assert "inputs total more than" in result["error"]
+    assert not (site.tmp / "slurm.json").exists()
+    assert not list(site.remote("t1").glob("job-*/work/extra.bin"))
+
+
+def test_crlf_scan_uses_the_site_upload_limit(site, monkeypatch):
+    profile = hpc_site.load_profile("fake")
+    profile.upload_max_bytes = 600_000
+    hpc_site.save_profile(profile)
+    path = site.workdir / "input.sh"
+    path.write_bytes(b"#!/bin/bash\n" + b"#" * (512 * 1024) + b"\r\n")
+    with pytest.raises(Exception, match=r"CRLF line endings in input\.sh"):
+        run_tool(site, monkeypatch, inputs=[path.name])
+    assert not (site.tmp / "slurm.json").exists()
+    assert not list((site.workdir / "jobs").glob("*.sh"))
+
+
+def test_site_upload_limit_does_not_reclassify_an_existing_jobs_input(site):
+    path = site.workdir / "input.bin"
+    path.write_bytes(b"x" * 4096)
+    result = submit(site, write_script(site), inputs=[path.name])
+    assert result["submitted"]
+    profile = hpc_site.load_profile("fake")
+    profile.upload_max_bytes = 1024
+    hpc_site.save_profile(profile)
+    sched.close_sessions()
+    transfer = sched.Scheduler(site.settings.hpc).transfer()
+    assert transfer.limits.upload_max_bytes == 1024
+    manifest = ht.fetch_results(transfer, result["transfer"], site.workdir / "jobs" / "logs",
+                                site.workdir / "outputs", base=site.workdir)
+    assert manifest["fetched"] == []
+    assert not (site.workdir / "outputs" / path.name).exists()
+
+
 @pytest.mark.parametrize("bad", [["../secret.txt"], ["/etc/passwd"], ["a"] * 21, [""], "ref.txt", [1]])
 def test_the_tool_refuses_inputs_that_are_not_a_short_list_of_workspace_paths(site, monkeypatch, bad):
     with pytest.raises(Exception, match="inputs"):

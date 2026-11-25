@@ -463,7 +463,8 @@ class Scheduler:
         from ..hpc_session import redact
 
         words = session.cfg.redact_words or ()
-        limits = Limits(fetch_max_bytes=profile.fetch_max_bytes, fetch_total_bytes=profile.fetch_total_bytes)
+        limits = Limits(upload_max_bytes=profile.upload_max_bytes, fetch_max_bytes=profile.fetch_max_bytes,
+                        fetch_total_bytes=profile.fetch_total_bytes)
         return Transfer(session.run, profile.remote_workdir, limits=limits, redact=lambda text: redact(text, words),
                         long_run=lambda command, timeout: session.run(command, timeout_s=timeout))
 

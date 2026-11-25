@@ -17,6 +17,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .hpc_transfer import DEFAULT_UPLOAD_MAX_BYTES
+
 MARKER = "labhq_site_profile"  # first key of every profile; scripts/check_public.sh looks for it in tracked files
 VERSION = 1
 NAME_PATTERN = r"[a-z0-9][a-z0-9_-]{0,63}"
@@ -69,7 +71,8 @@ class SiteProfile(BaseModel):
     # Sum of live and unconfirmed Slurm submissions from one runner state directory and ID.
     max_concurrent_cpus: int | None = Field(default=None, strict=True, gt=0)
     remote_workdir: str | None = None
-    # Local retrieval limits; leaving them out preserves the historical defaults.
+    # Shell transfer limits; leaving them out preserves the historical defaults.
+    upload_max_bytes: int = Field(default=DEFAULT_UPLOAD_MAX_BYTES, strict=True, gt=0)
     fetch_max_bytes: int = Field(default=1024 * 1024, strict=True, gt=0)
     fetch_total_bytes: int = Field(default=8 * 1024 * 1024, strict=True, gt=0)
     # The user's own limits; `hpc.login_limit_*` in the labhq config is what is enforced (#1298).
