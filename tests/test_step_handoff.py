@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,7 @@ from labhq import hpc_transfer as ht
 from labhq.adapters.mock import MockAdapter
 from labhq.models import AgentSpec, Engine, Task, TaskResult
 from labhq.orchestrator.cso import Orchestrator
+from labhq.orchestrator.step_execution import upstream_inputs
 from labhq.runner.daemon import Runner
 from labhq.runner.step_handoff import required_hpc_revisions
 from labhq.runner.step_inputs import stage_inputs
@@ -242,6 +244,67 @@ async def test_mixed_step_accepts_approved_workspace_cache_fix(tmp_path, monkeyp
         outcome = await runner.run_task(task)
         assert outcome.ok, outcome.error
         assert outcome.facilities_fix['ok'] and not cache.exists()
+    finally:
+        runner.store.close()
+
+
+@pytest.mark.parametrize('kind', ['analysis_draft', 'audit_repair'])
+async def test_compact_follow_up_requires_the_mixed_hpc_receipt(tmp_path, monkeypatch, kind):
+    settings = _settings(tmp_path)
+    runner = Runner(settings)
+    agent = AgentSpec(id='worker', name='Worker', role='test', engine=Engine.mock)
+    monkeypatch.setattr(runner.registry, 'get', lambda _: agent)
+    source = runner.ws_root / 'source'
+    outputs = source / 'outputs'
+    outputs.mkdir(parents=True)
+    (outputs / 'table.tsv').write_bytes(b'table\n')
+    row = _row('table.tsv', b'table\n')
+    hashes = {'outputs/table.tsv': row['sha256']}
+    inventory = {'request_id': 'r', 'data': ht.job_spec('t', 'work', 'r')['data'],
+                 'directories': [], 'files': [row], 'bytes': row['bytes']}
+    run = {'request_id': 'r', 'step_id': 's1', 'kind': 'step', 'revision': 2, 'ok': True,
+           'pending_jobs': [], 'outputs': list(hashes), 'output_sha256': hashes, 'hpc_remote_outputs': [inventory],
+           'hpc_local_receipt': {'sha256': hashes, 'omissions': []}}
+    record = {'task': {'request_id': 'r', 'meta': {'step_id': 's1'}}, 'runs': {'producer': run}}
+    manifest = source / 'manifest.json'
+    manifest.write_text(json.dumps(record), encoding='utf-8')
+    results = {'s1': TaskResult(task_id='producer', agent_id=agent.id, ok=True, workdir=str(source),
+                                outputs=list(hashes), output_sha256=hashes, provenance={'hpc_step_revision': 2})}
+    hub = FakeHub(None)
+    plan = placed_plan(runner=settings.runner.id, count=2)
+    plan['steps'][0]['execution'] = 'hpc'
+    hub.requests['r'].update(plan=plan, research_contract=approved(plan),
+                             execution_location={'mode': 'local', 'approval_id': 'choice',
+                                                 'mixed_hpc_runner_id': settings.runner.id})
+    orchestrator = Orchestrator(hub)
+    monkeypatch.setattr(orchestrator, 'run_step', runner.run_task)
+    calls = []
+
+    async def adapter_run(_adapter, ctx):
+        assert ctx.task.meta['kind'] == kind and ctx.task.meta['session_runner'] == settings.runner.id
+        assert ctx.task.meta['execution_location']['mode'] == 'local'
+        assert ctx.task.meta['hpc_ancestor_revisions'] == {'s1': 2}
+        calls.append((ctx.workdir / 'inputs/s1/table.tsv').read_bytes())
+        return TaskResult(task_id=ctx.task.id, agent_id=agent.id, ok=True)
+
+    monkeypatch.setattr(MockAdapter, 'run', adapter_run)
+    draft = SimpleNamespace(step_id='s2')
+
+    def follow_up(**meta):
+        task = Task(agent_id=agent.id, request_id='r', prompt='read the table',
+                    meta={'kind': kind, **upstream_inputs(results, results), **meta})
+        return orchestrator._run_compact_handoff(task, draft, results)
+
+    try:
+        refused = await follow_up(session_runner='different-runner')
+        assert not refused.ok and 'approved PC runner' in refused.error
+        outcome = await follow_up()
+        assert outcome.ok, outcome.error
+        run.pop('hpc_local_receipt')
+        manifest.write_text(json.dumps(record), encoding='utf-8')
+        with pytest.raises(ValueError, match='HPC output receipt is missing'):
+            await follow_up()
+        assert calls == [b'table\n']
     finally:
         runner.store.close()
 

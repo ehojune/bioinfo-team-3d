@@ -6334,7 +6334,8 @@ class Orchestrator:
                     recheck, repair_record = await audit_repair.repair_once(
                         self.hub, rid, draft, review, results,
                         restricted=prepared.restricted, session_origin=self._session_origin,
-                        free_session=self._free_session, run_step=self.run_step, budget_error=BudgetExceeded)
+                        free_session=self._free_session, budget_error=BudgetExceeded,
+                        run_step=lambda task: self._run_compact_handoff(task, draft, results))
                     if recheck:
                         return await self._research_after_steps(rid, text, all_steps, results, n, serialized, packs)
                 if repair_record:
@@ -6481,11 +6482,20 @@ class Orchestrator:
         return bool(self._external_guard(rid) and restricted_input_steps(
             self.hub.requests[rid]["plan"]["steps"], *self._request_inputs(rid), self.hub.s))
 
+    async def _run_compact_handoff(self, task, draft, results):
+        try:
+            task = step_execution.bind_compact_handoff(task, self.hub.requests[task.request_id], draft.step_id, results)
+        except ValueError as error:
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error=str(error),
+                              session_id=task.resume_session_id)
+        return await self.run_step(task)
+
     async def _collect_research_draft(self, rid, draft, results, report, notes, render_evidence, *, raw=False):
         return await analysis_draft.collect(
             self.hub, rid, draft, results, cp2_report=report, cp2_notes=notes, render_evidence=render_evidence,
             restricted_inputs=lambda: self._restricted_draft_inputs(rid), session_origin=self._session_origin,
-            free_session=self._free_session, run_step=self.run_step, budget_denials=self.budget_denials, raw=raw)
+            free_session=self._free_session, budget_denials=self.budget_denials, raw=raw,
+            run_step=lambda task: self._run_compact_handoff(task, draft, results))
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,

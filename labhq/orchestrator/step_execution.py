@@ -133,7 +133,9 @@ def step_location(choice, plan, step, request_id):
 def task_location(request, task):
     choice, plan = request.get('execution_location'), request.get('plan') or {}
     submitted = task.meta.get('execution_location') or {}
-    if task.meta.get('kind') not in {'step', 'result_correction', 'slot_repair', 'wrap_up'} or not is_mixed(plan, choice):
+    kind = task.meta.get('kind')
+    step_kinds = {'step', 'result_correction', 'slot_repair', 'wrap_up', 'analysis_draft', 'audit_repair'}
+    if kind not in step_kinds or not is_mixed(plan, choice):
         if submitted.get('scope') == 'step':
             raise ValueError('mixed task has no approved mixed plan')
         return choice
@@ -142,6 +144,8 @@ def task_location(request, task):
     if not step or step['agent_id'] != task.agent_id or step['runner_id'] != task.meta.get('session_runner'):
         raise ValueError('task does not match its approved step and runner')
     location = step_location(choice, plan, step, task.request_id)
+    if kind in {'analysis_draft', 'audit_repair'} and location['mode'] != 'local':
+        raise ValueError('mixed research draft and audit repair require a PC analysis step')
     if location != task.meta.get('execution_location'):
         raise ValueError('task execution location differs from the approved step')
     return location
@@ -164,6 +168,31 @@ def hpc_ancestor_meta(location, linked, by_id, results):
                  if by_id[sid]['execution'] == 'hpc' and sid in results and results[sid].ok
                  and (results[sid].outputs or by_id[sid].get('outputs'))}
     return {'hpc_ancestor_revisions': revisions} if revisions else {}
+
+
+def bind_compact_handoff(task, request, step_id, results):
+    """Bind compact follow-ups to the approved analyst and verify every staged HPC input."""
+    plan, choice = request.get('plan') or {}, request.get('execution_location')
+    if not is_mixed(plan, choice):
+        return task
+    by_id = {step['id']: step for step in plan['steps']}
+    step = by_id.get(step_id)
+    if not step or step['execution'] != 'local':
+        raise ValueError('mixed research draft and audit repair require a PC analysis step')
+    runner = step['runner_id']
+    if task.meta.get('session_runner') not in (None, runner):
+        raise ValueError('analysis session runner differs from the approved PC runner')
+    linked = (task.meta.get('upstream_artifacts') or {}).keys()
+    if any(sid not in by_id or sid not in results
+           or (by_id[sid]['execution'] == 'hpc' and by_id[sid]['runner_id'] != runner)
+           for sid in linked):
+        raise ValueError('mixed research draft and audit inputs must come from the approved plan and HPC runner')
+    location = step_location(choice, plan, step, task.request_id)
+    meta = {**task.meta, 'step_id': step_id, 'session_runner': runner, 'execution_location': location,
+            **hpc_ancestor_meta(location, linked, by_id, results)}
+    bound = task.model_copy(update={'meta': meta})
+    task_location(request, bound)
+    return bound
 
 
 def reuse_input_request(task, request):
