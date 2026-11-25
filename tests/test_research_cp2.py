@@ -1546,11 +1546,51 @@ async def test_inline_draft_uses_portable_result_links(tmp_path):
     await Orchestrator(hub).run_request("r")
 
     req = hub.requests["r"]
-    assert "Use steps/<step_id>/outputs/<file> for every result link" in hub.calls[1].prompt
+    prompt = hub.calls[1].prompt
+    assert "Use steps/<step_id>/outputs/<file> for every result link" in prompt
+    assert "[[claim:<step_id>/<claim_id>]] anchor on each bibliography entry" in prompt
+    assert "Omit sources with no such evidence" in prompt
+    assert "Put judgments about sources and comparisons in the report body with claim anchors" in prompt
     path = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
     assert req["status"] == "done" and f"]({path})" in req["report"]
     assert req["report_package"]["tables"][0]["path"] == path
     assert req["report_consistency"]["checked"]["tables"] == [path]
+
+
+@pytest.fixture
+def bibliography_draft():
+    from tests.test_research_report import _literature
+
+    doi = "10.1000/fake-bibliography"
+    ledgers = {"s1": {
+        "claims": [{"id": "c1", "status": "supported", "statement": "The source describes the assay."}],
+        "evidence": [_literature("e1", source={"id_value": doi})],
+        "links": [{"claim_id": "c1", "evidence_id": "e1", "relation": "supports"}],
+    }}
+    body = "# Assay report\n\nThe source describes the assay [[claim:s1/c1]].\n\n## 참고\n\n"
+    return body, f"- Lee et al., *Assay design* (2024), [DOI](https://doi.org/{doi})", ledgers
+
+
+def test_compact_draft_accepts_bibliography_entry_with_recorded_source(bibliography_draft):
+    from labhq.evidence.report_check import check_report
+
+    body, entry, ledgers = bibliography_draft
+    assert check_report(f"{body}{entry} [[claim:s1/c1]]\n", ledgers) == {"anchors": 2, "problems": []}
+
+
+@pytest.mark.parametrize("case", ["unmarked_entry", "judgment"])
+def test_compact_draft_flags_unanchored_text_in_bibliography(bibliography_draft, case):
+    from labhq.evidence.report_check import check_report
+
+    body, entry, ledgers = bibliography_draft
+    if case == "unmarked_entry":
+        body += entry
+        problem = "numeric prose needs a claim anchor (review context): Lee et al., *Assay design* (2024), [DOI]"
+    else:
+        body += f"{entry} [[claim:s1/c1]]\n- The source supports the proposed mechanism."
+        problem = ("possible conclusion needs a claim anchor (review context): "
+                   "The source supports the proposed mechanism.")
+    assert check_report(body, ledgers)["problems"] == [problem]
 
 
 @pytest.mark.parametrize("case", ["linked", "mixed_evidence", "unreported", "wrong_file", "unanchored", "unsupported"])
