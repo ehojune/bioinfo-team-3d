@@ -38,8 +38,10 @@ from ..evidence import literal_check, report_consistency, wiki_exposure
 from ..evidence.claims import RESULT_CONTRACT_FIELD_RULES
 from ..evidence.wiki_contract import snapshot_audit as wiki_collect_audit
 from ..evidence.wiki_contract import step_findings as wiki_step_findings
-from ..evidence.report_check import (FAILED_LOOKUP_TITLE, anchor, check_report, claim_rows, failed_lookup_lines,
-                                     failed_lookups, claim_evidence_rows, claim_evidence_section)
+from ..evidence.audit import check_request_report
+from ..evidence.report_check import (ASSEMBLED_COMPACT, FAILED_LOOKUP_TITLE, REPORT_CONTEXT, anchor, check_report, claim_rows,
+                                     failed_lookup_lines, failed_lookups, claim_evidence_rows, claim_evidence_section,
+                                     report_context)
 from ..evidence.verify import LiveSourceResolver, verification_lines, verify_sources
 from ..runner.lookup_admission import admission_for, usage_note_for
 from ..runner.structured_output import GATEWAY_RETRY, GATEWAY_RETRY_META, repair_prompt
@@ -1830,12 +1832,14 @@ def _terminal_reports(rid: str, report: str, report_appendix: str, execution_rec
     return data
 
 
-def _execution_warning_summary(report: str) -> str:
+def _execution_warning_summary(report: str, *, compact: bool = False) -> str:
     """Ensure a warning moved out of the PI report still leaves one visible limitation line."""
     if "실행 기록 참고" in report:
         return report
     report, benchmark = split_trailing_result(report)
     line = "실행 경고가 있습니다. 실행 기록 참고."
+    if compact:
+        line = report_context(line)
     limitations = re.search(r"(?m)^## (?:한계|논의)\s*$", report)
     if not limitations:
         report = report.rstrip() + "\n\n" + line
@@ -1900,13 +1904,16 @@ def _before_bench_block(report: str, section: str) -> str:
     return restore_trailing_result(report.rstrip() + "\n\n" + section, benchmark)
 
 
-def _with_review_reference(report: str, review: dict | None) -> str:
+def _with_review_reference(report: str, review: dict | None, *, compact: bool = False) -> str:
     """Replace model-written review notes with bounded P2/P3 lines at the end of the PI report."""
     reference = _review_reference(review)
     if not reference:
         return report
     report, benchmark = split_trailing_result(report)
-    report = re.sub(r"(?ms)^#{1,6}[ \t]*리뷰 참고[ \t]*$.*?(?=^#{1,6} |\Z)", "", report).rstrip()
+    boundary = rf"|^{REPORT_CONTEXT}$" if compact else ""
+    report = re.sub(rf"(?ms)^#{{1,6}}[ \t]*리뷰 참고[ \t]*$.*?(?=^#{{1,6}} |\Z{boundary})", "", report).rstrip()
+    if compact:
+        reference = report_context(reference)
     discussion = re.search(r"(?m)^## 논의[ \t]*$", report)
     if discussion:
         following = re.search(r"(?m)^## ", report[discussion.end():])
@@ -6541,17 +6548,17 @@ class Orchestrator:
                                                                     unsupported=unsupported))
 
         async def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None,
-                error: str | None = None) -> None:
+                error: str | None = None, reference_lines: list[str] | None = None) -> None:
             if failure is not None:
                 contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
             req["outcome"] = outcome
             await persist_request(self.hub, rid)
             if source_section:
-                report = _before_bench_block(report, source_section)
+                report = _before_bench_block(report, source_section if reference_lines is None else report_context(source_section))
             if lookup_section:
-                report = _execution_warning_summary(report)
+                report = _execution_warning_summary(report, compact=reference_lines is not None)
             (await self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review,
-                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome)))
+                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome), reference_lines=reference_lines))
 
         async def budget_denied(stage: str, review: dict | None) -> None:
             (await end("research_failed", cp2_report + f"\n\nResearch {stage} stopped: the budget was not approved.",
@@ -6601,9 +6608,12 @@ class Orchestrator:
                 False, review))
             return
 
+        reference_lines: list[str] | None = [] if draft else None
+
         def check_claims(body: str) -> dict:
             return check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                                artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+                                artifact_sha256=artifact_sha256, literal_checks=literal_checks,
+                                bibliography=bool(draft), reference_lines=reference_lines)
 
         if draft:
             body, model_appendix = _split_report_appendix(draft_body)
@@ -6686,26 +6696,26 @@ class Orchestrator:
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
         if check["problems"]:
-            body = _execution_warning_summary(body)
+            body = _execution_warning_summary(body, compact=bool(draft))
         if preaudited and (approval_text := (contract["checkpoints"]["cp2"].get("note") or "")):
-            body = _before_bench_block(body, preapproval_audit.approval_section(approval_text))
+            body = _before_bench_block(body, report_context(preapproval_audit.approval_section(approval_text)))
         fallback = "" if EARLIER_ROUNDS_HEADING.search(body) else _earlier_rounds_fallback(contract)
         if fallback:
-            body = _before_bench_block(body, fallback)
+            body = _before_bench_block(body, report_context(fallback) if draft else fallback)
         body_reference = _review_reference(review)
-        if body_reference and not REVIEW_REFERENCE_HEADING.search(body):
+        if not draft and body_reference and not REVIEW_REFERENCE_HEADING.search(body):
             body = _before_bench_block(body, body_reference)
         carried = contract.get("continuation") or {}
         pinned = (unreceipted_references(contract, carried.get("reuse") or [])
                   if carried.get("plan_sha256") == contract["plan_sha256"] else [])
         if pinned:  # the PI reads the report, not the audit: say it there too (#1061 review)
-            body = _before_bench_block(
-                body, f"참고: 재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 내용은 확인하지 "
-                      f"않았습니다({', '.join(pinned[:5])}{', ...' if len(pinned) > 5 else ''}).")
+            note = (f"참고: 재사용한 단계가 쓴 DOI·PMID 참조 {len(pinned)}건은 식별자만 고정했고 내용은 확인하지 "
+                    f"않았습니다({', '.join(pinned[:5])}{', ...' if len(pinned) > 5 else ''}).")
+            body = _before_bench_block(body, report_context(note) if draft else note)
         req["execution_record"] = _appendix_sections("", [*claim_check, cp2_audit])
         report = body.rstrip() + ("\n\n" + model_appendix if model_appendix else "")
         (await end("report_incomplete" if check["problems"] else "research_reported", report,
-            not check["problems"] and rid not in self.budget_denials, review))
+            not check["problems"] and rid not in self.budget_denials, review, reference_lines=reference_lines))
 
     async def _research_continue(self, rid: str, review: dict | None, results: dict[str, TaskResult], *,
                                  cp2_note: str | None = None, stops: list[tuple[str, str]] | None = None) -> str | None:
@@ -8992,7 +9002,7 @@ class Orchestrator:
         await persist_request(self.hub, rid)
 
     async def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
-                error: str | None = None) -> None:
+                error: str | None = None, *, reference_lines: list[str] | None = None) -> None:
         before = copy.deepcopy(self.hub.requests[rid])
         req = copy.deepcopy(before)
         if req.get("status") == "cancelled":
@@ -9023,11 +9033,14 @@ class Orchestrator:
             if "남은 질문:" not in report:
                 report = f"{req['clarification_failure']}\n\n남은 질문:\n{pending}\n\n{report}"
             error = error or str(req["clarification_failure"])
-        report = _with_review_reference(report, review)
+        compact = reference_lines is not None
+        report = _with_review_reference(report, review, compact=compact)
         warnings = (req.get("research_contract") or {}).get("result_warnings") or []
         if warnings:
             section = "\n".join(f"- {line}" for line in warnings)
             heading = re.search(r"(?m)^## 한계\s*$", report)
+            if compact:
+                section = report_context(section)
             if heading:
                 report = report[:heading.end()] + "\n" + section + "\n" + report[heading.end():]
             else:
@@ -9096,11 +9109,20 @@ class Orchestrator:
                             f"${outcome['limit_usd']:.2f}; {decision}.")
         req["execution_record"] = "\n\n".join(p for p in [*execution, *metadata] if p).replace(EXECUTION_APPENDIX_TITLE, "## 실행 기록")
         report_appendix = scientific_appendix(report_appendix, req, review, checklist_section)
-        report = add_references(report, report_appendix, req.get("references") or [])
+        report = add_references(report, report_appendix, req.get("references") or [], grounded=reference_lines)
         from ..report_style import check_report
         report, style_note = check_report(report)
         if style_note:
             req["execution_record"] += "\n\n" + style_note
+        if compact:
+            req.update(report=report, results=results)
+            contract = req["research_contract"]
+            contract["report_check_scope"] = ASSEMBLED_COMPACT
+            check = contract["report_check"] = check_request_report(req)
+            if check["problems"]:
+                req["outcome"], ok = "report_incomplete", False
+                error = RESEARCH_END_ERRORS["report_incomplete"]
+                req["execution_record"] += "\n\nClaim check (assembled report):\n" + "\n".join(_problem_lines(check["problems"], "- "))
         # What is left after the writer's one correction: the report front shows it as an unverified draft (#1374).
         draft, tables = await analysis_draft.report_tables(self.hub, req, report, results)
         consistency = req["report_consistency"] = report_consistency.check(report, tables)

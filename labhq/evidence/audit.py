@@ -25,7 +25,7 @@ from typing import Any
 from .. import __version__
 from ..artifact_policy import unreported_warning_paths
 from ..report_format import split_appendix
-from .report_check import check_report
+from .report_check import ASSEMBLED_COMPACT, check_report, compact_report_body
 from .report_identifiers import ReportIdentifierResolver, check_identifiers
 
 OK, MISMATCH, MISSING, UNREADABLE, UNCHECKED, UNRECORDED, REMOTE = (
@@ -260,6 +260,18 @@ def _receipt(req: Mapping[str, Any]) -> dict[str, Any]:
     return dict(receipt) if isinstance(receipt, Mapping) else {}
 
 
+def check_request_report(req: Mapping[str, Any]) -> dict:
+    report = str(req.get("report") or "")
+    compact = (req.get("research_contract") or {}).get("report_check_scope") == ASSEMBLED_COMPACT
+    receipt = _receipt(req)
+    return check_report(compact_report_body(report) if compact else report, research_ledgers(req),
+                        unsupported=receipt.get("unsupported_claims") or [],
+                        refused=receipt.get("refused_evidence") or [],
+                        artifact_sha256=receipt.get("artifact_sha256") or {},
+                        literal_checks=(receipt.get("literal_checks") or []) if compact else (),
+                        bibliography=compact)
+
+
 def rerun_report_check(req: Mapping[str, Any]) -> dict[str, Any] | None:
     """The research report's claim-anchor check run again on the stored report; None for other requests."""
     contract = req.get("research_contract")
@@ -269,11 +281,7 @@ def rerun_report_check(req: Mapping[str, Any]) -> dict[str, Any] | None:
     if not isinstance(recorded, Mapping):
         return {"recorded": None, "rerun": None, "same": None,
                 "note": f"보고서 앵커 검사까지 가지 않은 연구 요청입니다(outcome {req.get('outcome') or '-'})"}
-    receipt = _receipt(req)
-    rerun = check_report(str(req.get("report") or ""), research_ledgers(req),
-                         unsupported=receipt.get("unsupported_claims") or [],
-                         refused=receipt.get("refused_evidence") or [],
-                         artifact_sha256=receipt.get("artifact_sha256") or {})
+    rerun = check_request_report(req)
     same = sorted(rerun["problems"]) == sorted(str(p) for p in recorded.get("problems") or [])
     return {"recorded": dict(recorded), "rerun": rerun, "same": same,
             "note": "" if same else "다시 돌린 결과가 기록된 검사와 다릅니다"}

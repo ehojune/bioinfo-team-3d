@@ -15,8 +15,10 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
+from .. import edition_sources
+from ..bench_report import split_trailing_result
 from ..report_markdown import markdown_body
-from .claims import STATUS_NEEDS
+from .claims import ID_FORMATS, STATUS_NEEDS, normalize_id, registry_id
 
 # Case and spaces vary in what a model writes ([[Claim: s1/c1]]); a variant is checked, not skipped.
 ANCHOR = re.compile(r"\[\[\s*claim\s*:([^\[\]\n]*)\]\]", re.IGNORECASE)
@@ -371,9 +373,85 @@ def _unanchored_table_rows(report: str) -> list[str]:
     return rows
 
 
+ASSEMBLED_COMPACT = "assembled_compact"
+REPORT_CONTEXT = "<!-- LABHQ_REPORT_CONTEXT -->"
+_CONTEXT_END = "<!-- LABHQ_REPORT_CONTEXT_END -->"
+BIBLIOGRAPHY_TITLE = r"(?:references|bibliography|참고(?:\s*문헌|\s*자료)?|출처)"
+_BIBLIOGRAPHY = re.compile(BIBLIOGRAPHY_TITLE, re.I)
+_GEO_ID = re.compile(rf"\b{ID_FORMATS['geo']}\b", re.I)
+_BIBLIOGRAPHIC_SCHEMES = {"doi", "pmid", "geo"}
+
+
+def report_context(text: str) -> str:
+    """Mark LabHQ's review and audit notes so they are not checked as scientific claims."""
+    return f"{REPORT_CONTEXT}\n\n{text.strip()}\n\n{_CONTEXT_END}"
+
+
+def compact_report_body(report: str) -> str:
+    body, _ = split_trailing_result(report)
+    return re.sub(rf"(?ms)^{REPORT_CONTEXT}$.*?^{_CONTEXT_END}$", "", body)
+
+
+def _bibliography_entries(report: str) -> Iterable[tuple[str, str, set[tuple[str, str]]]]:
+    """Read bibliography paragraphs and table rows with their Markdown link destinations."""
+    tokens = MarkdownIt("commonmark").enable("table").parse(report)
+    level = 0
+    for index, token in enumerate(tokens):
+        if token.type == "heading_open" and token.level == 0:
+            rank = int(token.tag[1])
+            if _BIBLIOGRAPHY.match(tokens[index + 1].content.strip()):
+                level = rank
+            elif rank <= level:
+                level = 0
+        if not level:
+            continue
+        if token.type == "paragraph_open":
+            parts = [tokens[index + 1]]
+        elif token.type == "tr_open" and tokens[index + 1].type == "td_open":
+            end = next(i for i in range(index + 1, len(tokens)) if tokens[i].type == "tr_close")
+            parts = [part for part in tokens[index + 1:end] if part.type == "inline"]
+        else:
+            continue
+        children = [child for part in parts for child in part.children or []]
+        visible = " ".join(child.content for child in children if child.type == "text")
+        plain = ANCHOR.sub(" ", visible) + " " + " ".join(child.content for child in children if child.type == "code_inline")
+        links = [child.attrGet("href") or "" for child in children if child.type == "link_open"]
+        candidates = edition_sources.collect([plain, *links])
+        identifiers = {(kind, normalize_id(kind, value)) for kind in ("doi", "pmid")
+                       for value in candidates.listing(kind)}
+        identifiers.update(("geo", value.lower()) for value in _GEO_ID.findall(plain))
+        for link in links:
+            if (named := registry_id(link)) and named[0] in _BIBLIOGRAPHIC_SCHEMES:
+                identifiers.add((named[0], normalize_id(*named)))
+        yield " ".join(part.content for part in parts), visible, identifiers
+
+
+def _check_bibliography(report: str, sources: Mapping[str, set[tuple[str, str]]],
+                        problems: list[str], reference_lines: list[str] | None) -> None:
+    accepted: dict[tuple[str, str], set[str]] = {}
+    for entry, visible, identifiers in _bibliography_entries(report):
+        marks = [f"{sid.strip()}/{cid.strip()}" for raw in ANCHOR.findall(visible)
+                 for sid, separator, cid in [raw.rpartition("/")] if separator]
+        if not marks:
+            problems.append(f"bibliography entry needs a claim anchor: {entry[:200]}")
+        for kind, value in sorted(identifiers):
+            matching = {mark for mark in marks if (kind, value) in sources.get(mark, ())}
+            if not matching:
+                problems.append(f"bibliography {kind.upper()} {value} has no accepted evidence linked to its anchors")
+            else:
+                accepted.setdefault((kind, value), set()).update(matching)
+    if reference_lines is not None:
+        for (kind, value), marks in sorted(accepted.items()):
+            value = value.upper() if kind == "geo" else value
+            label = f"PMID {value}" if kind == "pmid" else value
+            anchors = " ".join(f"[[claim:{mark}]]" for mark in sorted(marks))
+            reference_lines.append(f"- [{label}]({edition_sources.record_url(kind, value)}) {anchors}")
+
+
 def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterable[Any] = (),
                  refused: Iterable[Any] = (), artifact_sha256: Mapping[str, str | None] | None = None,
-                 literal_checks: Iterable[Mapping] = ()) -> dict:
+                 literal_checks: Iterable[Mapping] = (), bibliography: bool = False,
+                 reference_lines: list[str] | None = None) -> dict:
     """``{"anchors": n, "problems": [...]}`` for one report against the CP2-approved ledgers.
 
     ``unsupported`` and ``refused`` are the CP2 receipt rows (``step_id`` with ``claim_id`` or ``evidence_id``);
@@ -388,6 +466,7 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
     no_support = _claims_without_accepted_support(ledgers, refused)
     hashes = artifact_sha256 or {}
     problems: list[str] = []
+    sources: dict[str, set[tuple[str, str]]] = {}
     literal_mismatches = {(str(row.get('step_id')), str(row.get('evidence_id'))): row
                           for row in literal_checks if row.get('state') == 'mismatch'}
     for raw in dict.fromkeys(found):
@@ -416,19 +495,29 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
         evidence = {row.get("id"): row for row in _rows(ledgers[step_id], "evidence")}
         accepted = accepted_evidence_ids(ledgers[step_id], step_id, refused)
         for link in _rows(ledgers[step_id], "links"):
-            if link.get("claim_id") != claim_id or link.get("relation") != STATUS_NEEDS[status]:
+            required = link.get("relation") == STATUS_NEEDS[status]
+            if link.get("claim_id") != claim_id or not (required or bibliography):
                 continue
             row = evidence.get(link.get("evidence_id"))
             if row is None or str(row.get("id")) not in accepted:
                 continue
-            if mismatch := literal_mismatches.get((step_id, str(row.get('id')))):
+            mismatch = literal_mismatches.get((step_id, str(row.get('id'))))
+            if required and mismatch:
                 problems.append(f"{mark}: evidence {row.get('id')} literal mismatch: "
                                 + '; '.join(mismatch.get('problems') or []))
             source = row.get("source") if isinstance(row.get("source"), Mapping) else {}
             artifact = source.get("artifact_id")
-            if artifact and not hashes.get(f"{step_id}/{artifact}"):
+            missing_hash = artifact and not hashes.get(f"{step_id}/{artifact}")
+            if required and missing_hash:
                 problems.append(f"{mark}: evidence {row.get('id')} cites artifact {artifact}, which has no "
                                 "recorded artifact_sha256")
+            if bibliography and not (mismatch or missing_hash):
+                backed = sources.setdefault(f"{step_id}/{claim_id}", set())
+                scheme, value = source.get("id_scheme"), source.get("id_value")
+                if scheme in _BIBLIOGRAPHIC_SCHEMES and isinstance(value, str):
+                    backed.add((scheme, normalize_id(scheme, value)))
+                if isinstance(uri := source.get("uri"), str) and (named := registry_id(uri)):
+                    backed.add((named[0], normalize_id(*named)))
     if not found and claim_rows(ledgers, unsupported, refused=refused)[0]:
         problems.append("the report anchors no claim while the ledgers hold citable claims; every conclusion "
                         "needs [[claim:<step_id>/<claim_id>]]")
@@ -438,4 +527,8 @@ def check_report(report: str, ledgers: Mapping[str, Any], *, unsupported: Iterab
         problems.append(f"possible conclusion needs a claim anchor (review context): {sentence[:200]}")
     for row in _unanchored_table_rows(report or ""):
         problems.append(f"table row needs a claim anchor (review context): {row[:200]}")
+    if bibliography:
+        if REPORT_CONTEXT in report or _CONTEXT_END in report:
+            problems.append("the report contains a reserved LabHQ context marker")
+        _check_bibliography(report, sources, problems, reference_lines)
     return {"anchors": len(found), "problems": problems}
