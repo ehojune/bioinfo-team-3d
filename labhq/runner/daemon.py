@@ -2619,7 +2619,8 @@ class Runner:
                                   **({"error": short(result.error, 200)} if result.error else {})},
                                  result.model_dump(mode="json"))
                 return result
-            extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
+            extra_dirs = ([] if task.meta.get("kind") == "audit_repair" else
+                          [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]])
             task, consult_error = self._stage_consult_refs(task, ws)
             if agent.id == "facilities" and not consult_error:
                 task = task.model_copy(update={"context": task.context + "\n\n" + self._facilities_doctor_context()})

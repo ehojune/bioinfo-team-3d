@@ -1697,6 +1697,7 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
 
 @pytest.mark.parametrize(("case", "attempts", "status"), [
     ("resolved", 1, "resolved"), ("unclassified", 1, "resolved"), ("limit", 2, "limit"),
+    ("reference_drift", 1, "resolved"),
     ("no_session", 0, "session_unavailable"),
     ("new_session", 1, "session_unavailable"), ("bad_ledger", 1, "invalid_result"),
     ("interrupted", 1, "interrupted"), ("budget", 1, "budget_exceeded"),
@@ -1721,12 +1722,17 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     if case == "no_engine_cap":
         hub.agents["worker"]["engine"] = "codex"
     req = hub.requests["r"]
+    if case == "reference_drift":
+        source = tmp_path / "live-reference"
+        source.mkdir()
+        (source / "data.tsv").write_text("original sample", encoding="utf-8")
+        req["references"] = [{"kind": "path", "value": str(source)}]
     if case == "budget":
         req["budget_usd"] = 4
     base_reply = hub.reply
     generations = []
     audits = []
-    resolved = case in {"resolved", "unclassified"}
+    resolved = case in {"resolved", "unclassified", "reference_drift"}
 
     def save_manifest(task, result):
         manifest = {"task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}}}
@@ -1737,6 +1743,8 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         if kind == "plan":
             return (await base_reply(task)).model_copy(update={"cost_usd": 0})
         if kind == "step":
+            if case == "reference_drift":
+                assert task.meta["reference_dirs"] == [str(source)]
             result = (await base_reply(task)).model_copy(update={"session_id": "original-session",
                                                                  "workdir_id": original.name, "cost_usd": 0})
             result.structured = validate_research_result(result.structured, plan=req["plan"]).model_dump(mode="json")
@@ -1746,6 +1754,8 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         if kind == "review":
             latest = generations[-1]
             audits.append(latest)
+            if case == "reference_drift" and len(audits) == 1:
+                (source / "data.tsv").write_text("changed sample", encoding="utf-8")
             if case != "audit_off":
                 assert latest.workdir in task.meta["upstream_dirs"]
             if len(generations) > 1:
@@ -1765,6 +1775,9 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         assert task.meta["parent_task"] == generations[-1].task_id and not task.meta.get("workdir")
         assert "add the column" in task.prompt and "no external cohort" not in task.prompt
         assert "say donor-level" not in task.prompt and artifact_contract_for(task)
+        assert not task.meta.get("reference_dirs") and not task.meta.get("project_dirs")
+        if case == "reference_drift":
+            assert str(source) not in task.prompt and "staged copies" in task.prompt
         assert req["research_contract"]["audit_repair"]["status"] == "pending"
         assert [item["kind"] for item in hub.approvals] == ["research_plan"]
         if case == "interrupted":

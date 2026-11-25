@@ -52,7 +52,7 @@ def card(record: dict) -> tuple[dict, str]:
     return {"attempts": attempts, "status": status}, f"\n감사 P1 자동 수정 {attempts}/{MAX_ATTEMPTS}회 · {_STATUS[status]}"
 
 
-async def repair_once(hub, rid, draft, review, results, *, refs, restricted,
+async def repair_once(hub, rid, draft, review, results, *, restricted,
                       session_origin, free_session, run_step, budget_error):
     """After a dispatched turn, rebuild CP2 from a verified replacement or the prior outputs."""
     request = hub.requests[rid]
@@ -110,7 +110,8 @@ async def repair_once(hub, rid, draft, review, results, *, refs, restricted,
         agent_id=analyst.agent_id, request_id=rid, resume_session_id=session,
         budget_usd=MAX_TURN_USD, output_schema=RESEARCH_STEP_SCHEMA,
         prompt=("Correct only the P1 findings below within the frozen CP1 design. If a fix requires a different "
-                "design, leave it for the PI. Work from the read-only input copies below. Copy unchanged outputs "
+                "design, leave it for the PI. Read only the staged copies below, including when your earlier "
+                "session context mentions live reference paths. Copy unchanged outputs "
                 "into this turn's outputs/ and write every required replacement at the same relative path. "
                 "Return a complete replacement ledger for the same plan, step, claims and evidence slots. Use "
                 "outputs/<file> for evidence from your own files and keep upstream artifact refs bound to their "
@@ -120,7 +121,7 @@ async def repair_once(hub, rid, draft, review, results, *, refs, restricted,
                 f"P1 findings:\n{json.dumps(issues, ensure_ascii=False)}\n\n"
                 f"Current ledger:\n{json.dumps(ledger, ensure_ascii=False)}\n\nInputs:\n{listing}\n\n"
                 f"Required outputs:\n{', '.join(outputs)}\n" + draft.prompt(repairing=True)),
-        meta={**refs, **inputs, "kind": KIND, "step_id": sid, "parent_task": analyst.task_id,
+        meta={**inputs, "kind": KIND, "step_id": sid, "parent_task": analyst.task_id,
               "title": "감사 P1 수정", "outputs": outputs, "required_outputs": outputs,
               "restricted_inputs": restricted, **({"session_runner": origin} if origin else {}),
               **analysis_draft.transfer_meta(draft, bool(load))},

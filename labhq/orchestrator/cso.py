@@ -6325,7 +6325,7 @@ class Orchestrator:
                 repair_record = audit_repair.record_for(contract, draft)
                 if recorded.get("plan_sha256") != contract["plan_sha256"] or not recorded.get("decision"):
                     recheck, repair_record = await audit_repair.repair_once(
-                        self.hub, rid, draft, review, results, refs=reference_meta(req),
+                        self.hub, rid, draft, review, results,
                         restricted=prepared.restricted, session_origin=self._session_origin,
                         free_session=self._free_session, run_step=self.run_step, budget_error=BudgetExceeded)
                     if recheck:
