@@ -1629,10 +1629,13 @@ async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_pa
     assert problems == cp2["independent_audit"]["checks"]["claims"]["problems"]
     result = TaskResult.model_validate(req["results"]["s1"])
     context = render_ledgers(req["plan"]["steps"], {"s1": result}, {"s1": result.structured},
-                             cp2["refused_evidence"], cp2["unsupported_claims"], cp2["artifact_sha256"], 5000,
+                             cp2["refused_evidence"], cp2["unsupported_claims"], cp2["artifact_sha256"], 1600,
                              staged=True)
-    marks = context.split("Available claim anchors (read their evidence before use):\n", 1)[1].splitlines()[0]
-    assert "[[claim:s1/c2]]" in marks
+    assert "chars clipped" in context
+    marks = context.split("Available claim anchors (read their evidence before use):\n", 1)[1].split("Ledger:\n", 1)[0]
+    marks = dict(line.split(" ", 1) for line in marks.splitlines())
+    assert json.loads(marks["[[claim:s1/c2]]"])["evidence"]["e2"]["artifact_path"] == table
+    assert json.loads(marks["[[claim:s1/c2]]"])["evidence"]["e2"]["locator"] == "line 2, effect"
     assert ("[[claim:s1/c1]]" in marks) == (expected == "matched")
     if case == "linked":
         assert problems == []
