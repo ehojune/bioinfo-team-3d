@@ -8,6 +8,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..evidence.claims import STATUS_NEEDS
+from ..evidence.report_check import accepted_evidence_ids, anchor, claim_rows
 from ..models import Task, TaskResult
 from ..request_persistence import persist_request
 from ..util import clip, extract_json, input_relpath
@@ -229,7 +231,22 @@ def render_ledgers(steps: list[dict], results: dict[str, TaskResult], ledgers: d
                           str(Path(result.workdir) / path) + (
                               f" (SHA-256: {result.output_sha256.get(path) or 'unrecorded'})" if draft_path else "")
                           for path in result.outputs if path != draft_path) if result.workdir else ""
-        parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n"
+        marks = ""
+        if staged:
+            citable, _ = claim_rows({sid: ledger}, unsupported, refused=refused)
+            accepted = accepted_evidence_ids(ledger, sid, refused)
+            sources = {row["id"]: (row.get("source") or {}).get("artifact_id") for row in ledger.get("evidence", [])}
+            anchors = []
+            for row in citable:
+                claim = row["claim"]
+                supporting = {link["evidence_id"] for link in ledger.get("links", [])
+                              if link["claim_id"] == claim["id"] and link["relation"] == STATUS_NEEDS[claim["status"]]
+                              and link["evidence_id"] in accepted}
+                if supporting and all(not sources[eid] or artifact_sha256.get(f"{sid}/{sources[eid]}")
+                                      for eid in supporting):
+                    anchors.append(anchor(sid, claim["id"]))
+            marks = f"Available claim anchors (read their evidence before use):\n{', '.join(anchors) or '(none)'}\n"
+        parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n{marks}"
                      f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), n)}")
     return "\n\n".join(parts)
 

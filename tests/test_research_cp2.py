@@ -151,7 +151,9 @@ async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact, pha
     prompt = task.prompt
     for instruction in ("cross-check sample information against public records",
                         "record the controls and expected direction",
-                        "compare results with published values in a table"):
+                        "compare results with published values in a table",
+                        "write and read back the declared evidence outputs",
+                        "set source.locator to its exact row and column"):
         assert (instruction in prompt) is compact
     assert ("save a draft for the PI" in prompt) is compact
     drafts = [path for path in task.meta["optional_outputs"] if path.startswith("outputs/labhq-analysis-draft-")]
@@ -1551,6 +1553,103 @@ async def test_inline_draft_uses_portable_result_links(tmp_path):
     assert req["report_consistency"]["checked"]["tables"] == [path]
 
 
+@pytest.mark.parametrize("case", ["linked", "unreported", "wrong_file", "unanchored", "unsupported"])
+async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_path, case):
+    from labhq.research.independent_review import render_ledgers
+    from tests.test_research_report import _kinds
+
+    hub = _audit_hub(tmp_path)
+    hub.s.research.literal_source_check = True
+    hub.s.research.result_corrections = 0
+    plan = valid_plan()
+    summary, table, qc = ("outputs/run_summary.json", "outputs/sensitivity.tsv", "outputs/qc.tsv")
+    files = {summary: b'{"input_rows": 4321}\n', table: b'check\teffect\nsubset\t0.64\n',
+             qc: b'sample\treads\ncontrol\t80\n'}
+    plan["steps"][0].update(outputs=[path for path in files if case != "unreported" or path != summary],
+                            claim_ids=["c1", "c2"])
+    base_reply = hub.reply
+    row_mark = "" if case == "unanchored" else " [[claim:s1/c2]]"
+    body = (f"[Input summary](steps/s1/{summary}) recorded 4,321 input rows [[claim:s1/c1]].\n\n"
+            f"| Check | Effect |\n| --- | --- |\n| [Subset](steps/s1/{table}) | 0.64{row_mark} |\n")
+    if case == "unanchored":
+        body += "\nThe initial count was 4,321.\n"
+    if case == "unsupported":
+        body += "\nThe method supports the proposed mechanism [[claim:s1/mechanism]].\n"
+
+    async def reply(task):
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+        if task.meta["kind"] != "step":
+            return await base_reply(task)
+        ledger = _cp2_result(hub, task)
+        draft_path, = task.meta["optional_outputs"]
+        evidence_path = qc if case == "wrong_file" else summary
+        ledger["artifact_refs"] = [{"artifact_id": "a1", "path": evidence_path},
+                                   {"artifact_id": "a2", "path": table}]
+        claim, = ledger["claims"]
+        claim["statement"] = "The input contained 4,321 rows."
+        ledger["claims"].append({**claim, "id": "c2", "statement": "The subset effect was 0.64."})
+        ledger["links"].append({**ledger["links"][0], "claim_id": "c2", "evidence_id": "e2"})
+        evidence, = ledger["evidence"]
+        evidence.update(source={"artifact_id": "a1", "locator": "input_rows"},
+                        observation="Input row count",
+                        quantities=[{"id": "q1", "measure": "input row count", "value": 4321, "unit": "rows",
+                                     "conditions": ["before filtering"], "denominator": "whole input"}])
+        ledger["evidence"].append({**evidence, "id": "e2", "slots": [], "independence_group": "subset",
+                                   "source": {"artifact_id": "a2", "locator": "line 2, effect"},
+                                   "observation": "Subset effect",
+                                   "quantities": [{"id": "q2", "measure": "effect", "value": 0.64,
+                                                   "unit": "dimensionless", "conditions": ["subset"],
+                                                   "denominator": "subset samples"}]})
+        written = {**files, draft_path: body.encode("utf-8")}
+        for path, data in written.items():
+            target = tmp_path / path
+            target.parent.mkdir(exist_ok=True)
+            target.write_bytes(data)
+        # Model the runner's declaration-based collection with real bytes, receipts and one unreported file.
+        collected = [path for path in task.meta["outputs"] if path in written]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                          workdir=str(tmp_path), workdir_id=tmp_path.name, outputs=collected,
+                          output_sha256={path: sha256(written[path]).hexdigest() for path in collected},
+                          unreported_outputs=[path for path in written if path not in collected])
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    contract = req["research_contract"]
+    assert req["outcome"] == ("research_reported" if case == "linked" else "report_incomplete")
+    assert _kinds(hub) == ["plan", "step", "review"]
+    cp2 = contract["checkpoints"]["cp2"]
+    states = {check["evidence_id"]: check["state"] for check in cp2["literal_checks"]}
+    expected = {"unreported": "unverified", "wrong_file": "mismatch"}.get(case, "matched")
+    assert states == {"e1": expected, "e2": "matched"}
+    assert cp2["unreported_outputs"]["s1"] == ([summary] if case == "unreported" else [])
+    problems = contract["report_check"]["problems"]
+    assert problems == cp2["independent_audit"]["checks"]["claims"]["problems"]
+    result = TaskResult.model_validate(req["results"]["s1"])
+    context = render_ledgers(req["plan"]["steps"], {"s1": result}, {"s1": result.structured},
+                             cp2["refused_evidence"], cp2["unsupported_claims"], cp2["artifact_sha256"], 5000,
+                             staged=True)
+    marks = context.split("Available claim anchors (read their evidence before use):\n", 1)[1].splitlines()[0]
+    assert "[[claim:s1/c2]]" in marks
+    assert ("[[claim:s1/c1]]" in marks) == (expected == "matched")
+    if case == "linked":
+        assert problems == []
+        assert cp2["artifact_sha256"]["s1/a1"] == sha256(files[summary]).hexdigest()
+        assert cp2["artifact_sha256"]["s1/a2"] == sha256(files[table]).hexdigest()
+        assert req["report_consistency"]["checked"]["tables"] == [f"steps/s1/{table}"]
+    elif case in {"unreported", "wrong_file"}:
+        assert len(problems) == 1 and problems[0].startswith("[[claim:s1/c1]]:")
+        assert [row["evidence_id"] for row in cp2["refused_evidence"]] == ["e1"]
+    elif case == "unanchored":
+        assert len(problems) == 2
+        assert problems[0].startswith("numeric prose needs a claim anchor")
+        assert problems[1].startswith("table row needs a claim anchor")
+    else:
+        assert len(problems) == 1 and "mechanism is not in step s1's ledger" in problems[0]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("remote", "audit"), [
     ("complete", False), ("missing_draft", False), ("changed_draft", False), ("changed_source", False),
@@ -2118,6 +2217,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
                 assert saved["cp2"]["decision"] == "approved"
             assert "Sensitivity test reproduced the estimate" in task.context
             assert "### s1" in task.context and "### s2" in task.context
+            assert "Available claim anchors (read their evidence before use):\n[[claim:s1/c1]]" in task.context
+            assert "Available claim anchors (read their evidence before use):\n[[claim:s2/c2]]" in task.context
             [path] = task.meta["outputs"]
             target = tmp_path / "report" / path
             target.parent.mkdir(parents=True)
