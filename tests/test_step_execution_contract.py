@@ -173,6 +173,38 @@ async def test_cp1_shows_and_hashes_resolved_step_placement(monkeypatch, recruit
     assert [task.meta["kind"] for task in hub.calls] == ["plan"]
 
 
+async def test_compact_mixed_plan_corrects_an_hpc_writer_before_cp1():
+    settings = Settings()
+    settings.research.enabled = True
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    invalid = placed_plan(count=2)
+    invalid["steps"][0]["execution"] = "hpc"
+    corrected = copy.deepcopy(invalid)
+    corrected["steps"][1]["depends_on"] = ["s1"]
+    prompts = []
+
+    async def dispatch(task):
+        assert task.meta["kind"] == "plan"
+        prompts.append(task.prompt)
+        return result(task, structured=copy.deepcopy(invalid if len(prompts) == 1 else corrected))
+
+    hub = MiniHub(settings, dispatch, mode="plan_only", work_kind="research", text="compare conditions")
+    hub.agents["worker"].update(runner_id="mock-runner", whole_request_hpc=True, hpc_tools=True, builtin_mcp=["hpc"])
+    row = hub.requests["r"]
+    row.update(research_options={"compact_workflow": True},
+               execution_location={"mode": "local", "source": "PI selection", "approval_id": "choice",
+                                   "mixed_hpc_runner_id": "mock-runner"})
+    orchestrator = Orchestrator(hub)
+    assert orchestrator.resume_plan_card("r", {**row, "plan": invalid}) is None
+    await orchestrator.run_request("r")
+    assert row["outcome"] == "plan_approved", row.get("report")
+    assert len(prompts) == 2 and "the draft writer in a compact mixed plan must run on the PC" in prompts[1]
+    [card] = [approval for approval in hub.approvals if approval["kind"] == "research_plan"]
+    steps = {step["id"]: step for step in json.loads(card["detail"]["plan_canonical"])["steps"]}
+    assert steps["s2"]["execution"] == "local" and steps["s2"]["depends_on"] == ["s1"]
+
+
 @pytest.mark.parametrize("drift_point", ["cp1", "blind_draft"])
 async def test_cp1_reopens_when_a_runner_changes_before_dispatch(drift_point):
     settings = Settings()

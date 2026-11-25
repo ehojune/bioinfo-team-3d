@@ -4957,6 +4957,16 @@ class Orchestrator:
             budget.update(cap_usd=configured, source=source)
         return budget, source
 
+    @staticmethod
+    def _compact_placement_error(req, plan):
+        if step_execution.is_mixed(plan, req.get("execution_location")) and (draft := analysis_draft.for_request(req, plan)):
+            writer = next(step for step in plan["steps"] if step["id"] == draft.step_id)
+            if writer["execution"] != "local":
+                return f"{draft.step_id}: the draft writer in a compact mixed plan must run on the PC"
+            if any(step["execution"] == "hpc" and step["runner_id"] != writer["runner_id"] for step in plan["steps"]):
+                return f"{draft.step_id}: the draft writer must share a runner with the HPC steps"
+        return None
+
     def resume_plan_card(self, rid: str, req: dict) -> dict[str, Any] | None:
         """What a resume card shows when it also stands for CP1 (#654), else None.
 
@@ -4968,6 +4978,8 @@ class Orchestrator:
                 or not isinstance(plan.get("protocol"), dict) or not isinstance(plan.get("intake"), dict)):
             return None
         if refresh_plan_approval(plan, contract.get("approval")).get("status") == "approved":
+            return None
+        if self._compact_placement_error(req, plan):
             return None
         # What the CP1 card shows beyond this card's text keeps CP1 as its own question (see finish_research_plan).
         if paper_skills.card_text(plan) or any("재배정" in w for w in plan.get("warnings") or [] if isinstance(w, str)):
@@ -7386,6 +7398,8 @@ class Orchestrator:
                 choice, agents = req.get("execution_location"), hub_agents(self.hub, rid)
                 plan, placement_changed = step_execution.refresh_for_approval(plan, req, choice, agents)
                 execution_policy.validate_versioned_plan(plan, choice, agents)
+                if problem := self._compact_placement_error(req, plan):
+                    raise ValueError(problem)
                 if placement_changed:
                     for step in plan["steps"]:
                         step_execution.runner_pin(plan, step, environment_runner_pin(step))
@@ -8068,6 +8082,8 @@ class Orchestrator:
                             problems.append(f"{EXTERNAL_CONTRACT_RULE}: {conflicts}")
                         problems.extend(checklist_errors(candidate, checklist_catalog,
                                                          req.get("analysis_precedents")))
+                        if not problems and (problem := self._compact_placement_error(req, candidate)):
+                            problems.append(problem)
                         return problems
 
                     semantic_checks: list[dict[str, Any]] = []
