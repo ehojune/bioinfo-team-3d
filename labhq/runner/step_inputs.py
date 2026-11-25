@@ -626,6 +626,8 @@ def stage_inputs(ws, artifacts, workspace_root, zones, private_paths, max_file, 
                 raise ValueError(f'{len(outputs)} collected files exceed the input limit of {MAX_FILES}')
             hpc_inputs = (verified_hpc_inputs(run, artifact, ws.task.request_id, hpc_revisions[step])
                           if from_hpc else {})
+            if from_hpc and not hpc_inputs:
+                continue  # No optional input from this producer was available to copy.
             files = []
             for raw in outputs:
                 if from_hpc and raw not in hpc_inputs:

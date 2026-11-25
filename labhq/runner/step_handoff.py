@@ -228,8 +228,6 @@ def verified_hpc_inputs(run, artifact, request_id, revision):
     for path in outputs:
         if path not in files and not _optional(path, required, optional):
             missing.setdefault(path, f'{path}: absent from the verified HPC inventory')
-    if not files and not missing:
-        raise ValueError('no collected output in the verified HPC inventory')
     if missing:
         detail = '; '.join(list(missing.values())[:5])
         raise ValueError(detail + (f'; {len(missing) - 5} more' if len(missing) > 5 else ''))
