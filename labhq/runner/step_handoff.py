@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from ..hpc_transfer import TransferError, local_copy_conflicts, validate_remote_manifest
+from ..hpc_transfer import TransferError, is_log, local_copy_conflicts, validate_remote_manifest
 from ..util import INPUT_STEP_ID, output_relpath
 from .hpc_fetch import missing_received_outputs
 
@@ -118,6 +118,16 @@ def local_hpc_output_receipt(ws, manifests, hashes, output_records):
         }
         declarations = layout['required_outputs'] + layout['optional_outputs']
         local_view, sources = project_hpc_outputs(manifests, declarations)
+        redacted = {}
+        for manifest, projected in zip(manifests, local_view):
+            fetch_redacted = manifest.get('_fetch_redacted', {})
+            for raw, row in zip(manifest['files'], projected['files']):
+                path = 'outputs/' + row['path']
+                if (is_log(path) and _optional(path, layout['required_outputs'], layout['optional_outputs'])
+                        and raw['path'] in fetch_redacted):
+                    redacted[path] = fetch_redacted[raw['path']]
+        if redacted:
+            layout['redacted_logs'] = redacted
 
     paths = ['outputs/' + row['path'] for manifest in local_view for row in manifest['files']]
     receipts = {'outputs/' + name: digest for manifest in local_view
@@ -140,6 +150,7 @@ def local_hpc_output_receipt(ws, manifests, hashes, output_records):
     for manifest in manifests:
         manifest.pop('_local_copy_sha256', None)
         manifest.pop('_fetch_skipped', None)
+        manifest.pop('_fetch_redacted', None)
     return paths, {'sha256': receipts, 'omissions': missing, **layout}, conflicts
 
 
@@ -178,7 +189,8 @@ def verified_hpc_inputs(run, artifact, request_id, revision):
 
     received = receipt.get('sha256')
     omissions = receipt.get('omissions')
-    if not isinstance(received, dict) or not isinstance(omissions, list):
+    redacted = receipt.get('redacted_logs', {})
+    if not isinstance(received, dict) or not isinstance(omissions, list) or not isinstance(redacted, dict):
         raise ValueError('HPC output receipt is incomplete')
     required = receipt.get('required_outputs', [])
     optional = receipt.get('optional_outputs', [])
@@ -201,7 +213,7 @@ def verified_hpc_inputs(run, artifact, request_id, revision):
                 and _optional(path, required, optional)):
             over_limit.add(path)
 
-    files = {}
+    files, excluded_logs = {}, set()
     for manifest in manifests:
         try:
             validate_remote_manifest(manifest, request_id)
@@ -220,10 +232,16 @@ def verified_hpc_inputs(run, artifact, request_id, revision):
             if path in over_limit:
                 missing.pop(path, None)
                 continue
+            if (redacted.get(path) == digest and is_log(path) and _optional(path, required, optional)
+                    and isinstance(received.get(path), str) and received[path] != digest
+                    and hashes.get(path) == received[path]):
+                # The transport verified the original log and saved a redacted copy for diagnostics.
+                excluded_logs.add(path)
+                continue
             if received.get(path) != digest or hashes.get(path) != digest:
                 missing.setdefault(path, f'{path}: local copy not verified')
-    # Drop only optional files present in the remote inventory and explicitly left there for size.
-    for path in over_limit.intersection(files):
+    # Optional files kept on HPC and redacted diagnostics have no byte-identical copy to stage.
+    for path in over_limit.intersection(files) | excluded_logs:
         del files[path]
     for path in outputs:
         if path not in files and not _optional(path, required, optional):
@@ -231,6 +249,6 @@ def verified_hpc_inputs(run, artifact, request_id, revision):
     if missing:
         detail = '; '.join(list(missing.values())[:5])
         raise ValueError(detail + (f'; {len(missing) - 5} more' if len(missing) > 5 else ''))
-    if set(received) != set(files):
+    if set(received) != set(files) | excluded_logs or set(redacted) != excluded_logs:
         raise ValueError('HPC receipt contains files outside the selected inventory')
     return files

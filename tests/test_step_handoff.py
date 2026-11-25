@@ -49,15 +49,24 @@ def _restart(runner, settings, agent, monkeypatch):
     (False, 'ok'), (False, 'oversize'), (True, 'ok'), (True, 'oversize'), (True, 'wrap_up'),
     (True, 'nested'), (True, 'nested_with_copy'), (True, 'nested_tampered'), (True, 'nested_oversize'),
     (True, 'nested_optional_oversize'), (True, 'nested_optional_only'), (True, 'local_optional_only'),
+    (True, 'optional_redacted'), (True, 'nested_optional_redacted'), (True, 'required_redacted'),
+    (True, 'optional_unredacted'),
 ], ids=['receipt-only', 'receipt-oversize', 'mixed-dag', 'mixed-oversize', 'mixed-wrap-up',
         'mixed-nested', 'mixed-nested-with-copy', 'mixed-nested-tampered', 'mixed-nested-oversize',
-        'mixed-nested-optional-oversize', 'mixed-nested-optional-only', 'mixed-local-optional-only'])
+        'mixed-nested-optional-oversize', 'mixed-nested-optional-only', 'mixed-local-optional-only',
+        'mixed-optional-redacted', 'mixed-nested-optional-redacted', 'mixed-required-redacted',
+        'mixed-optional-unredacted'])
 async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, monkeypatch, mixed, case):
     optional_only = case in {'nested_optional_only', 'local_optional_only'}
     optional_oversize = case in {'nested_optional_oversize', 'nested_optional_only'}
     oversize = case in {'oversize', 'nested_oversize'}
     nested = case.startswith('nested')
+    log = {'optional_redacted': b'path: /sample-private/path\n',
+           'nested_optional_redacted': b'path: /sample-private/path\n',
+           'required_redacted': b'path: /sample-private/path\n',
+           'optional_unredacted': b'complete\n'}.get(case)
     expected_error = ('outputs/results/z.tsv.*fetch size limit' if oversize else
+                      'outputs/slurm.log: local copy not verified' if case == 'required_redacted' else
                       'outputs/results/z.tsv: input hash differs' if case == 'nested_tampered' else None)
     settings = _settings(site.tmp)
     settings.hpc = site.settings.hpc
@@ -66,9 +75,11 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
     contents = {'results/a.tsv': b'a\n', 'results/z.tsv': b'z' * (1024 * 1024 + 1) if oversize else b'z\n'}
     if optional_only:
         contents = {}
-    remote_contents = {'outputs/' + name: data for name, data in contents.items()} if nested else contents
+    remote_contents = {'outputs/' + name: data for name, data in contents.items()} if nested else dict(contents)
     if optional_oversize:
         remote_contents['outputs/preview.tsv'] = b'p' * (1024 * 1024 + 1)
+    if log is not None:
+        remote_contents[('outputs/' if nested else '') + 'slurm.log'] = log
     reads = []
     row_paths = ['outputs/' + name for name in contents]
     refs = site.tmp / 'reference'
@@ -115,6 +126,11 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                                   error_kind='error_max_turns', session_id='consumer-session')
             reads.extend((ctx.workdir / 'inputs/producer' / name).read_bytes() for name in contents)
             assert not (ctx.workdir / 'inputs/producer/slurm_job.log').exists()
+            log_input = ctx.workdir / 'inputs/producer/slurm.log'
+            if case == 'optional_unredacted':
+                assert log_input.read_bytes() == log
+            else:
+                assert not log_input.exists()
             if optional_oversize:
                 assert not (ctx.workdir / 'inputs/producer/preview.tsv').exists()
             if optional_only:
@@ -188,6 +204,9 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                 producer['optional_outputs'] = ['outputs/slurm_job.log']
             if optional_oversize:
                 producer['optional_outputs'].append('outputs/preview.tsv')
+            if log is not None:
+                key = 'outputs' if case == 'required_redacted' else 'optional_outputs'
+                producer.setdefault(key, []).append('outputs/slurm.log')
             consumer.update(id='consumer', depends_on=['producer'], outputs=[])
             request = hub.requests['r']
             request.update(plan=plan, research_contract=approved(plan),
@@ -202,6 +221,12 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
             assert results['producer'].ok, results['producer'].error
             assert results['producer'].provenance['hpc_step_revision'] == 2
             source = Path(results['producer'].workdir)
+            if case in {'optional_redacted', 'nested_optional_redacted'}:
+                kept = source / ('outputs/outputs' if nested else 'outputs') / 'slurm.log'
+                assert kept.read_bytes() == b'path: <remote-path>\n'
+                record = json.loads((source / 'manifest.json').read_text(encoding='utf-8'))
+                receipt = record['runs'][results['producer'].task_id]['hpc_local_receipt']
+                assert receipt['redacted_logs'] == {'outputs/slurm.log': _sha(log)}
             if case == 'nested_tampered':
                 (source / 'outputs/outputs/results/z.tsv').write_bytes(b'x\n')
             # Both sides restart. The PC adapter receives only the verified copies and the local reference.

@@ -4696,6 +4696,8 @@ class Runner:
                     j["remote_manifest"] = manifest["remote"]
                 j["fetched_sha256"] = {row["path"]: row["sha256"] for row in manifest.get("fetched", [])
                                        if isinstance(row.get("sha256"), str)}
+                j["fetched_redacted"] = {row["path"]: row["remote_sha256"] for row in manifest.get("fetched", [])
+                                          if row.get("redacted") is True}
                 j["fetched_paths"] = [row["path"] for row in manifest.get("fetched", []) if isinstance(row.get("path"), str)]
                 j["fetch_skipped"] = [row for row in manifest.get("skipped", [])
                                       if row.get("path") not in spec.get("logs", [])]
@@ -4819,6 +4821,7 @@ class Runner:
                 manifest["_local_copy_sha256"] = {row["path"]: copied[row["path"]]
                                                   for row in files if row["path"] in copied}
                 manifest["_fetch_skipped"] = job.get("fetch_skipped", [])
+                manifest["_fetch_redacted"] = job.get("fetched_redacted", {})
                 manifest["_nested_candidates"] = pending_candidates
                 file_paths = {row["path"].casefold() for row in manifest["files"]}
                 current_dirs = {directory.casefold() for directory in manifest["directories"]}
