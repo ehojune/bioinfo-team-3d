@@ -63,7 +63,7 @@ def scientific_appendix(existing: str, req: dict, review: dict | None, checklist
 
 def add_references(report: str, appendix: str, references: list, *, grounded: list[str] | None = None) -> str:
     """Prepare a new paper's reader text and fill its references using the same extraction as SOURCES.md."""
-    report = clean_reader_report(report)
+    report = clean_reader_report(report.replace("\r\n", "\n"))
     heading = re.search(r"(?m)^## 참고[ \t]*$", report)
     if not heading:
         return report
