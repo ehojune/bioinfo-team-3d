@@ -1634,7 +1634,7 @@ async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_pa
     assert "chars clipped" in context
     marks = context.split("Available claim anchors (read their evidence before use):\n", 1)[1].split("Ledger:\n", 1)[0]
     marks = dict(line.split(" ", 1) for line in marks.splitlines())
-    assert json.loads(marks["[[claim:s1/c2]]"])["evidence"]["e2"]["artifact_path"] == table
+    assert json.loads(marks["[[claim:s1/c2]]"])["evidence"]["e2"]["artifact_path"] == "inputs/s1/sensitivity.tsv"
     assert json.loads(marks["[[claim:s1/c2]]"])["evidence"]["e2"]["locator"] == "line 2, effect"
     assert ("[[claim:s1/c1]]" in marks) == (expected == "matched")
     if case == "linked":
@@ -2201,7 +2201,7 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
         hub.report_artifacts = received.get
     plan = valid_plan(steps=2)
     if shape == "validation_after_analysis":
-        plan["steps"][1].update(phase="validation", depends_on=["s1"])
+        plan["steps"][1].update(phase="validation", depends_on=["s1"], outputs=list(plan["steps"][0]["outputs"]))
     base_reply = hub.reply
     later_finding = "Sensitivity test reproduced the estimate [[claim:s2/c2]]."
     old_figure = "![Earlier conclusion](steps/s1/outputs/graphical_abstract.svg)"
@@ -2235,6 +2235,11 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
                 table = row["outputs"][0].removeprefix("outputs/")
                 assert f"inputs/{sid}/{table}" in task.context
                 assert (tmp_path / "report" / "inputs" / sid / table).read_bytes() == sid.encode()
+            binding = next(line for line in task.context.splitlines() if line.startswith("[[claim:s2/c2]] "))
+            evidence_path = json.loads(binding.split(" ", 1)[1])["evidence"]["e2"]["artifact_path"]
+            producer = "s1" if shape == "validation_after_analysis" else "s2"
+            assert evidence_path == f"inputs/{producer}/{inputs[producer]['outputs'][0].removeprefix('outputs/')}"
+            assert (tmp_path / "report" / evidence_path).read_bytes() == producer.encode()
             data = f"{REPORT}\n\n{old_figure}\n\n{later_finding}".encode("utf-8")
             if audit:
                 data = b"\xef\xbb\xbf" + data
@@ -2268,6 +2273,8 @@ async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_pat
             ledger["evidence"][0].update(id="e2", slots=["e2"])
             ledger["links"][0]["evidence_id"] = "e2"
         ledger["artifact_refs"][0]["path"] = path
+        if sid == "s2" and shape == "validation_after_analysis":
+            ledger["artifact_refs"][0]["path"] = f"s1/{path}" if audit else str(tmp_path / "s1" / path)
         workdir = tmp_path / sid
         (workdir / path).parent.mkdir(parents=True)
         (workdir / path).write_bytes(sid.encode())
