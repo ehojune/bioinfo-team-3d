@@ -63,6 +63,10 @@ def _declared(path, declarations):
     return any(path == name or path.startswith(name + '/') for name in declarations)
 
 
+def _optional(path, required, optional):
+    return _declared(path, optional) and not _declared(path, required)
+
+
 def remote_output_name(name, declarations):
     """Map a job-relative name to the output root when the plan declares the shorter path."""
     nested = name.removeprefix('outputs/')
@@ -184,11 +188,18 @@ def verified_hpc_inputs(run, artifact, request_id, revision):
             raise ValueError('invalid HPC receipt declarations')
     declarations = required + optional
     missing = {}
+    over_limit = set()
     for row in omissions:
         if not isinstance(row, dict) or not isinstance(row.get('path'), str) or not isinstance(row.get('reason'), str):
             raise ValueError('invalid HPC output omission')
+        path = row['path']
+        if path in missing:
+            raise ValueError('duplicate HPC output omission')
         size = f" ({row['bytes']} bytes)" if type(row.get('bytes')) is int else ''
-        missing[row['path']] = f"{row['path']}{size}: {row['reason']}"
+        missing[path] = f"{path}{size}: {row['reason']}"
+        if (row['reason'] == 'fetch size limit' and path not in received and path not in hashes
+                and _optional(path, required, optional)):
+            over_limit.add(path)
 
     files = {}
     for manifest in manifests:
@@ -206,10 +217,16 @@ def verified_hpc_inputs(run, artifact, request_id, revision):
             digest = row.get('sha256')
             if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest):
                 raise ValueError(f'{path}: missing remote SHA-256')
+            if path in over_limit:
+                missing.pop(path, None)
+                continue
             if received.get(path) != digest or hashes.get(path) != digest:
                 missing.setdefault(path, f'{path}: local copy not verified')
+    # Drop only optional files present in the remote inventory and explicitly left there for size.
+    for path in over_limit.intersection(files):
+        del files[path]
     for path in outputs:
-        if (path not in files and (_declared(path, required) or not _declared(path, optional))):
+        if path not in files and not _optional(path, required, optional):
             missing.setdefault(path, f'{path}: absent from the verified HPC inventory')
     if not files and not missing:
         raise ValueError('no collected output in the verified HPC inventory')

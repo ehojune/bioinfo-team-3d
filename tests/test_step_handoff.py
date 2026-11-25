@@ -48,9 +48,12 @@ def _restart(runner, settings, agent, monkeypatch):
 @pytest.mark.parametrize(('mixed', 'case'), [
     (False, 'ok'), (False, 'oversize'), (True, 'ok'), (True, 'oversize'), (True, 'wrap_up'),
     (True, 'nested'), (True, 'nested_with_copy'), (True, 'nested_tampered'), (True, 'nested_oversize'),
+    (True, 'nested_optional_oversize'),
 ], ids=['receipt-only', 'receipt-oversize', 'mixed-dag', 'mixed-oversize', 'mixed-wrap-up',
-        'mixed-nested', 'mixed-nested-with-copy', 'mixed-nested-tampered', 'mixed-nested-oversize'])
+        'mixed-nested', 'mixed-nested-with-copy', 'mixed-nested-tampered', 'mixed-nested-oversize',
+        'mixed-nested-optional-oversize'])
 async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, monkeypatch, mixed, case):
+    optional_oversize = case == 'nested_optional_oversize'
     oversize = case in {'oversize', 'nested_oversize'}
     nested = case.startswith('nested')
     expected_error = ('outputs/results/z.tsv.*fetch size limit' if oversize else
@@ -61,6 +64,8 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
     agent = AgentSpec(id='worker', name='Worker', role='test', engine=Engine.mock, builtin_mcp=['hpc'])
     contents = {'results/a.tsv': b'a\n', 'results/z.tsv': b'z' * (1024 * 1024 + 1) if oversize else b'z\n'}
     remote_contents = {'outputs/' + name: data for name, data in contents.items()} if nested else contents
+    if optional_oversize:
+        remote_contents['outputs/preview.tsv'] = b'p' * (1024 * 1024 + 1)
     reads = []
     row_paths = ['outputs/' + name for name in contents]
     refs = site.tmp / 'reference'
@@ -105,6 +110,8 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                                   error_kind='error_max_turns', session_id='consumer-session')
             reads.extend((ctx.workdir / 'inputs/producer' / name).read_bytes() for name in contents)
             assert not (ctx.workdir / 'inputs/producer/slurm_job.log').exists()
+            if optional_oversize:
+                assert not (ctx.workdir / 'inputs/producer/preview.tsv').exists()
             if case == 'wrap_up':
                 assert ctx.task.meta['kind'] == 'wrap_up'
                 (ctx.workdir / 'outputs/PARTIAL_STATUS.md').write_text('saved', encoding='utf-8')
@@ -172,6 +179,8 @@ async def test_fake_hpc_receipt_survives_restart_and_controls_pc_adapter(site, m
                             instruction='prepare the mock data; PC input is ' + refs.as_posix())
             if nested:
                 producer['optional_outputs'] = ['outputs/slurm_job.log']
+            if optional_oversize:
+                producer['optional_outputs'].append('outputs/preview.tsv')
             consumer.update(id='consumer', depends_on=['producer'], outputs=[])
             request = hub.requests['r']
             request.update(plan=plan, research_contract=approved(plan),
