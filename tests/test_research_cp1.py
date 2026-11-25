@@ -13,7 +13,7 @@ from pydantic import ValidationError
 from labhq.gateway.server import RequestIn, create_app
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from labhq.research import contract
+from labhq.research import compact_workflow, contract
 from labhq.research.contract import RESEARCH_PLAN_SCHEMA, StatisticsPlan, validate_research_plan
 from labhq.research.packs import configured_packs, pack_snapshot, render_pack_catalog
 from labhq.runner.daemon import Runner
@@ -21,6 +21,7 @@ from labhq.settings import Settings
 from labhq.util import free_port
 from tests.support.serve_task import serve_task, wait_started
 from tests.test_e2e_mock import _request_state, _until, _wait_for_request_terminal
+from tests.test_branched_research import branched_plan
 from tests.test_research_protocol import PACK, MiniHub, valid_pack_values, valid_plan
 
 REPO = Path(__file__).resolve().parents[1]
@@ -252,3 +253,131 @@ async def test_public_research_request_reaches_cp1_card_through_the_claude_schem
         for task in pending:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.parametrize("steps", [1, 3])
+def test_compact_unbranched_plan_validates_at_both_boundaries(steps):
+    plan = valid_plan(steps=steps, topics=[])
+    limit = compact_workflow.unbranched_plan_limit(12, {"compact_workflow": True})
+    assert contract.research_plan_errors(plan, max_steps=limit, active_packs={}) == []
+    assert len(validate_research_plan(plan, max_steps=limit, active_packs={}).steps) == steps
+
+
+def test_compact_unbranched_plan_rejects_four_without_truncating():
+    plan = valid_plan(steps=4, topics=[])
+    limit = compact_workflow.unbranched_plan_limit(12, {"compact_workflow": True})
+    errors = contract.research_plan_errors(plan, max_steps=limit, active_packs={})
+    assert errors == ["research plan has 4 steps; maximum is 3; re-plan without truncation"]
+    with pytest.raises(ValueError, match="maximum is 3"):
+        validate_research_plan(plan, max_steps=limit, active_packs={})
+    assert len(plan["steps"]) == 4
+
+
+def test_compact_limit_keeps_a_stricter_configured_limit():
+    assert compact_workflow.unbranched_plan_limit(2, {"compact_workflow": True}) == 2
+
+
+@pytest.mark.parametrize("options", [None, {"compact_workflow": False}])
+def test_legacy_four_step_plan_keeps_its_cp1_hash(options):
+    settings = Settings()
+    assert settings.research.compact_workflow is False
+    plan = valid_plan(steps=4, topics=[])
+    approved_hash = "7428e236692e304c7bf7b51608a1e5bfac752a70d81a1a675c69b764a579c737"
+    receipt = contract.freeze_plan(plan, {"approved": True})
+    limit = compact_workflow.unbranched_plan_limit(settings.orchestrator.max_steps, options)
+    validated = validate_research_plan(plan, max_steps=limit, active_packs={})
+    assert receipt["target_sha256"] == contract.plan_sha256(validated) == approved_hash
+    assert contract.refresh_plan_approval(validated, receipt)["reapproval_required"] is False
+
+
+def test_compact_unbranched_limit_preserves_branch_caps():
+    limit = compact_workflow.unbranched_plan_limit(12, {"compact_workflow": True})
+    plan = branched_plan((8, 8), synthesis=3)
+    assert len(validate_research_plan(plan, max_steps=limit, active_packs={}).steps) == 19
+    with pytest.raises(ValueError, match="branch A has 9 steps; maximum is 8"):
+        validate_research_plan(branched_plan((9, 8), synthesis=3), max_steps=limit, active_packs={})
+
+
+@pytest.mark.parametrize("compact", [False, True])
+async def test_cp1_planner_and_correction_use_the_saved_option(compact):
+    settings = Settings()
+    settings.research.enabled = True
+    settings.research.compact_workflow = not compact  # a settings edit since this request was created
+    settings.orchestrator.chief_of_staff_agent = None
+    settings.orchestrator.reviewer_agent = None
+    candidates = iter([valid_plan(steps=4, topics=[]), valid_plan(steps=3, topics=[])])
+
+    async def reply(task):
+        assert task.meta["kind"] == "plan"
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=next(candidates))
+
+    hub = MiniHub(settings, reply, mode="orchestrate", work_kind="research",
+                  text="Compare expression by condition in a public cohort")
+    request = hub.requests["r"]
+    request["research_options"] = {"contract_version": 2, "compact_workflow": compact}
+    await Orchestrator(hub).run_request("r")
+
+    limit = 3 if compact else 12
+    prompt = hub.calls[0].prompt
+    assert f"at most {limit} steps" in prompt
+    split_rule = "Keep the biological interpretation, an independent technical or scientific QC step"
+    assert (split_rule in prompt) is not compact
+    assert ("Plan claim_ids that cover the expected report statements and table rows" in prompt) is compact
+    assert ("Put their exact outputs/<file> paths in outputs and in the step instructions" in prompt) is compact
+    assert [task.meta["kind"] for task in hub.calls] == ["plan"] * (2 if compact else 1)
+    if compact:
+        assert "research plan has 4 steps; maximum is 3" in hub.calls[1].prompt
+        assert "For a plan without branches, include QC and interpretation in the analysis step" in prompt
+        assert "For a branched plan, keep biological interpretation and independent technical or scientific QC separate." in prompt
+        assert "Keep the other-vendor science review and the CP1/CP2 approval and evidence checks separate." in prompt
+    else:
+        assert "Put QC after data generation." in prompt
+        assert "For a plan without branches, include QC" not in prompt
+    assert [approval["kind"] for approval in hub.approvals] == ["research_plan"]
+    assert request["outcome"] == "plan_approved"
+    assert len(request["plan"]["steps"]) == (3 if compact else 4)
+
+
+@pytest.mark.parametrize("async_create", [False, True], ids=["sync", "async"])
+async def test_new_research_request_persists_workflow_options_before_dispatch(tmp_path, monkeypatch, async_create):
+    settings = _research_settings()
+    settings.gateway.state_dir = str(tmp_path / "state")
+    settings.research.evidence_checkpoint = settings.research.final_checkpoint = True
+    assert settings.research.audit_before_cp2 is settings.research.audit_repair_before_cp2 is False
+    hub = create_app(settings).state.hub
+    observed = asyncio.Queue()
+
+    async def observe_first_save(rid):
+        saved = hub.store.get("request", rid)
+        observed.put_nowait((rid, (saved or {}).get("research_options")))
+
+    monkeypatch.setattr(hub, "_start_request", observe_first_save)
+    try:
+        snapshots = {}
+        for enabled, audit, repair, mode, work_kind in (
+            (False, False, False, "orchestrate", "research"),
+            (True, True, True, "orchestrate", "research"),
+            (True, False, False, "orchestrate", "research"),
+            (True, True, False, "plan_only", "research"),
+            (True, True, True, "direct", "research"),
+            (True, True, True, "orchestrate", "simple"),
+        ):
+            settings.research.compact_workflow = enabled
+            settings.research.audit_before_cp2 = audit
+            settings.research.audit_repair_before_cp2 = repair
+            body = RequestIn(text="Compare expression by condition", mode=mode, work_kind=work_kind)
+            rid = await hub.acreate_request(body) if async_create else hub.create_request(body)
+            settings.research.compact_workflow = not enabled
+            settings.research.audit_before_cp2 = not audit
+            settings.research.audit_repair_before_cp2 = not repair
+            expected = {"contract_version": 2, "final_checkpoint": mode == "orchestrate" and work_kind == "research"}
+            if work_kind == "research" and mode != "direct":
+                if enabled:
+                    expected["compact_workflow"] = True
+                expected.update(audit_before_cp2=audit, audit_repair_before_cp2=repair)
+            assert await asyncio.wait_for(observed.get(), timeout=5) == (rid, expected)
+            snapshots[rid] = expected
+        for rid, expected in snapshots.items():
+            assert hub.requests[rid]["research_options"] == hub.store.get("request", rid)["research_options"] == expected
+    finally:
+        hub.store.close()

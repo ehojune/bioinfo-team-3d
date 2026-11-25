@@ -196,6 +196,8 @@ flowchart TB
 | **Runner & Adapters** | `labhq/runner/daemon.py`, `workspace.py`, `labhq/adapters/` | 단계별 격리 작업 폴더(`inputs/`·`outputs/`), JSON schema 정형 출력 계약과 슬롯 복구(`slot_repair`), CLI·WSL·HPC 실행 |
 | **CLI & Lifecycle** | `labhq/cli.py`, `supervisor.py`, `doctor.py` | 백그라운드 데몬 기동·중지·상태 확인, 자식 프로세스 감시·종료 코드 기록, 환경·로그인·런타임 준비도 점검 |
 | **Research Contract** | `labhq/research/contract.py`, `continuation.py`, `labhq/evidence/claims.py` | CP1 계획 해시 동결, `result v2` 주장·근거·산출물 sha256 대조, 독립 근거 그룹 판정, 이어 가기(continuation) 재사용 |
+| **독립 감사** | `labhq/research/independent_review.py` | CP2 승인 뒤 이종 벤더 리뷰어에게 근거를 전달합니다. 같은 계획 해시의 유효한 감사 결과는 재시작 뒤에도 다시 씁니다. |
+| **CP2·보고서 초안** | `labhq/research/evidence_checkpoint.py`, `labhq/research/analysis_draft.py` | CP2 결정 영수증을 만들고, 간소화 흐름에서 분석 세션의 초안과 연결된 표를 수집·검증합니다. |
 | **core 점검** | `labhq/vocab/`, `labhq/research/packs.py`, `input_fit.py`, `semantic_devices.py` | 어휘·EDAM, 분야 점검표, 고정 pack, CP1 입력 적합성, 공개 안전 오류. live 그림자 제거는 #1388에서 검증 중입니다. |
 | **Bundle & Publication** | `labhq/request_bundle.py`, `portfolio.py`, `result_storage.py`, `reproduction_receipt.py`, `verify.py` | 요청 묶음·RO-Crate 생성, 오프라인 무결성 재검증(`labhq verify`), 재현 검증 receipt, GitHub 연구소 정리본·PDF 출판 |
 
@@ -247,7 +249,7 @@ PDF는 필요할 때만 만듭니다. 끝난 요청에서 웹 요청 상세(2.5D
 - 순서: 묶음의 `report.md`·`report_appendix.md`로 그림(data: URI)·한글 글꼴·인쇄 CSS를 갖춘 HTML 한 장을 만들고, 이 PC의 Edge·Chrome을 headless로 돌려 PDF로 인쇄합니다. 구성은 표지(요청·시각·상태), 논문 형식 본문, 과학 부록입니다. 외부 주소의 그림은 넣지 않고 그 자리에 "그림 없음"을 적습니다.
 - 그림 정책(#608, #690): 그림에는 크기 제한이 없고 요청 묶음의 원본을 씁니다. 한 보고서에 11장(graphical abstract 포함)까지 넣습니다. 정리본의 그림 사본에도 1 MB·5 MB 상한을 적용하지 않습니다. 세로로 긴 그림은 인쇄 가능 영역에 맞춰 CSS `max-height: 220mm`로 표시 크기만 줄입니다. 재인코딩·재샘플링하지 않으며 SVG는 벡터 그대로라 PI 방침인 원본 품질 보존과 맞습니다.
 - 크기 알림: `github.edition_pdf_max_mb`의 기본은 무제한(`null`)입니다. 값을 적어도 경고만 남기며 그림을 JPEG로 재인코딩하거나 PDF를 줄이지 않습니다. PDF는 원본 HTML을 한 번만 인쇄합니다.
-- graphical abstract: 최종 보고서 단계는 `outputs/graphical_abstract.svg`와 생성 코드를 선언합니다. CSO는 읽기 전용이며 이 파일을 제목 아래 첫 그림으로 링크합니다. 파일이 없으면 labhq가 기존 SVG 흐름도를 그립니다.
+- graphical abstract. 간소화 옵션을 켠 무분기 연구에서는 분석 단계가 `outputs/graphical_abstract.svg`와 생성 코드를 선언합니다. 다른 계획에서는 최종 보고서 단계가 선언합니다. 분석 세션이 모든 결과를 보고 바로 쓴 초안은 SVG를 제목 아래에 놓습니다. 세션을 재개해 쓴 초안은 단계별 그림을 생략합니다. 파일이 없으면 labhq가 기존 SVG 흐름도를 그립니다.
 - 브라우저는 `gateway.report_browser`, PATH, 표준 설치 위치 순으로 찾습니다. 못 찾거나 인쇄가 60초 안에 안 끝나면 HTML을 주고 이유를 알립니다(브라우저로 열어 "PDF로 저장"). LaTeX·GTK 같은 의존성은 없습니다.
 - 결과는 `runner.workspace_root/requests/<request_id>-report/`에 두고, 표지에 찍히는 값(상태·검토 단계)·묶음의 `report.md`·`report_appendix.md`·MANIFEST가 그대로면 PDF를 다시 쓰지 않습니다. 묶음 폴더 안에는 쓰지 않아 `labhq verify`가 영향을 받지 않습니다.
 - 끝나지 않은 요청, 보고서가 없는 요청, 통제 데이터 구역을 건드린 요청에는 만들지 않고(409) 이유를 알립니다. 결과 저장(#558)의 정리본과 같은 판정을 씁니다.

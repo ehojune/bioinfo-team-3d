@@ -10,6 +10,62 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-25
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 10:49 | [`f79e6cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/f79e6cc) | **후속 초안에서 지지 근거와 반대 근거를 함께 읽습니다.**<br>원장이 잘려도 제공한 표식마다 승인된 지지·반대 관계와 각 출처 위치가 남는다. |
+| 10:43 | [`240b1c8`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/240b1c8) | **후속 초안에서 원본 단계의 근거 파일을 바로 찾습니다.**<br>결과 승인에 기록된 경로와 해시로 생산 단계를 찾아 후속 작업공간의 입력 경로를 표시한다. |
+| 10:37 | [`1b192d0`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/1b192d0) | **후속 초안에 주장 표식과 근거 위치를 함께 전달합니다.**<br>긴 원장의 일부가 잘려도 초안 작성자가 제시된 표식의 파일과 위치를 찾도록 한 줄로 묶었다. |
+| 10:29 | [`0ccf362`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/0ccf362) | **분석 보고서의 수치와 결론을 수집한 근거 파일에 연결합니다.**<br>간소화 연구 계획에 요약 파일과 주장 ID를 선언하고, 분석 원장에 값이 있는 위치를 적어 초안 문장과 표 행에 연결하도록 안내한다. 후속 초안에는 인용 가능한 원장 표식을 제공한다. |
+| 09:35 | [`6f1dc3a`](https://github.com/ehojune/bioinfo-team-3d/pull/1505/commits/6f1dc3a) | **연구 요청이 근거 승인 전 감사와 P1 수정 설정을 처음부터 끝까지 유지합니다.**<br>두 옵션을 인스턴스 설정으로 옮기고 기본값을 false로 둔다. Gateway가 요청을 처음 저장할 때 값을 기록한다. |
+| 09:11 | [`9dc8e11`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/9dc8e11) | **감사 지적을 고칠 때 분석 뒤에 바뀐 원본 폴더가 다시 전달되지 않게 했습니다.**<br>수정 세션에는 해시를 확인한 수집 산출물의 읽기 전용 사본을 전달한다. 요청의 참조 경로와 직원의 프로젝트 폴더는 수정 turn에 열지 않는다. |
+| 09:01 | [`91ebc0e`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/91ebc0e) | **감사자가 지적마다 승인된 계획을 바꿔야 하는지 밝힙니다.**<br>자동 수정용 감사 응답에서 설계 변경 여부를 필수로 받는다. 별도 차례에서 쓴 초안도 수정할 때는 결과 원장과 산출물을 함께 받는다. |
+| 08:55 | [`bef9ce8`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/bef9ce8) | **옵션을 켜면 근거 승인 전에 감사에서 발견한 중요한 오류를 다시 확인하고 고칩니다.**<br>원래 분석 세션이 P1을 최대 두 번 수정한다. 수정본을 다시 감사하고 남은 지적과 수정 결과를 CP2 카드에 표시한다. |
+| 08:11 | [`31262a4`](https://github.com/ehojune/bioinfo-team-3d/pull/1502/commits/31262a4) | **근거 승인에서 수정 요청을 고르면 감사 P1도 새 계획으로 넘깁니다.**<br>다음 감사도 같은 지적을 다시 확인한다. 경로가 열리지 않을 때는 Gateway가 검증한 비제한 초안 사본을 읽는다. |
+| 07:53 | [`dd1f3b7`](https://github.com/ehojune/bioinfo-team-3d/pull/1502/commits/dd1f3b7) | **Gateway로 받은 결과표도 감사 전에 대조합니다.**<br>구조화된 단계 결과를 표 검사 입력 형식으로 맞추고 검증된 전송본을 읽는 경로를 시험했다. |
+| 07:44 | [`ac39867`](https://github.com/ehojune/bioinfo-team-3d/pull/1502/commits/ac39867) | **근거 승인 메모를 독자가 보는 보고서에 싣습니다.**<br>이번 승인 메모는 보고서 본문에 인용한다. 앞 차수 승인 메모는 초안 작성자와 감사자에게 전달한다. |
+| 07:35 | [`3c9d411`](https://github.com/ehojune/bioinfo-team-3d/pull/1502/commits/3c9d411) | **감사자가 읽은 초안과 근거 승인 카드의 초안을 일치시켰습니다.**<br>그림 링크와 BOM을 포함한 수집 원문을 자동 검사·감사·카드에 사용하고 그 해시를 영수증에 남긴다. |
+| 07:28 | [`c057767`](https://github.com/ehojune/bioinfo-team-3d/pull/1502/commits/c057767) | **옵션을 켜면 근거 승인 전에 연구 초안을 독립 감사합니다.**<br>코드와 표를 먼저 검토하고 초안과 감사 결과를 근거 승인 카드에서 함께 본다. 산출물을 다시 확인하고 계획·산출물·초안 해시가 맞을 때만 감사 결과를 재사용한다. |
+| 07:00 | [`9023c90`](https://github.com/ehojune/bioinfo-team-3d/pull/1501/commits/9023c90) | **근거 승인 기록과 분석 보고서 초안을 연구 모듈에서 처리합니다.**<br>CP2 결정 영수증과 간소화 보고서의 초안·결과표 검증을 연구 모듈로 옮겼다. 승인과 감사 순서는 그대로다. |
+| 06:36 | [`1ba5e30`](https://github.com/ehojune/bioinfo-team-3d/pull/1500/commits/1ba5e30) | **연구 결과를 승인한 뒤 실행하는 독립 감사 코드를 한곳에 모았습니다.**<br>감사 지시문과 결과 검증을 연구 모듈에서 맡는다. 재시작하면 같은 계획 해시의 유효한 감사 결과를 다시 쓴다. |
+| 06:16 | [`ef32872`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/ef32872) | **공유 폴더 없이 간소화 연구 보고서를 조립합니다.**<br>Gateway가 작업 배정과 SHA-256을 대조해 초안과 결과표를 비공개 저장하고 작업 ID로 읽는다. 재개한 세션에 검사한 입력을 넘기고 이전 단계 그림은 본문에서 생략한다. |
+| 05:21 | [`52ac820`](https://github.com/ehojune/bioinfo-team-3d/commit/52ac820) | **로컬 경로를 가리고 통계 약어와 단위를 보존합니다.**<br>구두점이 든 디렉터리를 가리고 log2FC·TPM과 R·F·t·z의 수치를 남깁니다. |
+| 03:40 | [`046d476`](https://github.com/ehojune/bioinfo-team-3d/commit/046d476) | **작업 경로 뒤의 통계 비교식을 보고서에 남깁니다.**<br>완료·취소 보고서에서 위험비와 p값의 항과 비교 기호를 보존합니다. |
+| 03:36 | [`9d4c75b`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/9d4c75b) | **보고서 초안과 결과표를 다른 PC에서도 대조할 수 있게 준비했습니다.**<br>runner가 수집한 UTF-8 파일을 내부 결과에 담기 전에 검사하고, 보고서를 조립할 때 같은 SHA-256을 다시 대조한다. |
+| 03:33 | [`dc8e3ad`](https://github.com/ehojune/bioinfo-team-3d/commit/dc8e3ad) | **근거 표식이 없는 보고서에서도 작업 경로 뒤 결론을 남깁니다.**<br>완료 보고서의 요약과 취소 보고서의 부분 결과를 검증했습니다. |
+| 03:29 | [`d227408`](https://github.com/ehojune/bioinfo-team-3d/commit/d227408) | **슬래시 왼쪽에만 공백을 둔 세포 비율을 보존합니다.**<br>보고서 본문과 앞쪽 요약에서 CD4+ /CD8+를 확인했습니다. |
+| 03:23 | [`670d7b1`](https://github.com/ehojune/bioinfo-team-3d/commit/670d7b1) | **보고서에서 콜론에 붙은 작업 경로를 가리고 공백이 든 비율을 보존합니다.**<br>POSIX·Windows 경로를 가리고 HTTPS·FTP URL과 CD4+ / CD8+ 표기를 남깁니다. |
+| 03:21 | [`226061c`](https://github.com/ehojune/bioinfo-team-3d/commit/226061c) | **연구 보고서에서 작업 경로를 가리고 결론과 근거를 남깁니다.**<br>정상 완료·재개·취소 보고서에 적용합니다. 경로 뒤 결론과 수식, 상대 링크를 보존합니다. |
+| 03:14 | [`96c86d0`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/96c86d0) | **재시작 뒤에도 검사한 보고서 초안을 다시 씁니다.**<br>후속 초안의 해시와 세션을 리뷰 전에 저장하고, 결과 링크를 묶음 경로로 통일한다. |
+| 03:06 | [`51694f1`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/51694f1) | **후속 검증과 병렬 분석 결과까지 초안에 반영할 수 있게 했습니다.**<br>모든 결과가 모인 뒤 원래 분석 세션을 재개하고 승인된 근거를 넘긴다. |
+| 02:58 | [`8aede87`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/8aede87) | **초안 회귀시험을 기존 결과 승인 시험 파일로 옮겼습니다.**<br>Windows CI 인벤토리에 등록된 CP2 시험과 함께 실행한다. |
+| 02:53 | [`6fa58e5`](https://github.com/ehojune/bioinfo-team-3d/pull/1498/commits/6fa58e5) | **간소화 연구에서는 분석 세션이 보고서 초안을 씁니다.**<br>수집한 Markdown의 해시를 대조하고 근거와 결과표를 검사해 보고서를 조립한다. 검사에서 문제가 발견되면 완료로 표시하지 않는다. |
+| 02:26 | [`bf69871`](https://github.com/ehojune/bioinfo-team-3d/commit/bf69871) | **간소화 연구 계획에서 단계 이름과 관계없이 필요한 QC를 안내합니다.**<br>무분기 단계에서 맡은 작업에 분석, QC 또는 해석이 포함될 때 승인된 범위 안에서 시료, 대조군, 문헌 값을 확인하도록 안내한다. |
+| 02:17 | [`e12dd9c`](https://github.com/ehojune/bioinfo-team-3d/commit/e12dd9c) | **간소화 연구 계획의 증거 수집과 검증 단계에도 QC를 안내합니다.**<br>evidence와 validation으로 표시한 무분기 단계에도 공개 시료 기록 대조, 대조군과 기대 방향 기록, 문헌 값 비교를 안내한다. |
+| 01:49 | [`5967afc`](https://github.com/ehojune/bioinfo-team-3d/commit/5967afc) | **연구 계획 간소화 옵션을 한영 매뉴얼에 설명했습니다.**<br>설정 방법, 갈래 없는 계획의 단계 상한, 재개 동작과 분석 지시를 적었다. |
+| 00:58 | [`134aae0`](https://github.com/ehojune/bioinfo-team-3d/commit/134aae0) | **강조한 HGNC 라벨과 기호를 읽고 기존 실행 기록은 조회에서 뺍니다.**<br>식별자 조회에도 설정한 연락처를 쓰고 조회기 내부 오류는 미확인으로 기록합니다. |
+| 00:52 | [`3791368`](https://github.com/ehojune/bioinfo-team-3d/commit/3791368) | **간소화 옵션을 켜면 새 무분기 연구 계획을 최대 3단계로 짭니다.**<br>요청을 만들 때 옵션을 저장하고 계획 안내와 검증에 같은 상한을 적용한다. 분석 단계에 시료 대조, 대조군과 기대 방향, 문헌 값 비교를 안내한다. |
+| 00:35 | [`8d2a588`](https://github.com/ehojune/bioinfo-team-3d/commit/8d2a588) | **대체 좌위의 HGNC 기호도 보고서에서 검사합니다.**<br>근거 출처와 식별자 조회에 같은 시간 한도를 적용합니다. 남은 시간이 없으면 미확인으로 기록합니다. |
+| 00:28 | [`ad2f424`](https://github.com/ehojune/bioinfo-team-3d/commit/ad2f424) | **쉼표로 나열한 HGNC 기호도 하나씩 조회합니다.**<br>목록 뒤쪽의 미등록 기호도 보고서 검사에 기록합니다. |
+| 00:19 | [`f6a7db9`](https://github.com/ehojune/bioinfo-team-3d/commit/f6a7db9) | **연구 보고서의 유전자 기호와 GO ID, DOI가 등록되어 있는지 확인합니다.**<br>실시간 출처 확인을 켠 labhq verify에서 등록 기관이 확인한 미등록과 조회 실패를 구분하고 감사 번들에 결과를 담습니다. |
+
+## 2026-11-24
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 11:10 | [`3e20b84`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/3e20b84) | **작업 폴더 밖 파일 하나를 지우는 명령도 trusted\_local에서 거부됩니다.**<br>리뷰 P1 수정. trusted_local에서 재귀가 아닌 삭제(rm, unlink, Remove-Item 등)도 그 명령 구간의 피연산자를 링크까지 풀어 허용 폴더 밖이면 거부한다 |
+| 10:20 | [`6430a5b`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/6430a5b) | **credential 파일 읽기와 검사 밖 도구는 trusted\_local에서도 자동 허용되지 않습니다.**<br>리뷰 P1 수정. trusted_local에서 작업 폴더에 실제로 있는 credential 파일 이름(cat .env)은 경로 구분자가 없어도 거부하고, labhq가 검사하지 않는 도구(Monitor처럼 자기 명령을 실행하는 도구)는 자동 허용하지 않고 카드로 남긴다 |
+| 09:30 | [`3efae9d`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/3efae9d) | **작업 폴더 안 링크를 타고 밖을 지우는 명령은 trusted\_local에서도 거부됩니다.**<br>리뷰 P1 수정. trusted_local의 재귀 삭제 판정에서 상대 경로 피연산자도 모두 링크까지 풀어, 작업 폴더 안 링크를 타고 밖을 지우는 명령(rm -rf link/file)을 거부한다 |
+| 01:30 | [`0658746`](https://github.com/ehojune/bioinfo-team-3d/pull/1488/commits/0658746) | **PI 인스턴스에서 trusted\_local을 켜면 도구 카드 대부분이 사람 손 없이 허용되고 위험한 것만 이유와 함께 거부됩니다.**<br>policy.approvals.trusted_local(기본 꺼짐)을 켜면 runner가 Claude 직원의 도구 카드를 사람에게 보내지 않고 approval_grants.classify 결과로 허용하거나 사유를 붙여 거부한다. 거부는 진짜 개인 경로·credential·제한 구역·허용 폴더 밖 쓰기와 삭제·관리자 권한·스케줄러 직접 호출·디스크 부족 내려받기만이고, 내부 자료 구역 읽기는 요청마다 한 번 묻는다. 기록 재생에서 |
+| 00:52 | [`ae7ef91`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/ae7ef91) | **가림본에서 HTML로 작성한 코드 블록도 지웠습니다.**<br>HTML 태그를 벗기기 전에 pre 블록을 내용까지 제거한다. |
+| 00:45 | [`18e5625`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/18e5625) | **가림본에서 인용문 속 코드와 보고서 머리말을 지웠습니다.**<br>인용·중첩 인용의 fenced code와 첫 구분자로 감싼 front matter를 제거한다. |
+| 00:38 | [`4a132ed`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/4a132ed) | **대조군 관측값을 숫자로 확인하고 가림본에 남는 주소와 코드를 줄였습니다.**<br>평가한 대조군의 관측값에 유한한 수를 요구하고, 가림본에서 일반 HTTP(S) 주소와 들여쓴 코드 블록을 지운다. |
+| 00:30 | [`e38e5e2`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/e38e5e2) | **매뉴얼에 사전등록 검사와 가림 보고서 사용법을 연결했습니다.**<br>연구 lane과 검증 장에서 점검표·대조군 누락과 주 판정을 확인하는 도구의 사용법을 찾을 수 있다. |
+| 00:24 | [`4a0ac14`](https://github.com/ehojune/bioinfo-team-3d/pull/1487/commits/4a0ac14) | **시료 점검 누락과 보고서의 판정을 확인하고 채점용 보고서를 가리는 도구를 추가했습니다.**<br>사전등록 양식의 고정 ID와 숫자 기준을 검사하고, 산출 묶음에서 본문·표 대조와 인용 감사를 실행하며, 가림 대응표를 별도 파일로 저장한다. |
+| 00:00 | [`decc926`](https://github.com/ehojune/bioinfo-team-3d/commit/decc926) | **개발자가 리뷰에서 먼저 해결할 문제와 변경 요청의 크기 기준을 문서에 적었습니다.**<br>AGENTS.md에 단일 사용자 연구 PC의 위협 모형과 P1 범위를 명시하고 PR당 제품 코드 순증 300줄과 커밋 10개 상한을 기록했습니다. |
+| 00:00 | [`86cd02d`](https://github.com/ehojune/bioinfo-team-3d/commit/86cd02d) | **분석 전에 판정 기준을 정하고 시료 점검과 대조군 결과를 남기는 양식을 추가했습니다.**<br>tools/prereg_kit 폴더만 복사해 가상 자료로 세 양식과 보고서를 작성하고 사전등록 파일의 SHA-256 보존을 확인했다. |
+
 ## 2026-11-22
 
 | 시간 | 커밋 | 주요 변경사항 |

@@ -202,6 +202,29 @@ class RequestDeadline(unittest.IsolatedAsyncioTestCase):
         self.assertIn("요청 전체 시간 상한(90분)에 닿아 labhq가", by_limit)
         self.assertNotIn("PI가", by_limit)
 
+    async def test_cancel_stores_and_publishes_a_clean_report(self):
+        hub = self.hub()
+        path = "/home/fixture-user/run/result.tsv"
+        conclusion = "Treatment increased expression."
+        marker = "[[claim:s1/c1]]"
+        self.open_request(hub, results={
+            "s1": {"ok": True, "text": f"{path} {conclusion} {marker}"},
+            "s2": {"ok": True, "text": "/home/fixture-user/run protein levels increased"},
+            "s3": {"ok": True, "text": "/home/fixture-user/run HR = 0.7"},
+            "s4": {"ok": True, "text": "C://Users/fixture-user/run 95% CI: 0.60–0.80"},
+        })
+
+        await hub.cancel_request("r")
+
+        report = hub.store.all("request")["r"]["report"]
+        event = next(event for event in hub.store.events_since(0) if event["type"] == "request.completed")
+        self.assertEqual(event["data"]["report"], report)
+        self.assertIn(f"로컬 경로 {conclusion} {marker}", report)
+        self.assertIn("로컬 경로 protein levels increased", report)
+        self.assertIn("로컬 경로 HR = 0.7", report)
+        self.assertIn("\n  로컬 경로 95% CI: 0.60–0.80", report)
+        self.assertNotIn("fixture-user", report)
+
     async def test_the_limit_is_read_from_the_request_not_from_the_config_that_is_now_set(self):
         hub = self.hub(120)
         self.open_request(hub)

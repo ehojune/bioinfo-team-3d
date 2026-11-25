@@ -16,6 +16,8 @@
 - 공동 작성자 trailer는 `.githooks/commit-msg`가 GitHub이 인식하는 봇 주소로 맞춘다(Codex 이메일 치환, Gemini 추가). git이 마지막 문단에서 trailer로 인식하는 줄만 보며(본문의 예시는 글로 두고), 모델명은 환경변수 `LABHQ_COMMIT_MODEL`이 있을 때만 이름에 채운다(없으면 추정하지 않는다). 새 clone은 `git config core.hooksPath .githooks` 한 번.
   머신 전역 훅(`~/.git-template/hooks`)이 있으면 새 커밋·revert를 넘겨 author를 에이전트의 GitHub App 봇으로 맞춘다. rebase·cherry-pick·amend와 명시한 다른 author는 보존한다. merge 커밋·reflog를 끈 저장소는 자체 trailer 규칙만 쓴다.
 - public 저장소다. 커밋 전 `scripts/check_public.sh`를 실행한다. 비밀값은 env로만, 실제 `config/labhq.yaml`·로컬 노트는 커밋 금지. DUA 원본은 클러스터 밖·LLM 대화·프롬프트·로그에 가져오지 않는다. 경로 가드는 sandbox가 아니다.
+- PR 하나에 제품 코드 순증 300줄, 커밋 10개 이하로 제한한다. PR 본문에 제품 코드 순증 줄 수를 적는다.
+- 혼자 쓰는 연구 PC다. 지킬 것은 개인 경로, credential, 통제 자료, 예산, HPC 규칙이다. 직원이 쓴 명령 문자열의 성질을 증명하는 코드는 쓰지 않는다. 리뷰 지적은 이 다섯에 닿거나 연구 결과를 틀리게 만들 때만 P1이다.
 - P1은 같은 담당자가 고치고 새 head 리뷰를 받아 **P1=0까지 반복**한다. 남은 P2는 총괄이 선별한 것만 issue로 남기고 경미·추정·중복은 원 PR 댓글에 둔다. CI·봇 대기는 driver가 맡는다. 실행 중 재호출과 인라인·PR 본문·커밋의 봇 멘션은 금지한다. `scripts/pr_gate.py --dry-run`은 보조 도구다.
 - `labhq/web/`은 빌드 없는 정적 파일이며 2.5D·3D가 `state.js` reducer를 공유한다. 보고는 한국어, 기술 용어는 영어 그대로 쓴다.
 - `docs/manual.md`는 `labhq`를 깊이 공부하고 운영하는 사용자를 위한 문서다. 개발 에이전트 전용 규칙(`pytest` 홈·`.labhq` 격리, [Ubuntu 3.10 CI 진단·대기 상한](docs/status/2026-10-20-0955-ci-stall-786.md), `signatures.yaml`·`topic_checklists.yaml` 수정 시 fixture와 가짜 실행 test 추가 규칙)은 매뉴얼에 섞지 않고 이 문서에서 따른다.

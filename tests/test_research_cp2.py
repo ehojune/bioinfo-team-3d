@@ -3,6 +3,9 @@
 import asyncio
 import copy
 import json
+from hashlib import sha256
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -12,6 +15,7 @@ from labhq.bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
 from labhq.orchestrator import cso
 from labhq.orchestrator.cso import Orchestrator
 from labhq.evidence.verify import SourceRecord, SourceUpdate, StaticResolver
+from labhq.research import analysis_draft
 from labhq.research.contract import plan_sha256, research_result_errors, salvage_research_result
 from labhq.settings import Settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
@@ -55,13 +59,14 @@ def _extra_observation(row_id="bad"):
             "assessment_reason": "an independent cross-check", "slots": []}
 
 
-def _research_hub(settings, decisions, *, artifact_path=None, fail_steps=False, unreported_outputs=None):
+def _research_hub(settings, decisions, *, plan=None, artifact_path=None, fail_steps=False, unreported_outputs=None):
     holder = {}
 
     async def reply(task):
         hub = holder["hub"]
         if task.meta["kind"] == "plan":
-            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=valid_plan())
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured=plan if plan is not None else valid_plan())
         if task.meta["kind"] != "step" or fail_steps:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error="worker exited with code 1")
         path = hub.requests["r"]["plan"]["steps"][0]["outputs"][0]
@@ -128,6 +133,35 @@ async def test_live_source_check_off_does_not_call_resolver(monkeypatch):
     monkeypatch.setattr("labhq.orchestrator.cso.LiveSourceResolver", forbidden)
     await Orchestrator(hub).run_request("r")
     assert "source_verification" not in hub.approvals[1]["detail"]
+
+
+@pytest.mark.parametrize("compact", [False, True])
+@pytest.mark.parametrize("phase", ["question", "plan", "evidence", "analysis", "validation", "report"])
+async def test_cp2_analysis_instructions_use_saved_compact_workflow(compact, phase):
+    settings = _settings()
+    settings.research.compact_workflow = not compact
+    plan = valid_plan()
+    plan["steps"][0]["phase"] = phase
+    hub = _research_hub(settings, [CP1, {"approved": False, "choice": "deny", "note": ""}], plan=plan)
+    hub.requests["r"]["research_options"] = {"compact_workflow": compact}
+
+    await Orchestrator(hub).run_request("r")
+
+    task = next(task for task in hub.calls if task.meta["kind"] == "step")
+    prompt = task.prompt
+    for instruction in ("cross-check sample information against public records",
+                        "record the controls and expected direction",
+                        "compare results with published values in a table",
+                        "write and read back the declared evidence outputs",
+                        "set source.locator to its exact row and column"):
+        assert (instruction in prompt) is compact
+    assert ("save a draft for the PI" in prompt) is compact
+    drafts = [path for path in task.meta["optional_outputs"] if path.startswith("outputs/labhq-analysis-draft-")]
+    assert bool(drafts) is compact
+    req = hub.requests["r"]
+    assert req["research_contract"]["plan_sha256"] == plan_sha256(req["plan"])
+    assert not set(drafts).intersection(req["plan"]["steps"][0].get("optional_outputs", []))
+    assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
 
 
 @pytest.mark.asyncio
@@ -1402,3 +1436,925 @@ async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeyp
     assert '재배정: worker에게 단계 배정' in card['summary']
     assert 'Paper skill: fixture' in card['summary']
     assert len(card['summary']) <= 699
+
+
+# Compact report handoff after the evidence checkpoint (#1490).
+
+def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None):
+    from tests.test_research_report import REPORT, _hub
+    from labhq.runner import report_artifacts
+
+    hub = _hub()
+    req = hub.requests["r"]
+    req["research_options"] = {"compact_workflow": True}
+    reply = hub.reply
+    approve = hub.request_approval
+    if gateway:
+        hub.report_artifacts = gateway.report_artifacts
+
+    async def with_draft(task):
+        result = await reply(task)
+        if task.meta["kind"] != "step":
+            return result
+        [path] = task.meta["optional_outputs"]
+        assert path in task.meta["outputs"] and path not in task.meta["required_outputs"]
+        assert path in task.prompt
+        target = tmp_path / path
+        target.parent.mkdir(exist_ok=True)
+        table = result.outputs[0]
+        (tmp_path / table).write_bytes(b"effect\n0.25\n")
+        body = {
+            "empty": " \n",
+            "anchor": "Unknown claim [[claim:s1/wrong]].",
+            "table": f"The [measured effect]({table}) was 0.75 [[claim:s1/c1]].",
+            "table_missing": "The [measured effect](outputs/missing.tsv) was 0.25 [[claim:s1/c1]].",
+            "portable": REPORT + f"\n\nThe [measured effect](steps/s1/{table}) was 0.25 [[claim:s1/c1]].",
+        }.get(problem, REPORT)
+        data = b"\xff" if problem == "encoding" else body.encode("utf-8")
+        target.write_bytes(data)
+        hashes = {**result.output_sha256, table: sha256(b"effect\n0.25\n").hexdigest()}
+        if problem != "unhashed":
+            hashes[path] = sha256(data).hexdigest()
+        result = result.model_copy(update={
+            "workdir": str(tmp_path),
+            "outputs": [*result.outputs, *([] if problem == "missing" else [path])],
+            "output_sha256": hashes,
+        })
+        if remote:
+            assert task.meta[report_artifacts.RESULT_FIELD] == path
+            if remote == "changed_source":
+                (tmp_path / table).write_bytes(b"effect\n0.5\n")
+            payload = report_artifacts.collect(tmp_path, task.meta, result)
+            if remote == "changed_source":
+                assert table not in payload
+            elif remote == "missing_draft":
+                del payload[path]
+            elif remote == "changed_draft":
+                payload[path] = payload[table]
+            elif remote == "changed_table":
+                payload[table] = payload[path]
+            elif remote == "wrong_dispatch":
+                result = result.model_copy(update={"agent_id": "unrelated"})
+            target.unlink()
+            (tmp_path / table).unlink()
+            wire = {"type": "task.result", "task_id": task.id, "request_id": task.request_id, "runner_seq": 1,
+                    "data": {**result.model_dump(mode="json"), report_artifacts.RESULT_FIELD: payload}}
+            sent = asyncio.create_task(gateway.dispatch(task))
+            await asyncio.wait_for(gateway.runners["remote"].dispatched.wait(), 5)
+            await gateway.on_runner_message("remote", json.loads(json.dumps(wire)),
+                                            gateway.runners["remote"], "remote-1")
+            result = await asyncio.wait_for(sent, 5)
+            journal = gateway.store.runner_inbox("remote", "remote-1", 1)
+            assert journal["state"] == "completed" and report_artifacts.RESULT_FIELD not in journal["message"]["data"]
+            events = gateway.store.events_since(0)
+            assert any(event["type"] == "task.result" for event in events)
+            assert all(report_artifacts.RESULT_FIELD not in event.get("data", {}) for event in events)
+        return result
+
+    async def after_step(**kwargs):
+        if problem == "changed" and kwargs["kind"] == "research_evidence":
+            draft = analysis_draft.for_request(req)
+            (tmp_path / draft.path).write_bytes(b"Changed after collection [[claim:s1/c1]].")
+        return await approve(**kwargs)
+
+    hub.reply = with_draft
+    hub.request_approval = after_step
+    return hub
+
+
+@pytest.mark.asyncio
+async def test_compact_report_uses_collected_analyst_draft_without_cso_writing(tmp_path):
+    from tests.test_research_report import REPORT, _kinds
+
+    hub = _draft_hub(tmp_path)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert _kinds(hub) == ["plan", "step", "review"]
+    assert req["status"] == "done" and req["outcome"] == "research_reported"
+    assert hub.calls[1].agent_id == "worker"
+    assert req["report"].startswith(REPORT)
+    assert "no external cohort" in req["report"]
+    assert req["research_contract"]["report_check"] == {"anchors": 1, "problems": []}
+    assert req["research_contract"]["plan_sha256"] == plan_sha256(req["plan"])
+    assert analysis_draft.for_request(req).path in req["results"]["s1"]["output_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_inline_draft_uses_portable_result_links(tmp_path):
+    hub = _draft_hub(tmp_path, problem="portable")
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert "Use steps/<step_id>/outputs/<file> for every result link" in hub.calls[1].prompt
+    path = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
+    assert req["status"] == "done" and f"]({path})" in req["report"]
+    assert req["report_package"]["tables"][0]["path"] == path
+    assert req["report_consistency"]["checked"]["tables"] == [path]
+
+
+@pytest.mark.parametrize("case", ["linked", "mixed_evidence", "unreported", "wrong_file", "unanchored", "unsupported"])
+async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_path, case):
+    from labhq.research.independent_review import render_ledgers
+    from tests.test_research_report import _kinds
+
+    hub = _audit_hub(tmp_path)
+    hub.s.research.literal_source_check = True
+    hub.s.research.result_corrections = 0
+    plan = valid_plan()
+    summary, table, qc = ("outputs/run_summary.json", "outputs/sensitivity.tsv", "outputs/qc.tsv")
+    files = {summary: b'{"input_rows": 4321}\n', table: b'check\teffect\nsubset\t0.64\n',
+             qc: b'sample\treads\ncontrol\t80\n'}
+    if case == "mixed_evidence":
+        files[qc] = b"check\teffect\nalternative\t-0.2\n"
+    plan["steps"][0].update(outputs=[path for path in files if case != "unreported" or path != summary],
+                            claim_ids=["c1", "c2"])
+    base_reply = hub.reply
+    row_mark = "" if case == "unanchored" else " [[claim:s1/c2]]"
+    body = (f"[Input summary](steps/s1/{summary}) recorded 4,321 input rows [[claim:s1/c1]].\n\n"
+            f"| Check | Effect |\n| --- | --- |\n| [Subset](steps/s1/{table}) | 0.64{row_mark} |\n")
+    if case == "unanchored":
+        body += "\nThe initial count was 4,321.\n"
+    if case == "unsupported":
+        body += "\nThe method supports the proposed mechanism [[claim:s1/mechanism]].\n"
+
+    async def reply(task):
+        if task.meta["kind"] == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+        if task.meta["kind"] != "step":
+            return await base_reply(task)
+        ledger = _cp2_result(hub, task)
+        draft_path, = task.meta["optional_outputs"]
+        evidence_path = qc if case == "wrong_file" else summary
+        ledger["artifact_refs"] = [{"artifact_id": "a1", "path": evidence_path},
+                                   {"artifact_id": "a2", "path": table}]
+        claim, = ledger["claims"]
+        claim["statement"] = "The input contained 4,321 rows."
+        ledger["claims"].append({**claim, "id": "c2", "statement": "The subset effect was 0.64."})
+        ledger["links"].append({**ledger["links"][0], "claim_id": "c2", "evidence_id": "e2"})
+        evidence, = ledger["evidence"]
+        evidence.update(source={"artifact_id": "a1", "locator": "input_rows"},
+                        observation="Input row count",
+                        quantities=[{"id": "q1", "measure": "input row count", "value": 4321, "unit": "rows",
+                                     "conditions": ["before filtering"], "denominator": "whole input"}])
+        ledger["evidence"].append({**evidence, "id": "e2", "slots": [], "independence_group": "subset",
+                                   "source": {"artifact_id": "a2", "locator": "line 2, effect"},
+                                   "observation": "Subset effect",
+                                   "quantities": [{"id": "q2", "measure": "effect", "value": 0.64,
+                                                   "unit": "dimensionless", "conditions": ["subset"],
+                                                   "denominator": "subset samples"}]})
+        if case == "mixed_evidence":
+            ledger["claims"][1].update(status="partially_supported", status_reason="alternative disagrees")
+            ledger["artifact_refs"].append({"artifact_id": "a3", "path": qc})
+            subset = ledger["evidence"][1]
+            ledger["evidence"].append({**subset, "id": "e3", "independence_group": "alternative",
+                                       "source": {"artifact_id": "a3", "locator": "line 2, effect"},
+                                       "observation": "Alternative effect",
+                                       "quantities": [{**subset["quantities"][0], "id": "q3", "value": -0.2,
+                                                       "conditions": ["alternative"], "denominator": "alternative samples"}]})
+            ledger["links"].append({**ledger["links"][1], "evidence_id": "e3", "relation": "contradicts",
+                                    "rationale": "the alternative shows the opposite direction"})
+        written = {**files, draft_path: body.encode("utf-8")}
+        for path, data in written.items():
+            target = tmp_path / path
+            target.parent.mkdir(exist_ok=True)
+            target.write_bytes(data)
+        # Model the runner's declaration-based collection with real bytes, receipts and one unreported file.
+        collected = [path for path in task.meta["outputs"] if path in written]
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                          workdir=str(tmp_path), workdir_id=tmp_path.name, outputs=collected,
+                          output_sha256={path: sha256(written[path]).hexdigest() for path in collected},
+                          unreported_outputs=[path for path in written if path not in collected])
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    contract = req["research_contract"]
+    accepted = case in {"linked", "mixed_evidence"}
+    assert req["outcome"] == ("research_reported" if accepted else "report_incomplete")
+    assert _kinds(hub) == ["plan", "step", "review"]
+    cp2 = contract["checkpoints"]["cp2"]
+    states = {check["evidence_id"]: check["state"] for check in cp2["literal_checks"]}
+    expected = {"unreported": "unverified", "wrong_file": "mismatch"}.get(case, "matched")
+    assert states == {"e1": expected, "e2": "matched", **({"e3": "matched"} if case == "mixed_evidence" else {})}
+    assert cp2["unreported_outputs"]["s1"] == ([summary] if case == "unreported" else [])
+    problems = contract["report_check"]["problems"]
+    assert problems == cp2["independent_audit"]["checks"]["claims"]["problems"]
+    result = TaskResult.model_validate(req["results"]["s1"])
+    context = render_ledgers(req["plan"]["steps"], {"s1": result}, {"s1": result.structured},
+                             cp2["refused_evidence"], cp2["unsupported_claims"], cp2["artifact_sha256"], 2000,
+                             staged=True)
+    assert "chars clipped" in context
+    marks = context.split("Available claim anchors (read their evidence before use):\n", 1)[1].split("Ledger:\n", 1)[0]
+    marks = dict(line.split(" ", 1) for line in marks.splitlines())
+    linked_evidence = json.loads(marks["[[claim:s1/c2]]"])["evidence"]
+    assert linked_evidence["e2"]["artifact_path"] == "inputs/s1/sensitivity.tsv"
+    assert linked_evidence["e2"]["locator"] == "line 2, effect"
+    assert linked_evidence["e2"]["relation"] == "supports"
+    if case == "mixed_evidence":
+        assert linked_evidence["e3"]["artifact_path"] == "inputs/s1/qc.tsv"
+        assert linked_evidence["e3"]["locator"] == "line 2, effect"
+        assert linked_evidence["e3"]["relation"] == "contradicts"
+    assert ("[[claim:s1/c1]]" in marks) == (expected == "matched")
+    if accepted:
+        assert problems == []
+        assert cp2["artifact_sha256"]["s1/a1"] == sha256(files[summary]).hexdigest()
+        assert cp2["artifact_sha256"]["s1/a2"] == sha256(files[table]).hexdigest()
+        assert req["report_consistency"]["checked"]["tables"] == [f"steps/s1/{table}"]
+    elif case in {"unreported", "wrong_file"}:
+        assert len(problems) == 1 and problems[0].startswith("[[claim:s1/c1]]:")
+        assert [row["evidence_id"] for row in cp2["refused_evidence"]] == ["e1"]
+    elif case == "unanchored":
+        assert len(problems) == 2
+        assert problems[0].startswith("numeric prose needs a claim anchor")
+        assert problems[1].startswith("table row needs a claim anchor")
+    else:
+        assert len(problems) == 1 and "mechanism is not in step s1's ledger" in problems[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("remote", "audit"), [
+    ("complete", False), ("missing_draft", False), ("changed_draft", False), ("changed_source", False),
+    ("changed_table", False), ("wrong_dispatch", False), ("complete", True),
+])
+async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path, remote, audit):
+    from labhq.gateway.server import Hub
+    from tests.test_research_report import ACCEPT
+
+    class Socket:
+        def __init__(self):
+            self.dispatched = asyncio.Event()
+
+        async def send_text(self, frame):
+            if json.loads(frame)["type"] == "task.dispatch":
+                self.dispatched.set()
+
+    settings = _settings()
+    settings.gateway.state_dir = str(tmp_path / "gateway")
+    gateway = Hub(settings)
+    runner_dir = tmp_path / "runner"
+    runner_dir.mkdir()
+    try:
+        gateway.register_runner("remote", Socket(), [{"id": "worker"}], incarnation="remote-1")
+        hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway)
+        if audit:
+            hub.requests["r"]["research_options"]["audit_before_cp2"] = True
+            reply = hub.reply
+
+            async def audit_reply(task):
+                if task.meta["kind"] != "review":
+                    return await reply(task)
+                assert [card["kind"] for card in hub.approvals] == ["research_plan"]
+                assert "Automated checks of the draft" in task.prompt
+                assert task.prompt.index("Readable files:") < task.prompt.index("Verified draft copy.")
+                assert "The [measured effect](steps/s1/" in task.prompt
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ACCEPT)
+
+            hub.reply = audit_reply
+        await Orchestrator(hub).run_request("r")
+        req = hub.requests["r"]
+        task_id = req["results"]["s1"]["task_id"]
+        files = gateway.report_artifacts(task_id) or {}
+        assert gateway.report_artifacts("unrelated") is None
+    finally:
+        gateway.store.close()
+    table = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
+    assert not list((runner_dir / "outputs").iterdir())
+    if remote == "complete":
+        assert files[table.removeprefix("steps/s1/")] == "effect\n0.25\n"
+        assert req["status"] == "done" and req["outcome"] == "research_reported"
+        assert req["report_consistency"]["checked"]["tables"] == [table]
+        assert f"]({table})" in req["report"]
+        if audit:
+            checks = hub.approvals[1]["detail"]["independent_audit"]["checks"]
+            assert checks["table_consistency"]["checked"]["tables"] == [table]
+    elif remote.endswith("_draft") or remote == "wrong_dispatch":
+        assert analysis_draft.for_request(req).path not in files
+        assert req["status"] == "failed" and req["outcome"] == "research_failed"
+        assert req["research_contract"]["failure"]["stage"] == "analysis_draft"
+    else:
+        assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
+        assert req["report_consistency"]["checked"]["unread_tables"] == [table]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("problem", "error"), [
+    ("missing", "did not deliver"),
+    ("unhashed", "no collected SHA-256"),
+    ("changed", "differs from the collected SHA-256"),
+    ("empty", "is empty"),
+    ("encoding", "unreadable as UTF-8"),
+    ("anchor", None),
+    ("table", None),
+    ("table_missing", None),
+])
+async def test_compact_report_rejects_missing_or_invalid_draft(tmp_path, problem, error):
+    from tests.test_research_report import _kinds
+
+    hub = _draft_hub(tmp_path, problem=problem)
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed"
+    assert "synthesis" not in _kinds(hub)
+    if error:
+        assert req["outcome"] == "research_failed"
+        assert req["research_contract"]["failure"]["stage"] == "analysis_draft"
+        assert error in req["error"]
+    else:
+        assert req["outcome"] == "report_incomplete"
+        if problem == "anchor":
+            assert any("claim wrong" in line for line in req["research_contract"]["report_check"]["problems"])
+        elif problem == "table":
+            assert req["research_contract"]["report_consistency"]["findings"][0]["kind"] == "number"
+        else:
+            assert req["research_contract"]["report_consistency"]["checked"]["unread_tables"] == [
+                "outputs/missing.tsv"]
+
+
+@pytest.mark.asyncio
+async def test_compact_resumes_the_saved_draft_and_review(tmp_path):
+    from tests.test_research_report import _kinds
+
+    hub = _draft_hub(tmp_path)
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    report, saved_review = req["report"], req["research_contract"]["review"]
+    _interrupt(hub)
+    calls, approvals = len(hub.calls), len(hub.approvals)
+
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    req = hub.requests["r"]
+    assert _kinds(hub, calls) == [] and hub.approvals[approvals:] == []
+    assert req["status"] == "done" and req["report"] == report
+    assert req["research_contract"]["review"] == saved_review
+
+
+def _audit_hub(tmp_path, *, problem=None, malformed=False):
+    from tests.test_research_report import ACCEPT
+
+    hub = _draft_hub(tmp_path, problem=problem)
+    hub.s.runner.workspace_root = str(tmp_path.parent)
+    hub.requests["r"]["research_options"]["audit_before_cp2"] = True
+    base_reply = hub.reply
+
+    async def reply(task):
+        if task.meta["kind"] != "review":
+            result = await base_reply(task)
+            return (result.model_copy(update={"workdir_id": tmp_path.name})
+                    if task.meta["kind"] == "step" else result)
+        assert task.agent_id == "sci_reviewer"
+        assert "The evidence is awaiting the PI's CP2 decision." in task.prompt
+        assert "First open the collected analysis code and result tables" in task.prompt
+        assert task.prompt.index("Readable files:") < task.prompt.index("Draft (open after")
+        assert task.meta["upstream_dirs"] == [str(tmp_path)]
+        assert "Verified draft copy." not in task.prompt
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                          structured={} if malformed else ACCEPT)
+
+    hub.reply = reply
+    return hub
+
+
+@pytest.mark.parametrize(("case", "attempts", "status"), [
+    ("resolved", 1, "resolved"), ("unclassified", 1, "resolved"), ("limit", 2, "limit"),
+    ("reference_drift", 1, "resolved"),
+    ("no_session", 0, "session_unavailable"),
+    ("new_session", 1, "session_unavailable"), ("bad_ledger", 1, "invalid_result"),
+    ("interrupted", 1, "interrupted"), ("budget", 1, "budget_exceeded"),
+    ("no_engine_cap", 0, "budget_unavailable"),
+    ("design", 0, "ineligible"), ("off", 0, None), ("unset", 0, None), ("audit_off", 0, None),
+])
+async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, status):
+    from labhq.research.contract import validate_research_result
+    from labhq.runner.step_handoff import artifact_contract_for
+    from labhq.runner.step_inputs import stage_inputs
+    from tests.test_research_report import ACCEPT, REVISE, REPORT, _kinds
+
+    original = tmp_path / "original"
+    original.mkdir()
+    hub = _draft_hub(original)
+    hub.s.runner.workspace_root = str(tmp_path)
+    hub.supports_resume = lambda agent_id: case != "no_session" and agent_id == "worker"
+    if case == "no_engine_cap":
+        hub.agents["worker"]["engine"] = "codex"
+    req = hub.requests["r"]
+    req["research_options"]["audit_before_cp2"] = case != "audit_off"
+    if case != "unset":
+        req["research_options"]["audit_repair_before_cp2"] = case != "off"
+    hub.s.research.audit_repair_before_cp2 = case in {"off", "unset"}
+    monkeypatch.setenv("LABHQ_AUDIT_REPAIR_BEFORE_CP2", "1" if hub.s.research.audit_repair_before_cp2 else "0")
+    if case == "reference_drift":
+        source = tmp_path / "live-reference"
+        source.mkdir()
+        (source / "data.tsv").write_text("original sample", encoding="utf-8")
+        req["references"] = [{"kind": "path", "value": str(source)}]
+    if case == "budget":
+        req["budget_usd"] = 4
+    base_reply = hub.reply
+    generations = []
+    audits = []
+    resolved = case in {"resolved", "unclassified", "reference_drift"}
+
+    def save_manifest(task, result):
+        manifest = {"task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}}}
+        (Path(result.workdir) / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return (await base_reply(task)).model_copy(update={"cost_usd": 0})
+        if kind == "step":
+            if case == "reference_drift":
+                assert task.meta["reference_dirs"] == [str(source)]
+            result = (await base_reply(task)).model_copy(update={"session_id": "original-session",
+                                                                 "workdir_id": original.name, "cost_usd": 0})
+            result.structured = validate_research_result(result.structured, plan=req["plan"]).model_dump(mode="json")
+            save_manifest(task, result)
+            generations.append(result)
+            return result
+        if kind == "review":
+            latest = generations[-1]
+            audits.append(latest)
+            if case == "reference_drift" and len(audits) == 1:
+                (source / "data.tsv").write_text("changed sample", encoding="utf-8")
+            if case != "audit_off":
+                assert latest.workdir in task.meta["upstream_dirs"]
+            if len(generations) > 1:
+                assert "review" not in req["research_contract"]
+                assert task.meta["parent_task"] == latest.task_id
+                assert latest.output_sha256[latest.outputs[0]] in task.prompt
+            findings = ACCEPT if resolved and len(generations) == 2 else REVISE
+            issues = [*findings["issues"]] if findings == ACCEPT else [*findings["issues"], *ACCEPT["issues"]]
+            if "requires_plan_change" in task.output_schema["properties"]["issues"]["items"]["properties"]:
+                if case != "unclassified" or len(audits) > 1:
+                    issues = [{**row, "requires_plan_change": case == "design"} for row in issues]
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
+                              structured={**findings, "issues": issues}, cost_usd=0)
+
+        assert kind == "audit_repair" and task.agent_id == "worker"
+        assert task.resume_session_id == "original-session" and task.budget_usd == (4 if case == "budget" else 5)
+        assert task.meta["parent_task"] == generations[-1].task_id and not task.meta.get("workdir")
+        assert "add the column" in task.prompt and "no external cohort" not in task.prompt
+        assert "say donor-level" not in task.prompt and artifact_contract_for(task)
+        assert not task.meta.get("reference_dirs") and not task.meta.get("project_dirs")
+        if case == "reference_drift":
+            assert str(source) not in task.prompt and "staged copies" in task.prompt
+        assert req["research_contract"]["audit_repair"]["status"] == "pending"
+        assert [item["kind"] for item in hub.approvals] == ["research_plan"]
+        if case == "interrupted":
+            req["results"] = {"s1": generations[0].model_dump(mode="json")}
+            raise asyncio.CancelledError
+        last = generations[-1]
+        folder = tmp_path / f"repair{len(generations)}"
+        folder.mkdir()
+        ws = SimpleNamespace(dir=folder, task=task)
+        _, unavailable = stage_inputs(ws, task.meta["upstream_artifacts"], tmp_path, [], [], 1_000_000, 1_000_000)
+        assert not unavailable
+        path, draft_path = task.meta["required_outputs"]
+        assert (folder / "inputs" / "s1" / path.removeprefix("outputs/")).is_file()
+        data = {path: f"effect\n0.{len(generations)}\n".encode(),
+                draft_path: (REPORT + f"\n\nRevision {len(generations)}.").encode()}
+        (folder / "outputs").mkdir()
+        for name, body in data.items():
+            (folder / name).write_bytes(body)
+        ledger = copy.deepcopy(last.structured)
+        ledger["claims"][0]["statement"] = f"Donor-level effect confirmed in revision {len(generations)}."
+        if case == "bad_ledger":
+            ledger["plan_sha256"] = "b" * 64
+        result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                            session_id="other-session" if case == "new_session" else last.session_id,
+                            workdir=str(folder), workdir_id=folder.name, outputs=list(data),
+                            output_sha256={name: sha256(body).hexdigest() for name, body in data.items()},
+                            cost_usd=4.01 if case == "budget" else 1)
+        save_manifest(task, result)
+        if case not in {"new_session", "bad_ledger", "budget"}:
+            generations.append(result)
+        return result
+
+    hub.reply = reply
+    if case == "interrupted":
+        with pytest.raises(asyncio.CancelledError):
+            await Orchestrator(hub).run_request("r")
+        _interrupt(hub)
+        await Orchestrator(hub).run_request("r", resume=True)
+    else:
+        await Orchestrator(hub).run_request("r")
+
+    contract = req["research_contract"]
+    assert contract["plan_sha256"] == plan_sha256(req["plan"])
+    assert _kinds(hub).count("audit_repair") == attempts
+    assert len(audits) == len(generations) + (case == "unclassified")
+    latest = generations[-1]
+    assert req["results"]["s1"]["task_id"] == latest.task_id
+    approved = hub.approvals[1]
+    assert approved["kind"] == "research_evidence"
+    detail = approved["detail"]
+    audit = detail.get("independent_audit", {})
+    assert audit.get("repair") == ({"attempts": attempts, "status": status} if status else None)
+    if case != "audit_off":
+        assert audit == contract["checkpoints"]["cp2"]["independent_audit"]
+        assert audit["draft_sha256"] == sha256(detail["analysis_draft"].encode()).hexdigest()
+        assert detail["results"]["s1"]["claims"][0]["statement"] == latest.structured["claims"][0]["statement"]
+        assert [x["priority"] for x in audit["issues"]] == (["P2"] if resolved else ["P3", "P1", "P2"])
+        assert detail["analysis_draft"].endswith(f"Revision {attempts}.") == (resolved or case == "limit")
+    assert (original / generations[0].outputs[0]).read_bytes() == b"effect\n0.25\n"
+    if resolved or case == "limit":
+        calls, approvals = len(hub.calls), len(hub.approvals)
+        _interrupt(hub)
+        await Orchestrator(hub).run_request("r", resume=True)
+        assert hub.calls[calls:] == [] and hub.approvals[approvals:] == []
+
+
+@pytest.mark.parametrize("option", [None, False, True])
+async def test_audit_option_orders_checks_review_and_cp2(tmp_path, monkeypatch, option):
+    from tests.test_research_report import ACCEPT, _kinds
+
+    enabled = option is True
+    hub = (_audit_hub if enabled else _draft_hub)(tmp_path, problem="table")
+    req = hub.requests["r"]
+    if option is False:
+        req["research_options"]["audit_before_cp2"] = False
+    hub.s.research.audit_before_cp2 = not enabled
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "0" if enabled else "1")
+    original = hub.request_approval
+
+    async def approval(**kwargs):
+        if kwargs["kind"] == "research_evidence":
+            assert _kinds(hub) == ["plan", "step"] + (["review"] if enabled else [])
+        return await original(**kwargs)
+
+    hub.request_approval = approval
+    await Orchestrator(hub).run_request("r")
+
+    contract = req["research_contract"]
+    assert contract["plan_sha256"] == plan_sha256(req["plan"])
+    assert _kinds(hub) == ["plan", "step", "review"]
+    detail = hub.approvals[1]["detail"]
+    cp2 = contract["checkpoints"]["cp2"]
+    assert ("independent_audit" in detail) is enabled
+    assert ("independent_audit" in cp2) is enabled
+    assert req["research_options"].get("audit_before_cp2") is option
+    if enabled:
+        card = detail["independent_audit"]
+        assert card == cp2["independent_audit"]
+        assert card["issues"] == ACCEPT["issues"] and card["verdict"] == "accept"
+        assert card["checks"]["claims"] == {"anchors": 1, "problems": []}
+        assert card["checks"]["table_consistency"]["findings"][0]["kind"] == "number"
+        assert card["draft_sha256"] == sha256(detail["analysis_draft"].encode()).hexdigest()
+        assert '"kind": "number"' in hub.calls[-1].prompt
+
+
+@pytest.mark.parametrize("changed", [None, "artifact", "draft", "plan_receipt"])
+async def test_pre_cp2_audit_reuse_requires_all_hashes(tmp_path, changed):
+    from tests.test_research_report import _kinds
+
+    hub = _audit_hub(tmp_path, problem="portable")
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    contract = req["research_contract"]
+    old = copy.deepcopy(contract["checkpoints"]["cp2"]["independent_audit"])
+    result = req["results"]["s1"]
+    path = (result["outputs"][0] if changed == "artifact" else
+            analysis_draft.for_request(req).path if changed == "draft" else None)
+    if path:
+        target = tmp_path / path
+        data = target.read_bytes() + b"\n"
+        target.write_bytes(data)
+        result["output_sha256"][path] = sha256(data).hexdigest()
+    if changed == "plan_receipt":
+        contract["review"]["plan_sha256"] = "a" * 64
+    calls, approvals = len(hub.calls), len(hub.approvals)
+    _interrupt(hub)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    contract = req["research_contract"]
+    assert _kinds(hub, calls) == (["review"] if changed else [])
+    reopened = changed in {"artifact", "draft"}
+    assert [card["kind"] for card in hub.approvals[approvals:]] == (["research_evidence"] if reopened else [])
+    assert (contract["checkpoints"]["cp2"]["independent_audit"] != old) is reopened
+    assert contract["review"]["plan_sha256"] == plan_sha256(req["plan"])
+
+
+@pytest.mark.parametrize("failure", ["missing", "unparsed"])
+async def test_cp2_waits_for_a_completed_audit(tmp_path, failure):
+    from tests.test_research_report import _kinds
+
+    hub = _audit_hub(tmp_path, problem=failure, malformed=failure == "unparsed")
+    await Orchestrator(hub).run_request("r")
+
+    assert [card["kind"] for card in hub.approvals] == ["research_plan"]
+    assert _kinds(hub) == ["plan", "step"] + (["review", "review"] if failure == "unparsed" else [])
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and req["research_contract"]["failure"]["stage"] == "independent_audit"
+
+
+async def test_cached_audit_rejects_changed_file_with_old_hash(tmp_path):
+    hub = _audit_hub(tmp_path, problem="portable")
+    await Orchestrator(hub).run_request("r")
+    req = hub.requests["r"]
+    path = req["results"]["s1"]["outputs"][0]
+    (tmp_path / path).write_bytes(b"effect\n0.50\n")
+    _interrupt(hub)
+    await Orchestrator(hub).run_request("r", resume=True)
+
+    assert req["status"] == "failed" and "Collected output changed:" in req["error"]
+    assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
+
+
+async def test_pre_cp2_audit_keeps_pi_notes_in_review_and_reader_report(tmp_path):
+    from tests.test_research_report import _kinds
+
+    hub = _audit_hub(tmp_path)
+    req = hub.requests["r"]
+    earlier = "Use the same comparison as the earlier round."
+    latest = "Limit the conclusion to the observed cohort."
+    original_reply, original_approval = hub.reply, hub.request_approval
+
+    async def reply(task):
+        if task.meta["kind"] == "step":
+            assert earlier in task.prompt
+        if task.meta["kind"] == "review":
+            assert earlier in task.prompt and latest not in task.prompt
+        return await original_reply(task)
+
+    async def approval(**kwargs):
+        answer = await original_approval(**kwargs)
+        if kwargs["kind"] == "research_plan":
+            req["research_contract"]["rounds"] = [{
+                "round": 1, "cp2": {"decision": "approved", "note": earlier},
+            }]
+        if kwargs["kind"] == "research_evidence":
+            assert "승인 메모는 보고서 본문에 인용합니다" in kwargs["summary"]
+            answer["note"] = latest
+        return answer
+
+    hub.reply, hub.request_approval = reply, approval
+    await Orchestrator(hub).run_request("r")
+
+    assert _kinds(hub) == ["plan", "step", "review"]
+    assert req["outcome"] == "research_reported"
+    assert f"## PI 승인 메모\n\n> {latest}" in req["report"]
+    assert req["research_contract"]["checkpoints"]["cp2"]["note"] == latest
+    assert latest not in hub.approvals[1]["detail"]["analysis_draft"]
+
+
+async def test_cp2_revision_carries_prior_audit_p1_to_new_plan_and_review(tmp_path):
+    from tests.test_research_report import APPROVE, REVISE, _kinds
+
+    hub = _audit_hub(tmp_path)
+    note = "Add a sensitivity check."
+    p1 = next(issue for issue in REVISE["issues"] if issue["priority"] == "P1")
+    decisions = iter([CP1, {"approved": False, "choice": "revise", "note": note}, CP1, APPROVE])
+    original_reply = hub.reply
+
+    async def reply(task):
+        result = await original_reply(task)
+        if task.meta["kind"] == "review" and len(hub.approvals) == 1:
+            return result.model_copy(update={"structured": REVISE})
+        if len(hub.approvals) >= 2 and task.meta["kind"] in {"plan", "review"}:
+            assert note in task.prompt and p1["problem"] in task.prompt
+        return result
+
+    async def approval(**kwargs):
+        hub.approvals.append(kwargs)
+        return {**next(decisions), "approval_id": f"a{len(hub.approvals)}", "decided_at": 1.0}
+
+    hub.reply, hub.request_approval = reply, approval
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported", req.get("error")
+    assert _kinds(hub) == ["plan", "step", "review", "plan", "step", "review"]
+    assert [card["kind"] for card in hub.approvals] == [
+        "research_plan", "research_evidence", "research_plan", "research_evidence",
+    ]
+    assert req["research_contract"]["continuation"]["p1_issues"] == [p1]
+    assert req["research_contract"]["rounds"][0]["cp2"]["independent_audit"]["verdict"] == "revise"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved", [None, {"compact_workflow": False}])
+async def test_legacy_report_and_plan_hash_follow_frozen_options(tmp_path, saved):
+    from tests.test_research_report import REPORT, _hub, _kinds
+
+    compact = _draft_hub(tmp_path)
+    await Orchestrator(compact).run_request("r")
+    legacy = _hub()
+    legacy.s.research.compact_workflow = True
+    if saved is not None:
+        legacy.requests["r"]["research_options"] = saved
+    await Orchestrator(legacy).run_request("r")
+
+    req = legacy.requests["r"]
+    assert _kinds(legacy) == ["plan", "step", "review", "synthesis"]
+    assert req["status"] == "done" and req["report"].startswith(REPORT)
+    assert req["plan"] == compact.requests["r"]["plan"]
+    assert req["research_contract"]["plan_sha256"] == compact.requests["r"]["research_contract"]["plan_sha256"]
+
+
+def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
+    plan = valid_plan(steps=3)
+    preparation, analysis, validation = plan["steps"]
+    preparation["phase"] = "evidence"
+    analysis["depends_on"] = ["s1"]
+    validation.update(phase="validation", depends_on=["s2"])
+    plan["steps"] = [validation, analysis, preparation]
+    req = {"plan": plan, "research_options": {"compact_workflow": True}, "research_contract": {"round": 1}}
+
+    draft = analysis_draft.for_request(req)
+    assert draft.step_id == "s2" and not draft.inline
+    assert "Write the draft only." in draft.prompt() and "Write the draft only." not in draft.prompt(repairing=True)
+    req["research_contract"]["round"] = 2
+    assert analysis_draft.for_request(req).path != draft.path
+    assert list(analysis_draft.new_round_rerun(req, plan)) == ["s2"]
+    analysis["phase"] = "evidence"
+    assert analysis_draft.for_request(req).step_id == "s3" and analysis_draft.for_request(req).inline
+    plan["branches"] = [{"id": "a"}]
+    assert analysis_draft.for_request(req) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("shape", "resumable", "remote", "approve_cp2", "audit"), [
+    ("validation_after_analysis", True, False, True, False),
+    ("validation_after_analysis", True, True, True, False),
+    ("parallel", True, False, True, False), ("parallel", False, False, True, False),
+    ("parallel", True, False, False, False), ("validation_after_analysis", True, False, True, True),
+])
+async def test_draft_waits_for_every_step_and_keeps_the_analysis_session(tmp_path, shape, resumable, remote,
+                                                                       approve_cp2, audit):
+    from types import SimpleNamespace
+
+    from labhq.runner import report_artifacts
+    from labhq.runner.step_handoff import artifact_contract_for
+    from labhq.runner.step_inputs import stage_inputs
+    from tests.test_research_report import ACCEPT, REPORT, _hub, _kinds
+
+    hub = _hub()
+    req = hub.requests["r"]
+    req["research_options"] = {"compact_workflow": True}
+    if audit:
+        req["research_options"]["audit_before_cp2"] = True
+        hub.s.runner.workspace_root = str(tmp_path)
+    hub.supports_resume = lambda agent_id: resumable and agent_id == "worker"
+    saved = {}
+
+    def save_request(rid):
+        contract = hub.requests[rid].get("research_contract") or {}
+        saved["cp2"] = copy.deepcopy((contract.get("checkpoints") or {}).get("cp2"))
+        saved["draft"] = copy.deepcopy(contract.get("analysis_draft"))
+
+    hub.save_request = save_request
+    approve = hub.request_approval
+
+    async def approval(**kwargs):
+        decision = await approve(**kwargs)
+        if kwargs["kind"] == "research_evidence" and not approve_cp2:
+            decision.update(approved=False, choice="deny", note="Do not proceed")
+        return decision
+
+    hub.request_approval = approval
+    received = {}
+    if remote:
+        hub.report_artifacts = received.get
+    plan = valid_plan(steps=2)
+    if shape == "validation_after_analysis":
+        plan["steps"][1].update(phase="validation", depends_on=["s1"], outputs=list(plan["steps"][0]["outputs"]))
+    base_reply = hub.reply
+    later_finding = "Sensitivity test reproduced the estimate [[claim:s2/c2]]."
+    old_figure = "![Earlier conclusion](steps/s1/outputs/graphical_abstract.svg)"
+
+    async def reply(task):
+        kind = task.meta["kind"]
+        if kind == "plan":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=plan)
+        if kind == "analysis_draft":
+            assert task.resume_session_id == "analysis-s1"
+            assert not task.meta.get("workdir")
+            if audit:
+                assert saved["cp2"] is None
+            else:
+                assert saved["cp2"] == req["research_contract"]["checkpoints"]["cp2"]
+                assert saved["cp2"]["decision"] == "approved"
+            assert "Sensitivity test reproduced the estimate" in task.context
+            assert "### s1" in task.context and "### s2" in task.context
+            assert "Available claim anchors (read their evidence before use):\n[[claim:s1/c1]]" in task.context
+            assert "Available claim anchors (read their evidence before use):\n[[claim:s2/c2]]" in task.context
+            [path] = task.meta["outputs"]
+            target = tmp_path / "report" / path
+            target.parent.mkdir(parents=True)
+            assert artifact_contract_for(task)
+            inputs = task.meta["upstream_artifacts"]
+            assert set(inputs) == {"s1", "s2"}
+            _, refused = stage_inputs(SimpleNamespace(task=task, dir=tmp_path / "report"),
+                                      inputs, tmp_path, [], [], 1024, 4096)
+            assert not refused
+            for sid, row in inputs.items():
+                table = row["outputs"][0].removeprefix("outputs/")
+                assert f"inputs/{sid}/{table}" in task.context
+                assert (tmp_path / "report" / "inputs" / sid / table).read_bytes() == sid.encode()
+            binding = next(line for line in task.context.splitlines() if line.startswith("[[claim:s2/c2]] "))
+            evidence_path = json.loads(binding.split(" ", 1)[1])["evidence"]["e2"]["artifact_path"]
+            producer = "s1" if shape == "validation_after_analysis" else "s2"
+            assert evidence_path == f"inputs/{producer}/{inputs[producer]['outputs'][0].removeprefix('outputs/')}"
+            assert (tmp_path / "report" / evidence_path).read_bytes() == producer.encode()
+            data = f"{REPORT}\n\n{old_figure}\n\n{later_finding}".encode("utf-8")
+            if audit:
+                data = b"\xef\xbb\xbf" + data
+            target.write_bytes(data)
+            result = TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, workdir=str(tmp_path / "report"),
+                                session_id=task.resume_session_id, text=f"Draft saved at {path}", outputs=[path],
+                                output_sha256={path: sha256(data).hexdigest()})
+            if remote:
+                payload = report_artifacts.collect(tmp_path / "report", task.meta, result)
+                received[task.id] = report_artifacts.receive(payload, task.meta, result)
+                target.unlink()
+            return result
+        if kind != "step":
+            if kind == "review":
+                receipt = req["research_contract"]["analysis_draft"]
+                assert saved["draft"] == receipt
+                assert receipt["result"]["session_id"] == "analysis-s1"
+                assert receipt["path"] in receipt["result"]["output_sha256"]
+                if audit:
+                    assert saved["cp2"] is None and [card["kind"] for card in hub.approvals] == ["research_plan"]
+                    assert receipt["result"]["output_sha256"][receipt["path"]] in task.prompt
+                    return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ACCEPT)
+            return await base_reply(task)
+        assert not task.meta["optional_outputs"]
+        sid = task.meta["step_id"]
+        ledger = _cp2_result(hub, task)
+        [path] = task.meta["required_outputs"]
+        if sid == "s2":
+            ledger["claims"][0].update(id="c2", statement="Sensitivity test reproduced the estimate.")
+            ledger["links"][0]["claim_id"] = "c2"
+            ledger["evidence"][0].update(id="e2", slots=["e2"])
+            ledger["links"][0]["evidence_id"] = "e2"
+        ledger["artifact_refs"][0]["path"] = path
+        if sid == "s2" and shape == "validation_after_analysis":
+            ledger["artifact_refs"][0]["path"] = f"s1/{path}" if audit else str(tmp_path / "s1" / path)
+        workdir = tmp_path / sid
+        (workdir / path).parent.mkdir(parents=True)
+        (workdir / path).write_bytes(sid.encode())
+        hashes = {path: sha256(sid.encode()).hexdigest()}
+        if sid == "s1":
+            figure = "outputs/graphical_abstract.svg"
+            (workdir / figure).write_bytes(b"<svg/>")
+            hashes[figure] = sha256(b"<svg/>").hexdigest()
+        (workdir / "manifest.json").write_text(json.dumps({
+            "task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}},
+        }), encoding="utf-8")
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ledger,
+                          workdir=str(workdir), workdir_id=sid if audit else None,
+                          outputs=list(hashes), output_sha256=hashes,
+                          session_id=f"analysis-{sid}")
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    if not approve_cp2:
+        assert _kinds(hub) == ["plan", "step", "step"]
+        assert req["outcome"] == "evidence_rejected" and req["status"] == "failed"
+        assert saved["cp2"]["choice"] == "deny" and saved["draft"] is None
+    elif resumable:
+        assert _kinds(hub) == ["plan", "step", "step", "analysis_draft", "review"], req.get("error")
+        assert req["status"] == "done" and later_finding in req["report"]
+        assert old_figure not in req["report"] and not req["report_package"]["figures"]
+        assert "outputs/graphical_abstract.svg" in req["results"]["s1"]["outputs"]
+        assert req["research_contract"]["report_check"] == {"anchors": 2, "problems": []}
+        report = req["report"]
+        receipt = req["research_contract"]["analysis_draft"]
+        if audit:
+            card = hub.approvals[1]["detail"]
+            assert card["analysis_draft"].startswith("\ufeff") and old_figure in card["analysis_draft"]
+            draft_hash = sha256(card["analysis_draft"].encode("utf-8")).hexdigest()
+            assert card["independent_audit"]["draft_sha256"] == draft_hash
+            assert card["independent_audit"] == saved["cp2"]["independent_audit"]
+        if shape == "parallel":
+            (tmp_path / "report" / receipt["path"]).write_bytes(b"Changed after the review.")
+        cp2_receipt = saved["cp2"]
+        req["research_contract"]["checkpoints"]["cp2"] = json.loads(json.dumps(cp2_receipt))
+        req["research_contract"]["analysis_draft"] = json.loads(json.dumps(saved["draft"]))
+        _interrupt(hub)
+        calls, approvals = len(hub.calls), len(hub.approvals)
+        hub.supports_resume = lambda _: False
+        await Orchestrator(hub).run_request("r", resume=True)
+        req = hub.requests["r"]
+        assert _kinds(hub, calls) == [] and hub.approvals[approvals:] == []
+        assert req["research_contract"]["checkpoints"]["cp2"] == cp2_receipt
+        if shape == "parallel":
+            assert req["status"] == "failed" and "differs from the collected SHA-256" in req["error"]
+        else:
+            assert req["status"] == "done" and req["report"] == report
+        if remote:
+            received[receipt["result"]["task_id"]][receipt["path"]] = "Y2hhbmdlZA=="
+            _interrupt(hub)
+            await Orchestrator(hub).run_request("r", resume=True)
+            assert _kinds(hub, calls) == []
+            assert req["status"] == "failed" and "differs from the collected SHA-256" in req["error"]
+    else:
+        assert _kinds(hub) == ["plan", "step", "step"]
+        assert req["status"] == "failed" and "cannot be resumed" in req["error"]

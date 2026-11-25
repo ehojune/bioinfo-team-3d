@@ -64,6 +64,9 @@ def _hub(*, review=ACCEPT, report=REPORT, artifact_path=None, failed_lookup=Fals
                               outputs=[path] if kind == "step" else [],
                               output_sha256={path: "a" * 64})
         if kind == "review":
+            receipt = hub.requests["r"]["research_contract"]["checkpoints"]["cp2"]
+            assert receipt["decision"] == "approved"
+            assert "the PI approved its evidence at CP2" in task.prompt
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=review)
         if kind == "synthesis":
             text = reports.pop(0) if reports else report  # one text per synthesis call, corrections included
@@ -267,6 +270,9 @@ async def test_unreadable_research_review_is_asked_twice_then_ends():
 
     req = hub.requests["r"]
     assert _kinds(hub) == ["plan", "step", "review", "review"]
+    first, second = hub.calls[-2:]
+    assert (first.meta["parse_attempt"], second.meta["parse_attempt"]) == (1, 2)
+    assert second.prompt.startswith(first.prompt + "\n\nReturn ONLY a JSON object")
     assert req["outcome"] == "research_review_unparsed" and req["status"] == "failed"
     assert "review" not in req["research_contract"]
 

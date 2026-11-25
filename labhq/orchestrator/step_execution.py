@@ -271,3 +271,12 @@ def card_detail(plan, request=None, settings=None):
         if warning:
             detail["hpc_transfer_warning"] = warning
     return detail
+
+
+def upstream_inputs(results, step_ids):
+    """Dispatch the same hash-bound inputs for a DAG turn and a report handoff."""
+    artifacts = {sid: {"task_id": result.task_id, "workdir": result.workdir,
+                       "outputs": list(result.outputs), "output_sha256": dict(result.output_sha256)}
+                 for sid in step_ids if (result := results.get(sid)) and result.ok and result.workdir and result.outputs}
+    return {"upstream_artifacts": artifacts, "upstream_dirs": [row["workdir"] for row in artifacts.values()],
+            "upstream_steps": {sid: row["workdir"] for sid, row in artifacts.items()}}

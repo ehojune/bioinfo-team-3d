@@ -41,6 +41,7 @@ from ..ask_results import ask_result, read_ask_results, rejected_step
 from ..bioinfo_policy import PIPELINE_AUTHORS
 from ..costs import (outcome_unknown_item, request_cost_summary, request_cost_totals,
                      request_session_cost_totals, task_cost_item)
+from . import analysis_draft
 from ..models import ApprovalRequest, AskRequest, RunnerNotSent, RunnerUnavailable, Task, TaskResult, new_id, waiting
 from ..pi_text import with_approval_copy
 from ..recruit.provenance import not_yet_active, probation_refusal
@@ -4232,9 +4233,13 @@ class Hub:
             cancelled = True
         return result, cancelled
 
+    def report_artifacts(self, task_id: str) -> dict | None:
+        return self.store.get(analysis_draft.RESULT_FIELD, task_id) if task_id else None
+
     async def on_runner_message(self, runner_id: str, msg: dict, ws: WebSocket | None = None,
                                 incarnation: str | None = None) -> None:
         """Durably take responsibility for sequenced messages before cumulative ACK."""
+        msg = await analysis_draft.admit(self, runner_id, incarnation, ws, msg)
         seq = msg.get("runner_seq") if isinstance(msg, dict) else None
         if seq is None:
             return await self._on_runner_message(runner_id, msg, ws, incarnation)
@@ -4932,6 +4937,9 @@ class Hub:
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0, cost_known=True,
                               error="request cancelled")
         if not _runner_ready_for(self, task.agent_id, task.meta):
+            if task.meta.get("kind") == "audit_repair":
+                return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, cost_usd=0.0,
+                                  cost_known=True, error="the original analysis runner is unavailable")
             stopped = await self.offer_wsl_setup(task)  # the local WSL runner is not ready: one PI card, not a wait
             if stopped is not None:
                 return stopped
@@ -4978,7 +4986,8 @@ class Hub:
         original_incarnation = self.runner_incarnations.get(rid)
         self.store.put("task", task.id, {"request_id": task.request_id,
                                           "runner_id": rid,
-                                          "runner_incarnation": self.runner_incarnations.get(rid),
+                                          "runner_incarnation": original_incarnation,
+                                          "report_runner": [rid, original_incarnation] if task.meta.get(analysis_draft.RESULT_FIELD) else None,
                                           "step_id": task.meta.get("step_id"), "kind": task.meta.get("kind"),
                                           "attempt": task.meta.get("attempt", 1),
                                           "revision": task.meta.get("revision", 0),
@@ -6140,8 +6149,9 @@ class Hub:
         report, appendix = self._cancel_report(req, list(req.get("cancelled_tasks") or []),
                                                dict.fromkeys(pending.get("quota_steps") or []))
         from ..report_format import split_appendix
-        from ..report_contract import (available_result_files, build_report_package, reader_markdown,
+        from ..report_contract import (available_result_files, build_report_package, clean_reader_report, reader_markdown,
                                        validate_report_package, with_report_front)
+        report = clean_reader_report(report)
         appendix, execution = split_appendix(appendix)
         req.update(report=report, report_appendix=appendix, execution_record=execution)
         package = build_report_package(req, report, dict(req.get("results") or {}))
@@ -6279,6 +6289,22 @@ class Hub:
             return {}
         return {wiki_exposure.KEY: wiki_exposure.inherited(self.requests.get(extra[link]))}
 
+    def _request_research_options(self, body: RequestIn) -> dict[str, Any]:
+        research = self.s.research
+        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
+        research_request = research.enabled and intake.work_kind == "research"
+        options = {
+            "contract_version": 2,
+            "final_checkpoint": bool(research_request and research.evidence_checkpoint and research.final_checkpoint
+                                     and body.mode == "orchestrate"),
+        }
+        if research_request and body.mode != "direct":
+            if research.compact_workflow:
+                options["compact_workflow"] = True
+            options["audit_before_cp2"] = research.audit_before_cp2
+            options["audit_repair_before_cp2"] = research.audit_repair_before_cp2
+        return options
+
     def create_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:
         """``extra``: request fields saved in the same first write (a CP1 수정 요청's links, plan and answers)."""
         self._check_run_where(body)
@@ -6309,11 +6335,7 @@ class Hub:
         # snapshot, prompts or reports.
         originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
-        research = self.s.research
-        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
-        req["research_options"] = {"contract_version": 2, "final_checkpoint": bool(
-            research.enabled and research.evidence_checkpoint and research.final_checkpoint
-            and body.mode == "orchestrate" and intake.work_kind == "research")}
+        req["research_options"] = self._request_research_options(body)
         self.requests[rid] = req
         if proj:
             self.result_storage.inherited(rid)
@@ -6359,11 +6381,7 @@ class Hub:
         # snapshot, prompts or reports.
         originals = [{"value": r.value, "original": r.original} for r in body.references if r.original]
         req["environment"] = environment_snapshot(self)
-        research = self.s.research
-        intake = classify_intake(body.text, body.work_kind, mode=body.mode)
-        req["research_options"] = {"contract_version": 2, "final_checkpoint": bool(
-            research.enabled and research.evidence_checkpoint and research.final_checkpoint
-            and body.mode == "orchestrate" and intake.work_kind == "research")}
+        req["research_options"] = self._request_research_options(body)
         self.requests[rid] = req
         if proj:
             await self.result_storage.ainherited(rid)

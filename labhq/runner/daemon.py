@@ -74,7 +74,7 @@ from .annot_broker import AnnotBroker, ENABLED_ENV as ATLAS_ENABLED_ENV, atlas_a
 from ..tools.annot_alphagenome_atlas import credential, without_credentials
 from .codex_sandbox import SandboxWatch
 from .control import HALT_GRACE_S, ControlNotReady, Controls, steer_prompt
-from . import local_jobs
+from . import local_jobs, report_artifacts
 from ..hpc_login_budget import LoginLimitReached, budget_for, request_scope
 from ..hpc_session import queue_wait
 from .hpc_jobs import SharedStatusQueries, submit_job
@@ -810,7 +810,8 @@ class Runner:
         d = ev.model_dump(mode="json")
         ws = self.workspaces.get(ev.task_id or "")
         if ws:
-            ws.append_event(d)
+            ws.append_event({**d, "data": {k: v for k, v in d["data"].items() if k != report_artifacts.RESULT_FIELD}}
+                            if report_artifacts.RESULT_FIELD in d["data"] else d)
         elif ev.task_id in self.event_buffers:
             self.event_buffers[ev.task_id].append(d)
         if d.get("type") == "runner.roster":
@@ -2621,7 +2622,8 @@ class Runner:
                                   **({"error": short(result.error, 200)} if result.error else {})},
                                  result.model_dump(mode="json"))
                 return result
-            extra_dirs = [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]]
+            extra_dirs = ([] if task.meta.get("kind") == "audit_repair" else
+                          [str(self.s.path(d)) for d in [*agent.project_dirs, *task.meta.get("project_dirs", [])]])
             task, consult_error = self._stage_consult_refs(task, ws)
             if agent.id == "facilities" and not consult_error:
                 task = task.model_copy(update={"context": task.context + "\n\n" + self._facilities_doctor_context()})
@@ -2650,10 +2652,8 @@ class Runner:
                 await emit_final({"state": "error", "error": short(error, 200)}, result.model_dump(mode="json"))
                 return result
             root = self.ws_root.resolve()
-            verified_wrap_up = task.meta.get('kind') == 'wrap_up' and 'hpc_ancestor_revisions' in task.meta
-            artifact_contract = ((verified_wrap_up or task.meta.get("kind") in {"step", "result_correction", "slot_repair"}) and
-                                 isinstance(task.meta.get("upstream_artifacts"), dict))
-            from .step_handoff import required_hpc_revisions, require_hpc_snapshots
+            from .step_handoff import artifact_contract_for, required_hpc_revisions, require_hpc_snapshots
+            artifact_contract = artifact_contract_for(task)
             hpc_revisions = required_hpc_revisions(task, whole_hpc, artifact_contract)
             staged_inputs: list[str] = []
             for directory in ([] if artifact_contract else task.meta.get("upstream_dirs", [])):
@@ -2699,6 +2699,8 @@ class Runner:
                 unavailable.update({sid: f"inputs/{sid} unavailable (HPC ancestor missing)"
                                     for sid in hpc_revisions if sid not in artifacts})
                 require_hpc_snapshots(hpc_revisions, unavailable)
+                if task.meta.get("kind") in {"analysis_draft", "audit_repair"} and artifacts.keys() & unavailable.keys():
+                    raise ValueError("A collected report input is unavailable")
                 note = ("Read collected ancestor artifacts only through inputs/<step_id>/. "
                         "These copies are read-only; do not read sibling workspaces. "
                         "Save scripts and intermediate files only in outputs/ or .tmp/. "
@@ -3665,7 +3667,11 @@ class Runner:
                  ({"error": short(result.error, 200)} if result.error else {}))
         if result.error_kind == "halted":  # stopped by the PI and resumable, not a problem to show
             state, extra = "idle", {"halted": True}
-        await emit_final({"state": state, **extra}, result.model_dump(mode="json"))
+        result_data = result.model_dump(mode="json")
+        if task.meta.get(report_artifacts.RESULT_FIELD) and not restricted_task(task, self.s):
+            result_data[report_artifacts.RESULT_FIELD] = await asyncio.to_thread(
+                report_artifacts.collect, ws.dir, task.meta, result)
+        await emit_final({"state": state, **extra}, result_data)
         return result
 
     # ---------------- broker callbacks (from MCP tools) ----------------
@@ -3680,23 +3686,41 @@ class Runner:
         if (req.kind == 'tool_permission' and ws and ctx and req.request_id
                 and self.task_req.get(req.task_id or '') == req.request_id
                 and req.task_id in self.active_roots and ctx.agent.engine == Engine.claude_code):
-            from ..approval_grants import classify
+            from ..approval_grants import classify, trusted_verdict
             from ..environment_install import shared_environment_install_denial
             tool_input = req.detail.get('tool_input')
+            verdict = ('card', '')
             try:
                 tool = str(req.detail.get('tool_name') or '')
                 denied = shared_environment_install_denial(
                     tool, tool_input or {}, protected=ctx.shared_environment_protected,
                     environment_step=ctx.environment_step, workdir=str(ws.dir))
                 staff_env = getattr(ctx, '_approval_grant_env', None)
-                category = None if denied or not isinstance(staff_env, dict) else classify(tool, tool_input, self.s.policy,
-                                    workdir=str(ws.dir), extra_dirs=tuple(ctx.extra_dirs),
-                                    private_paths=tuple(ctx.private_paths), private_enabled=ctx.private_enabled,
-                                    private_open_reads=tuple(ctx.private_open_reads), read_only=ctx.read_only,
-                                    environ=staff_env)
+                scope = dict(workdir=str(ws.dir), extra_dirs=tuple(ctx.extra_dirs),
+                             private_paths=tuple(ctx.private_paths), private_enabled=ctx.private_enabled,
+                             private_open_reads=tuple(ctx.private_open_reads), read_only=ctx.read_only,
+                             environ=staff_env)
+                trace: list[str] = []
+                category = None if denied or not isinstance(staff_env, dict) else classify(
+                    tool, tool_input, self.s.policy, trace=trace, **scope)
+                if self.s.policy.approvals.trusted_local and isinstance(staff_env, dict):
+                    # One classification serves both the request grant and trusted_local (#1482).
+                    verdict = ('deny', denied) if denied else trusted_verdict(
+                        category, trace, tool, tool_input or {}, self.s.policy,
+                        policy_reason=str(req.detail.get('policy_reason') or ''),
+                        workspace_root=str(self.s.path(self.s.runner.workspace_root)), **scope)
             except Exception:
                 log.exception('request grant classification failed; keeping individual approval')
                 category = None
+            if verdict[0] != 'card' and self.broker.resolve(req.id, verdict[0] == 'allow',
+                                                           f"trusted_local: {verdict[1] or '허용'}"):
+                await self.emit(Event(type='agent.log', task_id=req.task_id, agent_id=req.agent_id,
+                                      request_id=req.request_id, data={
+                                          'level': 'info' if verdict[0] == 'allow' else 'warn',
+                                          'text': f"도구 카드 자동 {'허용' if verdict[0] == 'allow' else '거부'}"
+                                                  f"(trusted_local){': ' + verdict[1] if verdict[1] else ''}",
+                                          'tool_name': tool}))
+                return
             if category:
                 req.detail['grant_category'] = category
                 req.detail['grant_process'] = self.process

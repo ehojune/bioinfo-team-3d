@@ -24,6 +24,13 @@ def mixed_step_input_refusal(task, agent, runner_id):
     return None
 
 
+def artifact_contract_for(task):
+    kind = task.meta.get("kind")
+    verified_wrap_up = kind == "wrap_up" and "hpc_ancestor_revisions" in task.meta
+    return ((verified_wrap_up or kind in {"step", "result_correction", "slot_repair", "analysis_draft", "audit_repair"})
+            and isinstance(task.meta.get("upstream_artifacts"), dict))
+
+
 def required_hpc_revisions(task, whole_hpc, artifact_contract):
     """Read the dispatcher-provided producer revisions. Ordinary tasks have no handoff."""
     if 'hpc_ancestor_revisions' not in task.meta:

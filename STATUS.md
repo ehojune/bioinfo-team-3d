@@ -4,6 +4,210 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+# #1504 · CP2 전 감사 설정
+
+Closes #1504
+
+- 인스턴스 설정의 `research.audit_before_cp2`와 `research.audit_repair_before_cp2`는 모두 기본값이 `false`입니다. Gateway는 연구 요청의 첫 저장에 두 값을 넣습니다.
+- 실행과 재개는 저장값을 씁니다. 이전 환경변수로 이미 저장한 값도 유지됩니다. 저장 키가 없는 이전 요청은 해당 옵션을 OFF로 처리합니다.
+- 아래 회귀시험은 246개 통과했습니다. 동기·비동기 요청에서 OFF → ON → OFF로 바꿔 첫 저장과 이전 요청의 저장값을 확인했습니다. CP2에서는 현재 설정과 환경변수를 저장값과 반대로 둔 경우도 확인했습니다.
+
+```sh
+python -m pytest -q tests/test_research_cp1.py tests/test_research_cp2.py tests/test_research_cp4.py tests/test_research_report.py
+```
+
+- 제품 코드 순증 −11줄. `cso.py`·`server.py`·`daemon.py` 합계는 21,872줄(이번 변경 +1, 기준 22,125줄 대비 −253)입니다.
+- 실제 M7 실행과 배포는 #1490 r15 범위입니다.
+
+# #1490 r14 · PR 4
+
+Refs #1490
+
+- `LABHQ_AUDIT_REPAIR_BEFORE_CP2=1`과 `LABHQ_AUDIT_BEFORE_CP2=1`을 함께 켜면 원래 분석 세션과 runner에서 P1만 최대 두 번 고칩니다. 한 번에 최대 $5를 요청 예산에 반영합니다. 수정본을 별도 폴더에서 수집하고, 계획과 산출물을 확인한 뒤 기존 리뷰를 비워 다시 감사합니다.
+- CP2 카드와 영수증은 마지막 감사 판정·남은 지적·수정 결과를 담습니다. 설계 변경, 후속 단계가 쓰는 산출물, 세션 재개 실패와 비용 상한을 강제할 수 없는 엔진은 CP2로 넘깁니다. 실제 요청과 다른 runner 간 코드·표 전달은 미검증입니다.
+- 아래 명령은 수정 옵션 미설정과 `0`에서 각각 307개 통과했습니다. 옵션 ON 시험은 같은 세션과 재감사, 두 번 상한, 세션 재개 실패, 계획 이탈, 실행 중 재시작과 예산을 확인했습니다. runner 입력·전달 시험 78개와 `node --test tests/web_cp2_evidence.cjs` 14개가 통과했습니다.
+
+```sh
+python -m pytest -q --disable-warnings tests/test_research_cp2.py tests/test_research_cp2_revise.py tests/test_research_report.py tests/test_research_protocol.py tests/test_research_review.py
+```
+
+- 리뷰 P2는 감사 응답에서 설계 변경 여부를 필수로 받아 해결했습니다. 별도 작성한 초안의 수정 지시도 원장·산출물 반환에 맞췄습니다. `notes_index.py --validate`와 `scripts/check_public.sh`가 통과했습니다. [리뷰 지적](https://github.com/ehojune/bioinfo-team-3d/pull/1503#discussion_r4688296404)
+- 리뷰 P1을 반영해 수정에 해시 검증한 수집 산출물만 전달합니다. 첫 감사 중 원본 참조를 바꾼 모의 시험에서 수정 task에 해당 경로가 전달되지 않는 것을 확인했습니다. [리뷰 지적](https://github.com/ehojune/bioinfo-team-3d/pull/1503#discussion_r4688369077)
+- `cso.py`·`server.py`·`daemon.py`는 main `4af3d365`에서 총 21,836줄입니다. 이번 변경 뒤 총 21,871줄(+35), 기준 22,125줄 대비 누계 −254줄입니다. 제품 코드 순증은 239줄입니다.
+
+## #1490 r13 · PR 3b
+
+Refs #1490
+
+- Gateway 환경에 `LABHQ_AUDIT_BEFORE_CP2=1`을 주면 새 간소화 요청에서 claim·표 검사 → 독립 감사 → CP2 순으로 진행합니다. 기존 감사자가 코드와 표를 먼저 읽습니다. CP2 카드에 초안·판정·지적을 싣고 영수증에 판정·지적·해시를 남깁니다.
+- 해시 변경 시 재감사하고 파일 변조나 감사 실패 시 CP2 전에 멈춥니다. BOM과 그림 링크를 포함한 초안도 감사 대상·카드·영수증 해시가 일치합니다. 승인 메모는 본문에 인용하고, 수정 요청에서는 PI 메모와 감사 P1을 새 계획과 감사에 함께 넘깁니다.
+- 옵션 미설정과 `LABHQ_AUDIT_BEFORE_CP2=0`에서 아래 명령을 각각 실행해 293개씩 통과했습니다. 변경 전에는 같은 명령으로 기존 시험 279개가 통과했습니다. 저장된 계획 해시 보존, Gateway 전송본 검사와 검증된 초안 전달을 확인했습니다. `node --test tests/web_cp2_evidence.cjs` 14개와 `scripts/check_public.sh`가 통과했고 Chrome fixture에서 카드 표시를 확인했습니다.
+
+```sh
+python -m pytest -q tests/test_research_cp2.py tests/test_research_cp2_revise.py tests/test_research_report.py tests/test_research_protocol.py tests/test_research_review.py
+```
+
+- 다른 runner 간 코드·표 전달은 runner 변경이 필요한 P2입니다. 실제 연구 요청은 미검증입니다. [리뷰 지적](https://github.com/ehojune/bioinfo-team-3d/pull/1502#discussion_r4687779936)
+- 기준 main `ec200647`의 `cso.py`·`server.py`·`daemon.py`는 21,771줄입니다. 이번 PR은 `cso.py`에 65줄이 늘어 합계 21,836줄(기준 22,125줄 대비 −289)입니다. 제품 코드 순증 225줄, 구현·기록 10커밋입니다.
+
+## #1490 r12 · PR 3a 마무리
+
+Refs #1490
+
+- `labhq/research/analysis_draft.py`에서 초안을 수집·검증하고 보고서에 연결된 표를 읽습니다. `evidence_checkpoint.py`에서 CP2 답변과 영수증을 구성합니다. #1500에서 옮긴 독립 감사는 `independent_review.py`에 있으며, CP2 승인 뒤 기존 순서대로 실행합니다.
+- 회귀시험 276개와 공개 저장소 검사를 통과했습니다. CP2 기록 저장 뒤 초안을 작성하고, CP2를 거부하면 초안 작성과 감사가 함께 멈춥니다. 초안 누락과 해시 불일치를 거부하며, 재시작하면 저장된 CP2·초안·감사 기록을 다시 씁니다. 실제 연구 요청은 미검증입니다.
+- main `d951867f`의 `cso.py`·`server.py`·`daemon.py`는 21,825줄로 기준 22,125줄보다 300줄 적습니다. 이번 PR에서 `cso.py`만 54줄 줄어 합계 21,771줄(기준 대비 −354줄)입니다. 제품 코드 순증 42줄, 구현·기록 2커밋입니다.
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# #1490 r11 · 독립 감사 코드 이동
+
+Refs #1490
+
+## 결과
+
+CP2 승인 뒤 실행하는 독립 감사의 지시문, 결과 검증, 저장·재사용을 `labhq/research/`로 옮겼습니다. CSO는 기존 위치에서 감사를 호출하고 판정에 따라 이어 가기 또는 보고서 처리를 맡습니다. 구조 매뉴얼 08장 한영판에 반영했습니다.
+
+## 확인
+
+- 관련 Python 회귀시험 429개와 CP2 카드 시험 13개가 통과했습니다. CP2 승인 기록이 저장된 뒤 감사가 시작되는지, 파싱 실패 때 같은 지시문에 재시도 문구를 붙이는지 확인했습니다.
+- 같은 계획 해시에서 저장된 결과를 재사용하는 재시작 시험과 P1 판정, PI 승인 카드 시험이 통과했습니다. 지시문·스키마 등 정의 8개는 기준 main과 일치했습니다.
+- 공개 저장소 검사를 통과했습니다. 실제 모델·runner에서의 연구 요청은 미검증입니다.
+
+## 변경량
+
+- 제품 코드 순증 +75줄. `cso.py` −381줄, `gateway/server.py` 0줄, `runner/daemon.py` 0줄입니다.
+- #1488 직후 main `24c6f733`부터 세 파일 누계는 −318줄입니다. PR은 구현 1개와 기록 1개로 총 2커밋입니다.
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# 2026-11-25 codex-worker1 · #1490 r10 · 분석 세션의 보고서 초안
+
+Refs #1490
+
+## 결론
+
+간소화 옵션을 저장한 무분기 연구에서 분석 세션이 초안을 씁니다. Gateway는 runner가 수집한 초안과 결과표를 받아 보고서를 조립합니다.
+
+## 바뀐 것
+
+- Gateway가 dispatch의 runner·요청·작업·직원과 SHA-256을 대조합니다. 본문은 비공개 저장소에서 작업 ID로 조회합니다. 클라이언트 이벤트와 Gateway inbox에는 본문을 남기지 않습니다.
+- 후속 단계가 있으면 원래 세션을 재개하고 해시를 대조한 단계별 산출물을 읽기 전용으로 넘깁니다. 재개한 초안의 단계별 그림은 본문에서 생략하며 원본은 보존합니다. 저장한 초안을 재사용할 때 다시 해시를 대조합니다. 필수 산출물 누락, 내용 변경, 검사 실패 시 요청을 완료로 표시하지 않습니다.
+- Gateway 저장본을 읽을 때만 결과표 검사를 별도 스레드로 넘깁니다.
+- 08장과 13장 한영판에 집필 흐름을 반영했습니다.
+
+## 확인
+
+- 공유 폴더 없는 시험에서 실제 Gateway의 dispatch·수신·작업 ID 조회와 CSO 보고서 조립을 확인했습니다. 초안·결과표 누락과 변조, 다른 작업의 산출물을 거부했습니다.
+- 제품 코드 순증 297줄입니다. `cso.py` +38, `gateway/server.py` +6, `runner/daemon.py` +6입니다. #1488 뒤 핵심 파일 누계는 +63/82줄입니다.
+- 재개한 세션이 두 단계의 파일을 `inputs/<step_id>/` 아래에서 읽고 후속 검증을 싣는지 확인했습니다. 이전 그림을 본문에 적어도 조립 때 생략합니다. 별도 호스트 배치와 실제 연구 요청은 미검증입니다. CI와 리뷰 기록은 [PR #1498](https://github.com/ehojune/bioinfo-team-3d/pull/1498)에 남깁니다.
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# 2026-11-25 codex-worker1 · #1490 r7 · 간소화 연구 계획
+
+Refs #1490
+
+## 결론
+
+`research.compact_workflow`를 켜면 새 연구 요청의 갈래 없는 계획은 설정 상한 안에서 최대 3단계로 짭니다. 옵션은 요청을 만들 때 저장합니다. 기본값은 꺼짐입니다.
+
+## 바뀐 것
+
+- 계획 안내, 재계획, 검증에 같은 상한을 적용합니다. 갈래 계획은 기존 상한을 따릅니다.
+- 갈래 없는 계획의 각 단계에 QC 지시를 붙입니다. 맡은 작업에 분석·QC·해석이 포함되면 승인된 범위에서 공개 시료 기록 대조, 대조군과 기대 방향 기록, 문헌 값 비교를 수행합니다.
+- 연구 매뉴얼 한영판에 설정 방법, 적용 대상, 재개 동작과 분석 지시를 적었습니다.
+
+## 확인
+
+- CP1·CP2·CP4·분기·연구 재개·계획 계약 시험 277개가 통과했습니다. `evidence`·`validation`과 `report`의 QC 누락을 재현했고, 수정 뒤 `phase` 6종 모두에서 옵션에 따라 지시가 전달되는지 확인했습니다. [첫 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1495#discussion_r4683505246) · [후속 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1495#discussion_r4683883657)
+- 제품 코드 순증 43줄입니다. 핵심 세 파일은 `cso.py` +7, `server.py` +5, `daemon.py` 0으로 합계 +12/82줄입니다.
+- 최종 CI와 리뷰는 PR 기록에서 확인합니다. [PR #1495](https://github.com/ehojune/bioinfo-team-3d/pull/1495)
+
+# 연구 보고서에서 로컬 경로 가림
+
+Closes #1492
+
+- 정상 완료·재개·취소 보고서와 과학 부록의 로컬 경로를 가립니다. 결론과 근거 표식, TeX, 상대 링크를 보존합니다. 산출물 등록 경고는 독자가 읽을 문장으로 바꿉니다.
+- [#1496 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1496#discussion_r4683906097) → [#1497](https://github.com/ehojune/bioinfo-team-3d/pull/1497) → 이 PR로 교체합니다. #1497의 `5244ea49`를 한 커밋으로 이식했고, 현재 main과 합친 예상 트리와 일치했습니다.
+- 콜론에 바로 붙은 POSIX·Windows 경로를 가리고 HTTPS·FTP URL과 공백이 든 비율의 두 항을 보존합니다. [경로 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1497#discussion_r4684428154) · [비율 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1497#discussion_r4684428169)
+- 근거 표식이 없어도 경로 뒤 결론을 보존합니다. 위험비·p값처럼 비교식으로 시작하는 결론도 남깁니다. [결론 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4684694043) · [통계식 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4684788220)
+- 슬래시 앞에만 공백이 있는 비율과 비교 기호 없는 AUC·위험비·신뢰구간을 보존합니다. [비율 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4684874217) · [통계값 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4684965937)
+- 구분자가 연속된 Windows 경로를 가리고 콜론이 있는 통계값과 `cells /mL` 같은 단위를 남깁니다. [Windows 경로 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685088976) · [통계값 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685088984) · [단위 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685165593)
+- 본문과 링크의 로컬 편집기 URI를 가리고 `mg /kg/day` 같은 복합 단위를 남깁니다. [로컬 URI P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685252913) · [복합 단위 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685252922)
+- 기준 수가 붙은 기간 단위와 `counts /sample` 같은 표본당 계수를 보존합니다. [기준 수 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685340996) · [기간 단위 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685397864) · [공백 표기 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685464757) · [표본당 계수 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685518383)
+- 관련 시험 419개 통과. log2FC·RPKM·TPM과 한 글자 통계 라벨의 수치를 보존합니다. 구두점이 연속된 경로 가림, 정상 완료·재개 벤치마크 끝 표식, 취소 보고서 저장·발행을 검증했습니다. [경로 구두점 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685870326) · [통계 약어 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4685936972) · [통계 라벨 P1](https://github.com/ehojune/bioinfo-team-3d/pull/1499#discussion_r4686002764)
+- 제품 순증 +90줄, [#1494](https://github.com/ehojune/bioinfo-team-3d/pull/1494) 포함 +300줄. `cso.py` 0, `server.py` +1, `daemon.py` 0. 세 파일 누계 +19줄, 잔여 81줄.
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+# #1492 · 보고서 식별자 검사
+
+#1492 분할 1/2. 기존 [#1493](https://github.com/ehojune/bioinfo-team-3d/pull/1493)은 hold 상태입니다.
+
+- `labhq verify`가 실시간 출처 확인 설정에서 본문·과학 부록·원장의 HGNC 기호, GO ID, DOI를 조회합니다. 모델 호출은 없습니다.
+- 등록 기관이 확인한 미등록과 통신 오류·조회 한도를 구분합니다. 결과는 verify JSON과 감사 번들의 `claims.json`에 남습니다.
+- 쉼표로 나열한 HGNC 기호를 모두 조회합니다. 두 번째 이후 기호의 등록과 미등록을 회귀시험으로 확인했습니다. [리뷰 P2](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682313050)
+- 밑줄이 든 대체 좌위 기호와 `orf` 기호를 조회합니다. 근거 출처 조회와 ID 조회는 시간 한도를 공유합니다. [HGNC 지침](https://hgnc.genenames.org/about/guidelines/) · [기호 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682396850) · [시간 한도 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682396867)
+- Markdown으로 강조한 HGNC 라벨과 기호를 읽고, 설정한 API 연락처를 식별자 조회에도 적용합니다. [라벨 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682511295) · [기호 강조 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682654172) · [연락처 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682511309)
+- 조회기 내부 오류도 미확인으로 남깁니다. SQLite 허용량 기록 실패를 회귀시험으로 확인했습니다. [오류 처리 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682573000)
+- 이전 보고서도 과학 부록만 조회합니다. 부록에 남은 실행 기록 속 식별자는 조회에서 제외합니다. [실행 기록 리뷰](https://github.com/ehojune/bioinfo-team-3d/pull/1494#discussion_r4682739262)
+- 보고서·verify 대상 시험 159 passed. 공개 저장소 점검 통과.
+- 제품 순증 +210줄. `cso.py` 0, `server.py` 0, `daemon.py` 0. 핵심 파일 누계 +18줄, 잔여 82줄.
+
+## 결론
+
+[#1483](https://github.com/ehojune/bioinfo-team-3d/issues/1483)의 두 번째 PR입니다. 점검표와 대조군 결과의 누락·기록 오류를 세고 보고서의 주 판정을 사전등록 기준으로 다시 계산합니다. 기존 본문·표 대조와 인용 감사는 산출 묶음에 실행합니다. 가림 보고서는 무작위 파일명과 별도 대응표로 저장합니다. 매뉴얼의 연구 lane과 검증 장에 도구 사용법을 연결했습니다.
+
+## 검증
+
+- 저장소 밖에 복사한 도구와 가상 자료로 숫자 경계, `NA`, 누락·중복, 판정 불일치와 사전등록 해시 보존을 확인했습니다.
+- 본문·표의 수치·방향 불일치와 인용 수치 오기를 검출했습니다. 가림 보고서의 텍스트 형식과 대응표 SHA-256을 확인했습니다.
+- Windows에서 `PYTHONUTF8=1`로 본문 검사·인용 감사 테스트 104개가 통과했습니다.
+- 가상 자료에서 비수치 대조군 관측값을 거부했습니다. 가림본에서 일반 URL, 머리말, 들여쓰기·인용·HTML 코드 블록이 빠지는 것도 확인했습니다.
+- 실제 측정 A는 [#1481](https://github.com/ehojune/bioinfo-team-3d/issues/1481)에서 진행합니다. 인용 감사에는 기록된 조회 응답과 원문 사본이 필요합니다.
+- 도구와 사용법 순증 290줄, 제품 코드 순증 0줄, 전체 순증 328줄입니다. 커밋 10개입니다.
+
+# 위협 모형과 PR 크기 규칙
+
+- [#1479 결정](https://github.com/ehojune/bioinfo-team-3d/issues/1479#issuecomment-7104465599)의 위협 모형을 원문 그대로 옮겼습니다.
+- PR 하나당 제품 코드 순증 300줄과 커밋 10개를 상한으로 두고, PR 본문에 제품 코드 순증을 적도록 했습니다. 이 PR의 제품 코드 순증은 0줄입니다.
+
+## 결론
+
+[#1483](https://github.com/ehojune/bioinfo-team-3d/issues/1483)의 첫 PR입니다. `tools/prereg_kit/`에 사전등록, 시료·기록 점검표, 대조군 결과표와 작성 지침을 넣었습니다. 폴더 하나를 복사해 단일 세션에서 씁니다.
+
+양식 순증 80줄, 제품 코드 순증 0줄입니다.
+
+## 검증
+
+- 저장소 밖에 양식 폴더만 복사해 가상 자료로 사전등록, 시료·기록 점검표 5줄, 대조군 결과표 3줄과 최종 보고서를 작성했습니다.
+- 등록 파일의 SHA-256이 결과 작성 뒤에도 일치했습니다. 양쪽 문턱과 같은 값, 문턱 사이의 값, 산출하지 못한 값의 판정을 확인했습니다.
+- JSON 문법을 `python -m json.tool`로 확인했습니다. 자동 검사와 실제 측정 A는 후속 작업입니다.
+
+# #1482 가: trusted_local 스위치 (claude-worker3)
+
+결론: `policy.approvals.trusted_local`(기본 꺼짐)을 켜면 runner가 Claude 직원의 도구 카드를 허용·거부로 직접 답한다. 기록 재생에서 사람에게 가는 도구 카드는 내부 자료 읽기뿐이다.
+
+바뀐 것
+- `labhq/approval_grants.py` `trusted_verdict`(+95): `classify`의 부류·사유와 정책 판정 사유로 allow / deny(사유) / card를 정한다.
+- `labhq/runner/daemon.py` `_on_approval`(+18 순증): 도구 승인과 로컬 작업 제출이 모이는 자리에서 한 번의 `classify`를 요청 단위 허용과 같이 쓴다. 허용·거부하면 broker에 바로 답하고 작업 로그를 남긴다.
+- `labhq/settings.py`(+4): `policy.approvals.trusted_local: false`.
+- 시험 `tests/test_trusted_local_1482.py`(28 사례), 매뉴얼 `11-safety` 한·영, Windows 시험 목록.
+
+재생 (기록된 명령은 실행하지 않음)
+| 자료 | 카드 | 허용 | 거부 | 카드 유지 |
+|---|---|---|---|---|
+| #1445 기록 (PC 126 · 시험 79) | 205 | 183 | 0 | 22 (모두 내부 자료 읽기, PC 요청) |
+| 실제 요청 A | 98 | 98 | 0 | 0 |
+| 실제 요청 B | 33 | 31 | 2 | 0 |
+
+B 거부 2장은 옛 셸 현재 폴더(`cd ../..` 뒤 상대 경로 쓰기)를 가정한 명령이다. 지금은 폴더가 매번 돌아오므로 실제로 작업 폴더 밖에 쓴다.
+
+실행한 것: 배포 venv에서 새 시험·설정·승인 관련 시험(3,977 통과, 로컬 node shim의 `test_web` 2건 실패는 환경 문제), `tests/test_ci_*.py`(로컬 `filelock` 없음 5건 외 통과), 위 재생.
+
+미해결: Codex 직원 카드는 대상이 아니다(직원 환경 캡처가 Claude에만 있다). 실행 중에 만든 경로로 개인 파일을 여는 스크립트는 막지 못한다(받아들이는 위험).
+
 ## 결론
 
 HPC 작업 스크립트를 쓰는 직원에게 `pipefail`에서 `head`나 `grep -q`가 먼저 끝나면 앞 명령이 SIGPIPE로 실패할 수 있다고 안내합니다. 버전 기록 같은 부가 진단에만 실패를 허용하고 분석 오류는 그대로 전달하도록 지시합니다.

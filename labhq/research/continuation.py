@@ -598,6 +598,14 @@ def verify_reuse(results: Mapping[str, Mapping[str, Any]], settings: Any,
     return refused
 
 
+def _p1_lines(issues: list[Mapping[str, Any]]) -> str:
+    return "\n".join(
+        f"- {issue.get('step_id') or '-'}"
+        f"{'/' + str(issue['claim_id']) if issue.get('claim_id') else ''} "
+        f"[{issue.get('category') or 'other'}] {issue.get('problem')} Request: {issue.get('request')}"
+        for issue in issues)
+
+
 def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: list[Mapping[str, Any]],
                 round_no: int, pi_request: str = "", trigger: str = "") -> str:
     """Appended to the research PLAN prompt of a continuation round. ``pi_request`` is the PI's CP2 revise note: the
@@ -619,17 +627,17 @@ def plan_prompt(previous_plan: Mapping[str, Any], previous_sha256: str, issues: 
                  "(give it instructions that address the request), since an unchanged step with verified inputs may keep its previous "
                  "result. Use a new id for a step that does different work.\n")
         listed = "PI revision request (CP2):\n" + pi_request
+        if issues:
+            named = "no P1 issue names the step, "
+            scope += "Also address each independent audit P1 below.\n"
+            listed += "\n\nIndependent audit P1 issues:\n" + _p1_lines(issues)
     else:
         why = ("The scientific review of the previous frozen plan ended with verdict \"revise\". Return a complete "
                "new research PLAN that fixes every P1 issue below; the PI approves it at a new CP1.\n")
         named = "no P1 issue names the step, "
         scope = ("Change or add only the steps the issues need, give a changed step instructions that address its "
                  "issue, and use a new id for a step that does different work.\n")
-        lines = [f"- {issue.get('step_id') or '-'}"
-                 f"{'/' + str(issue['claim_id']) if issue.get('claim_id') else ''} "
-                 f"[{issue.get('category') or 'other'}] {issue.get('problem')} Request: {issue.get('request')}"
-                 for issue in issues]
-        listed = "P1 issues:\n" + ("\n".join(lines) or "- (none)")
+        listed = "P1 issues:\n" + (_p1_lines(issues) or "- (none)")
     return (
         f"\n\nContinuation (research round {round_no}). " + why +
         "labhq can reuse a result only for the same normalized node specification and declared inputs, "
@@ -651,9 +659,13 @@ def review_prompt(issues: list[Mapping[str, Any]], pi_request: str = "", trigger
                 "where they do not:\n" +
                 "\n".join(f"- {issue.get('step_id') or '-'}: {issue.get('problem')}" for issue in issues))
     if pi_request:
-        return ("\n\nThis plan is a continuation approved at a new CP1 after the PI asked at CP2 for this revision "
+        note = ("\n\nThis plan is a continuation approved at a new CP1 after the PI asked at CP2 for this revision "
                 "instead of approving the earlier evidence. Check whether the results address it and file an issue "
                 "where they do not:\n" + pi_request)
+        if issues:
+            note += ("\n\nCheck each of these independent audit P1 issues and file any that remain:\n"
+                     + _p1_lines(issues))
+        return note
     if not issues:
         return ""
     return ("\n\nThis plan is a continuation approved at a new CP1 after a previous review asked for these P1 "

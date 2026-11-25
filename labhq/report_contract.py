@@ -14,7 +14,8 @@ from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
-from .report_markdown import markdown_body, render_marker_message, rendered_markers, replace_markdown_body
+from .report_markdown import (LOCAL_FILE_URI, clean_report_prose, markdown_body, render_marker_message,
+                              rendered_markers, replace_markdown_body, translate_report_warnings)
 from .evidence.report_consistency import front_lines as consistency_front_lines
 from .reproduction_receipt import receipt_note, receipt_summary
 
@@ -38,17 +39,27 @@ _ANCHOR = re.compile(r"\[\[\s*claim\s*:([^\[\]\n]+)\]\]", re.I)
 _HEADING = re.compile(r"(?m)^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 
 
-def _balanced_link_target(depth: int = 4) -> str:
-    inner = r"[^()\s]*"
+def _balanced_link_target(depth: int = 4, *, spaces: bool = False) -> str:
+    char = r"[^()\r\n]" if spaces else r"[^()\s]"
+    inner = char + "*"
     for _ in range(depth - 1):
-        inner = rf"(?:[^()\s]|\({inner}\))*"
-    return rf"(?:[^()\s]|\({inner}\))+"
+        inner = rf"(?:{char}|\({inner}\))*"
+    return rf"(?:{char}|\({inner}\))+"
 
 
-_MARKDOWN_LINK = re.compile(
-    r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target><[^>\n]*>|" + _balanced_link_target()
-    + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)"
-)
+_LOCAL_TARGET = rf"(?:{LOCAL_FILE_URI}|[A-Za-z]:[/\\]|[/\\]|~[A-Za-z0-9_.+-]*[/\\])"
+
+
+def _link_pattern(*, reader: bool = False) -> re.Pattern[str]:
+    targets = "<[^>\n]*>|" + _balanced_link_target()
+    if reader:
+        targets += "|" + _LOCAL_TARGET + _balanced_link_target(spaces=True)
+    return re.compile(r"(?P<image>!)?\[(?P<label>[^\]\n]*)\]\(\s*(?P<target>" + targets
+                      + r")(?P<title>\s+(?:\"[^\"\n]*\"|'[^'\n]*'))?\s*\)")
+
+
+_MARKDOWN_LINK = _link_pattern()
+_READER_LINK = _link_pattern(reader=True)
 _CODE_RUN = re.compile(r"`+|~{3,}")
 _INLINE_CODE = re.compile(r"`[^`\n]*`")
 _FOOTNOTE_DEFINITION = re.compile(r"^\[\^([^\]\n]+)\]:\s*(.*)$")
@@ -146,8 +157,9 @@ def _without_front(report: str) -> str:
 
 
 def _plain(value: str) -> str:
-    value = _ANCHOR.sub("", value)
     value = re.sub(r"!?\[([^\]]*)\]\([^)]+\)", r"\1", value)
+    value = clean_report_prose(value)
+    value = _ANCHOR.sub("", value)
     # A footnote label is an identifier: stripping its underscores breaks the reference in the front page.
     parts = re.split(r"(\[\^[^\]\n]+\])", value)
     value = "".join(part if index % 2 else re.sub(r"[`*_>#]", "", part)
@@ -395,6 +407,24 @@ def _closing_fence(text: str, char: str, length: int, start: int) -> int | None:
     return None if found is None else found.end()
 
 
+def clean_reader_report(report: str) -> str:
+    """Clean the generated reader report. Declared assets use relative targets."""
+    report = translate_report_warnings(report)
+    parts = []
+    cursor = 0
+    for match in _READER_LINK.finditer(markdown_body(report)):
+        start, end = match.span("target")
+        if re.match(_LOCAL_TARGET, unquote(report[start:end].strip().strip("<>"))):
+            label_start, label_end = match.span("label")
+            label = clean_report_prose(report[label_start:label_end])
+            parts.extend((clean_report_prose(report[cursor:match.start()]), f"{label} (로컬 경로)" if label else "로컬 경로"))
+            cursor = match.end()
+            continue
+        parts.extend((clean_report_prose(report[cursor:start]), report[start:end]))
+        cursor = end
+    return "".join([*parts, clean_report_prose(report[cursor:])])
+
+
 def reader_markdown(report: str, *, footnotes: bool = False) -> str:
     """Replace audit-only claim syntax; PDFs may also render Markdown footnotes as endnotes."""
     code: list[str] = []
@@ -403,7 +433,8 @@ def reader_markdown(report: str, *, footnotes: bool = False) -> str:
         code.append(value)
         return f"\x00labhq-code-{len(code) - 1}\x00"
 
-    rendered = report
+    # Portable bundles still need the source paths here to map them to copied files.
+    rendered = translate_report_warnings(report)
     if footnotes:
         pieces: list[str] = []
         last = 0

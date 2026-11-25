@@ -58,15 +58,21 @@ from ..report_contract import (available_result_files, build_report_package, rea
 from ..request_status import failed_step_ids, is_terminal_request
 from ..research.contract import (EVIDENCE_CHOICES, RESEARCH_PLAN_SCHEMA, RESEARCH_STEP_SCHEMA, ResearchPlan,
                                  bind_result_artifacts, branch_plan_topology,
-                                 canonical_plan_json, classify_intake, freeze_plan, read_evidence_decision,
-                                 normalize_result_plan_sha256,
+                                 canonical_plan_json, classify_intake, freeze_plan, normalize_result_plan_sha256,
                                  plan_sha256 as research_plan_sha256,
                                  refresh_plan_approval, research_plan_errors, research_plan_schema,
                                  research_result_errors, salvage_research_result, validate_research_plan,
                                  missing_result_slots, repair_result_slots, repair_synthesis_links,
                                  unnegated_analysis_text, validate_research_result, with_pack_refs)
 from ..research import blind_draft
+from ..research import analysis_draft, audit_repair, compact_workflow, evidence_checkpoint, independent_review, preapproval_audit
 from ..research import precedent_texts
+from ..research.approval_notes import APPROVAL_NOTE_CHARS, CP2_REPORT_NOTE_RULE, approval_note, approval_note_block
+from ..research.independent_review import (RESEARCH_LANE_REVIEW_SCHEMA, RESEARCH_REVIEW_PROMPT, REVIEW_SCHEMA,
+                                           lenient_review, plan_digest as _research_plan_digest, valid_review,
+                                           with_p1_verdict)
+from ..research.review_checklist import (CHECKLIST_REVIEW_RULE, analysis_precedents_text, plan_review_context,
+                                         required_checklist_items, review_with_checklist)
 from ..research import continuation as research_continuation
 from ..research import input_fit
 from ..research import semantic_devices
@@ -74,7 +80,7 @@ from ..security import redact_tokens
 from ..recruit.provenance import (consult_refusal, external_contract_conflicts, external_hosts, not_yet_active,
                                   probation_refusal, restricted_input_steps, touches_restricted)
 from ..research.packs import (assess_pack_applicability, configured_packs, normalize_pack_keys, pack_refs,
-                              pack_snapshot, packs_for_snapshot, render_pack_catalog, render_pack_review,
+                              pack_snapshot, packs_for_snapshot, render_pack_catalog,
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import INPUT_STEP_ID, clip, extract_json, input_relpath, output_relpath, short
 from . import execution as execution_policy
@@ -343,57 +349,9 @@ def with_scope_coverage_warning(plan: Any, request: str) -> Any:
         kept.append(SCOPE_COVERAGE_WARNING + ", ".join(missing))
     return {**plan, "warnings": kept}
 
-# The reviewer's answer to each declared checklist item and required precedent item (#586). Optional in both review
-# schemas: a review saved before it existed, or one from a request with no checklist, stays valid.
-CHECKLIST_REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "array", "items": {
-        "type": "object", "additionalProperties": False,
-        "properties": {"id": {"type": "string"},
-                       "status": {"type": "string", "enum": list(topic_checklists.REVIEW_STATUSES)},
-                       "evidence": {"type": "string"}},
-        "required": ["id", "status", "evidence"]}}
 
-REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "object", "additionalProperties": False,
-    "properties": {
-        "verdict": {"type": "string", "enum": ["accept", "revise"]},
-        "scores": {"type": "object", "additionalProperties": False,
-                   "properties": {"addresses_question": {"type": "integer", "minimum": 1, "maximum": 5},
-                                  "evidence": {"type": "integer", "minimum": 1, "maximum": 5},
-                                  "thoroughness": {"type": "integer", "minimum": 1, "maximum": 5}},
-                   "required": ["addresses_question", "evidence", "thoroughness"]},
-        "issues": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False,
-            "properties": {"step_id": {"type": "string"},
-                           "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
-                           "problem": {"type": "string"}, "request": {"type": "string"}},
-            "required": ["step_id", "priority", "problem", "request"]}},
-        "checklist": CHECKLIST_REVIEW_SCHEMA,
-    },
-    "required": ["verdict", "scores", "issues"],
-}
 
-# The research lane's one review after CP2 approval (#58 ⑤). REVIEW_SCHEMA above stays the generic review, and
-# labhq/research/review.py keeps its per-step REVIEW v2 schema (RESEARCH_REVIEW_SCHEMA), not on this path yet.
-RESEARCH_REVIEW_CATEGORIES = ("overgeneralization", "cherry_picking", "no_comparator", "undefined_scale",
-                              "speculation_as_fact", "unsupported_by_artifact", "method_change_unstated", "other")
-RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
-    "type": "object", "additionalProperties": False,
-    "properties": {
-        "verdict": {"type": "string", "enum": ["accept", "revise"]},
-        "issues": {"type": "array", "items": {
-            "type": "object", "additionalProperties": False,
-            "properties": {"step_id": {"type": "string"}, "claim_id": {"type": "string"},
-                           "priority": {"type": "string", "enum": ["P1", "P2", "P3"]},
-                           "category": {"type": "string", "enum": list(RESEARCH_REVIEW_CATEGORIES)},
-                           "evidence_quote": {"type": "string"}, "problem": {"type": "string"},
-                           "request": {"type": "string"}},
-            "required": ["step_id", "claim_id", "priority", "category", "evidence_quote", "problem", "request"]}},
-        "checklist": CHECKLIST_REVIEW_SCHEMA,
-        "blind_comparison": blind_draft.COMPARISON_SCHEMA,
-    },
-    "required": ["verdict", "issues"],
-}
+
 
 BRIEFING_PROMPT = """Prepare a briefing (≤400 words) for the CSO on this research request:
 field context, recent developments (search the web if available), which datasets exist and how they can be
@@ -936,7 +894,6 @@ def _planning_prompt(template: str, settings, *, research: bool = False, replan:
     rules = RESEARCH_RECRUIT_RULES if research else GENERAL_RECRUIT_RULES
     return template.replace(rules, RECRUIT_DISABLED_RULE)
 # CP2 cards an answer without a readable choice gets before the request ends as not approved.
-CP2_MAX_ASKS = 3
 # One readable reason per research ending that is not a success. The office feed prints it after "요청이 실패했어요: ",
 # so a request that ends with a report (report_incomplete) or at a PI card (CP2) no longer shows an empty reason.
 RESEARCH_END_ERRORS = {
@@ -1106,17 +1063,6 @@ RESEARCH_RESULT_FIELD_RULES = "\n".join(f"- {rule}" for rule in RESULT_CONTRACT_
     "workspace, and refuses a row the file does not bear out or when it cannot read it. Never edit that file or "
     "write a locator or freshness the tool did not return.")
 
-# What both reviews are asked about the declared checklist (#586). The context block that follows the prompt lists
-# the ids (plan_review_context); labhq reads the answers in review_with_checklist and checklist_appendix.
-CHECKLIST_REVIEW_RULE = (
-    "When the declared topic checklist or Analysis precedents below list items, also fill `checklist` with one\n"
-    "entry for every listed checklist item and required precedent item, using its id exactly as listed (a check\n"
-    "listed once per topic as `topic.id` gets one entry per listed id). Each entry\n"
-    "has `status` (done, partly or not_done) and `evidence`: the step id or output path in the results that shows\n"
-    "it, or a short reason when not_done. One line each. Judge from the results, not from the plan's answer.\n"
-    "For an item the plan answered step:<id> that you mark partly or not_done, labhq adds a P2 issue unless you\n"
-    "already filed a P1 or P2 issue that names the item id; name the id when you file one.")
-
 REVIEW_PROMPT = """Write only in your own outputs/ and .tmp/; never edit reviewed files or inputs.
 Save the final JSON to outputs/review.json and return the same JSON as your final answer.
 You are the scientific reviewer. Evaluate the team's work on the request below with three
@@ -1225,60 +1171,6 @@ UNRESOLVED_REVIEW_NOTE = (
 REVIEW_REFERENCE_NOTE = (
     "\n\nThe remaining P2 and P3 issues do not change the conclusion. LabHQ appends a \"리뷰 참고\" section with "
     "one line per P2 issue and the P3 count, so do not write that section or repeat those issues elsewhere.")
-
-# The research lane after CP2 approval (#58 ③⑤). SYNTH_PROMPT and REVIEW_PROMPT above stay the generic ones.
-RESEARCH_REVIEW_PROMPT = """Write only in your own outputs/ and .tmp/; never edit reviewed files or inputs.
-Save the final JSON to outputs/review.json and return the same JSON as your final answer.
-You are the scientific reviewer of a research request that ran under a frozen,
-PI-approved plan; the PI approved its evidence at CP2. Check every claim against its evidence ledger. Where the
-readable files below can be opened, read them and compare what they contain with what each claim says.
-
-Return one issue per problem with:
-- step_id, and claim_id ("" when the issue is not about one claim)
-- priority: P1 if fixing it would change a conclusion, P2 if it weakens a conclusion, P3 if it is wording only
-- category: overgeneralization, cherry_picking, no_comparator, undefined_scale, speculation_as_fact,
-  unsupported_by_artifact, method_change_unstated, or other
-- evidence_quote: the exact text, from the ledger or from a file you read, that shows the problem
-- problem, and request: the specific fix
-Answer the domain pack reviewer questions below as issues where they find a problem.
-Use verdict "revise" only when there is at least one P1 issue; otherwise "accept". labhq does not re-run the frozen
-plan: after a revise the PI may continue through a new plan, approved at a new CP1, that carries your P1 issues.
-Check the declared topic checklist, its plan answers and Analysis precedents supplied below. File an issue for
-anything omitted or handled incorrectly; it is P1 when fixing it would change a conclusion.
-A checklist item answered assumption with a stated, correct reason is acceptable (PI 2026-10-07): file an
-issue for it only when the reason is wrong or the missing check would change a conclusion (then P1), not
-merely because it was skipped.
-Check that analysis steps declared key figures, the report embeds them under results or gives a one-line reason,
-and every figure follows the SVG, Korean <text>, raster-fallback, and no-capture rules.
-For a branched plan, WARN (as a P2 issue whose problem starts with "WARN:") when a branch has an analysis-result table
-in its step artifacts but that branch's actual analysis and result are absent from the summary or conclusion.
-WARN the same way when the reported reference category is on the same exposure side as the hypothesis's focal
-group. The primary contrast should be the focal group versus all others or the least-exposed group; a largest-group
-reference is valid only when the hypothesis is unrelated to exposure ordering.
-""" + CHECKLIST_REVIEW_RULE + """
-
-Request: {request}
-
-Frozen plan (plan_sha256 {plan_sha256}):
-{plan}
-
-Domain packs (reviewer questions and rules):
-{packs}
-
-Evidence ledgers per step: claims, evidence, links, artifact_refs with the artifact_sha256 labhq recorded, evidence
-refused and claims left unsupported at CP2, not_established, failures and method_changes.
-{ledgers}"""
-
-RESEARCH_REVIEW_RETRY = ('\n\nReturn ONLY a JSON object with verdict exactly "accept" or "revise" and issues, each '
-                         'issue with every field. Do not add prose.')
-
-def with_p1_verdict(review: dict) -> dict:
-    """Set revise exactly for P1 issues; old stored issues without priority remain P1-compatible."""
-    verdict = "revise" if any(issue.get("priority", "P1") == "P1"
-                              for issue in review.get("issues") or []) else "accept"
-    if review.get("verdict") == verdict:
-        return review
-    return {**review, "verdict": verdict, "reviewer_verdict": review.get("verdict")}
 
 
 def issues_at_priority(review: dict, priority: str) -> list[dict]:
@@ -1442,39 +1334,9 @@ def with_pi_notes(task: Task, request: dict) -> Task:
     return task.model_copy(update={"prompt": task.prompt + "\n\n" + "\n".join(lines)})
 
 
-# The longest card note one prompt carries (PI 점검 R11). The CP receipts and the audit appendix keep the whole note.
-APPROVAL_NOTE_CHARS = 2000
-
-
-def approval_note(note: Any) -> str:
-    """A note the PI typed on an approved research card, bounded for a prompt."""
-    text = str(note or "").strip()
-    if len(text) <= APPROVAL_NOTE_CHARS:
-        return text
-    return (text[:APPROVAL_NOTE_CHARS].rstrip() +
-            f" …(메모가 길어 {APPROVAL_NOTE_CHARS}자에서 잘랐습니다. 전문은 승인 기록에 있습니다.)")
-
-
-def approval_note_block(gate: str, notes: list[tuple[str, str]], rule: str) -> str:
-    """A prompt section with the PI's notes from approved ``gate`` cards ((label, note) pairs); "" without a note.
-
-    A note is read by the people who act next, never as a decision: the gate's structured choice decided."""
-    lines = [f"- {label}: {text}" if label else text
-             for label, text in ((label, approval_note(note)) for label, note in notes) if text]
-    if not lines:
-        return ""
-    return f"\n\n## PI 승인 메모 ({gate})\n" + "\n".join(lines) + "\n" + rule
-
-
 CP1_NOTE_RULE = ("The PI wrote this note when approving the frozen plan at CP1. Follow it where the frozen plan "
                  "allows. It does not change the frozen plan: if it asks for something the plan does not allow, do "
                  "the plan's work and name the conflict in `failures`.")
-CP2_REVIEW_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Check each point it raises against the "
-                        "ledgers and files and file an issue where one holds. It does not change the CP2 decision or "
-                        "the frozen plan.")
-CP2_REPORT_NOTE_RULE = ("The PI wrote this when approving the evidence at CP2. Cover every point it asks of the report; "
-                        "a point the evidence cannot support goes under \"한계\" with the reason. It never makes an "
-                        "uncitable claim citable and does not change the frozen plan.")
 CONTINUE_NOTE_RULE = ("The PI wrote these on the previous round's cards. Use them in the new plan where they fit; the "
                       "PI approves the new plan at its own CP1.")
 
@@ -1561,11 +1423,12 @@ def selection_record_line(plan: Any) -> str:
             f"판단을 바꿀 관측 {len(record.get('change_signals') or [])}개.")
 
 
-def research_cp2_notes(contract: dict) -> list[tuple[str, str]]:
+def research_cp2_notes(contract: dict, *, include_current: bool = True) -> list[tuple[str, str]]:
     """The notes of every approved CP2 of this request, earlier rounds first: the PI approved each for its report."""
     receipts = [(f"round {archived.get('round')}", archived.get("cp2"))
                 for archived in contract.get("rounds") or [] if isinstance(archived, dict)]
-    receipts.append(("", (contract.get("checkpoints") or {}).get("cp2")))
+    if include_current:
+        receipts.append(("", (contract.get("checkpoints") or {}).get("cp2")))
     notes = [(label, str(receipt.get("note") or "")) for label, receipt in receipts
              if isinstance(receipt, dict) and receipt.get("decision") == "approved" and receipt.get("note")]
     if len(notes) == 1 and not notes[0][0]:  # this round's note alone needs no round label
@@ -2096,25 +1959,6 @@ def general_report_warnings(steps: list[dict], results: dict[str, TaskResult | d
     return "## 보고서 경고\n" + "\n".join(lines) if lines else ""
 
 
-def _research_plan_digest(plan: dict) -> str:
-    """The frozen plan as the research reviewer and report writer read it: question, protocol, pack values, steps.
-    Only the step list is clipped: a real plan runs past 20,000 characters, and clipping the whole JSON cut the
-    middle of the protocol the reviewer judges against (PR #358 review)."""
-    steps = plan.get("steps") or []
-    step_table = [{key: step.get(key) for key in ("id", "branch", "depends_on", "phase")} for step in steps]
-    step_details = [{key: step.get(key) for key in ("id", "agent_id", "instruction", "claim_ids", "outputs",
-                                                    "optional_outputs", "evidence_slots")}
-                    for step in steps]
-    frozen = {"brief": plan.get("brief"),
-              "branches": plan.get("branches") or [],
-              "protocol": {k: v for k, v in (plan.get("protocol") or {}).items() if k != "packs"},
-              "pack_values": plan.get("pack_values") or {}}
-    return (json.dumps(frozen, ensure_ascii=False) +
-            "\nStep table (complete): " + json.dumps(step_table, ensure_ascii=False) +
-            "\nStep details (instructions may be clipped): " +
-            clip(json.dumps(step_details, ensure_ascii=False), 8000))
-
-
 def _branch_terminal_states(topology: dict[str, Any], steps: list[dict],
                             results: dict[str, TaskResult]) -> list[dict[str, Any]]:
     """Summarize execution against the terminal sets from the shared branch topology."""
@@ -2162,13 +2006,7 @@ def _research_issue_lines(issues: list[dict]) -> list[str]:
             for issue in sorted(issues, key=lambda issue: issue["priority"])]
 
 
-def _without_empty(value: Any) -> Any:
-    """A ledger row without its null or empty optional fields, so the reviewer prompt carries what was stated."""
-    if isinstance(value, dict):
-        return {key: _without_empty(item) for key, item in value.items() if item not in (None, [], {}, "")}
-    if isinstance(value, list):
-        return [_without_empty(item) for item in value]
-    return value
+
 
 
 def _citable_claim_line(row: dict) -> str:
@@ -2702,36 +2540,6 @@ def _usd_amount(value: Any) -> bool:
     return type(value) in (int, float) and math.isfinite(value) and value > 0
 
 
-def valid_review(value: Any, schema: dict[str, Any] = REVIEW_SCHEMA) -> bool:
-    """Check every required field of ``schema`` (REVIEW_SCHEMA unless given) without a new JSON Schema dependency."""
-    def matches(item: Any, schema: dict) -> bool:
-        typ = schema.get("type")
-        if isinstance(typ, list):
-            return any(matches(item, {**schema, "type": choice}) for choice in typ)
-        if typ == "null":
-            return item is None
-        if typ == "object":
-            if not isinstance(item, dict):
-                return False
-            props = schema["properties"]
-            if not set(schema.get("required", [])).issubset(item):
-                return False
-            if schema.get("additionalProperties") is False and set(item) - set(props):
-                return False
-            return all(matches(v, props[k]) for k, v in item.items())
-        if typ == "array":
-            return isinstance(item, list) and all(matches(v, schema["items"]) for v in item)
-        if typ == "boolean":
-            return type(item) is bool
-        if typ == "integer":
-            return (type(item) is int and schema.get("minimum", item) <= item <= schema.get("maximum", item))
-        if typ == "string":
-            return isinstance(item, str) and item in schema.get("enum", [item])
-        return False
-
-    return matches(value, schema)
-
-
 def normalize_precedents(value: Any) -> dict[str, Any] | None:
     """Bound a valid literature-scout result and give its required analyses stable checklist ids."""
     if not valid_review(value, PRECEDENT_SCHEMA):
@@ -2754,51 +2562,6 @@ PRECEDENT_CANCEL_GRACE_S = 10.0
 def precedent_warning(code: str) -> dict[str, Any]:
     return {"status": "warning", "warning": f"analysis precedents unavailable ({code})",
             "papers": [], "required": [], "recommended": [], "limitations": []}
-
-
-def _citations(row: dict[str, Any]) -> str:
-    return "; ".join(str(item) for item in row.get("citations") or []) or "citation unavailable"
-
-
-def analysis_precedents_text(record: Any) -> str:
-    """Compact context shared by planning, solo execution, review and report prompts."""
-    if not isinstance(record, dict):
-        return ""
-    if record.get("status") != "ok":
-        return "Analysis precedents:\n- unavailable; continue without precedent requirements."
-    lines = ["Analysis precedents:",
-             "Paper access/receipt declarations are unverified until artifact hash/ranges are checked after approval. "
-             "Do not invent method/QC parameters; request missing evidence.", "Papers:"]
-    lines.extend(f"- {row.get('title')}: {_citations(row)}" +
-                 "".join(f"; {key}: {row[key]}" for key in ("repo", "data_url", "fulltext_receipt") if row.get(key))
-                 for row in record.get("papers") or [])
-    lines.append("Required analyses (answer each id in `checklist`; if one cannot be done, say why):")
-    lines.extend(f"- {row.get('id')}: {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
-                 for row in record.get("required") or [])
-    lines.append("Recommended analyses:")
-    lines.extend(f"- {row.get('analysis')} — {row.get('why')} [{_citations(row)}]"
-                 for row in record.get("recommended") or [])
-    if record.get("limitations"):
-        lines.append("Search limitations: " + "; ".join(map(str, record["limitations"])))
-    return "\n".join(lines)
-
-
-def _precedent_items(record: Any) -> list[topic_checklists.ChecklistItem]:
-    if not isinstance(record, dict) or record.get("status") != "ok":
-        return []
-    return [topic_checklists.ChecklistItem(str(row["id"]), str(row.get("analysis") or ""),
-                                           str(row.get("why") or ""), "precedent")
-            for row in record.get("required") or [] if row.get("id")]
-
-
-def required_checklist_items(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
-                             precedents: Any) -> list[topic_checklists.ChecklistItem]:
-    body = plan if isinstance(plan, dict) else {}
-    items = topic_checklists.requirements(body.get("topics"), catalog)
-    by_id = {item.id: item for item in items}
-    for item in _precedent_items(precedents):
-        by_id.setdefault(item.id, item)
-    return list(by_id.values())
 
 
 def checklist_errors(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
@@ -2875,26 +2638,6 @@ def planning_guidance(catalog: dict[str, list[topic_checklists.ChecklistItem]], 
     return "\n".join(lines)
 
 
-def plan_review_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
-    body = plan if isinstance(plan, dict) else {}
-    required = required_checklist_items(body, catalog, precedents)
-    rendered = (analysis_precedents_text(precedents)
-                if isinstance(precedents, dict) and precedents.get("status") == "ok" else "")
-    if not required and not rendered:
-        return ""
-    lines = ["\n\nDeclared topic checklist and plan answers:"]
-    answers = body.get("checklist") if isinstance(body.get("checklist"), dict) else {}
-    # A shared id the plan answered per topic is listed once per topic as topic.id, with the plan's answer, so the
-    # reviewer's rows say which topic's step missed the check (PR #602 review).
-    lines.extend(f"- {entry.id}: {entry.check} Why: {entry.why}" + (f" — 계획 답: {entry.answer or '없음'}"
-                                                                  if entry.topic else "")
-                 for entry in topic_checklists.review_entries(answers, required, catalog))
-    lines.append("Answers: " + json.dumps(answers, ensure_ascii=False, sort_keys=True))
-    if rendered:
-        lines += ["", rendered]
-    return "\n".join(lines)
-
-
 def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]], precedents: Any) -> str:
     body = plan if isinstance(plan, dict) else {}
     limits = topic_checklists.limitations(body.get("checklist"))
@@ -2919,79 +2662,8 @@ def plan_report_context(plan: Any, catalog: dict[str, list[topic_checklists.Chec
     return "\n".join(lines)
 
 
-def lenient_review(value: Any, schema: dict[str, Any]) -> dict | None:
-    """``value`` when it is a valid review, or valid once an unreadable optional ``checklist`` is dropped (#586).
-
-    A malformed verdict row must not cost the whole review: it gets two parse attempts, then ends review_unparsed."""
-    if valid_review(value, schema):
-        return value
-    if isinstance(value, dict):
-        # An unreadable optional field costs only itself (#586 checklist, #889 blind_comparison).
-        for dropped in (("checklist",), ("blind_comparison",), ("checklist", "blind_comparison")):
-            if any(key in value for key in dropped):
-                rest = {key: item for key, item in value.items() if key not in dropped}
-                if valid_review(rest, schema):
-                    return rest
-    return None
-
-
-def _names_check(issue: dict, miss: topic_checklists.ReviewMiss) -> bool:
-    """Whether a review issue names the check the miss is about. ASCII boundaries: a Korean particle may follow the id.
-
-    When the check is shared by several topics, an issue about another topic's ``topic/id`` or ``topic.id`` does not
-    stand in for this topic's miss (PR #600 review)."""
-    text = " ".join(str(issue.get(key) or "") for key in ("problem", "request", "evidence_quote"))
-
-    def named(spelling: str) -> bool:
-        return re.search(rf"(?<![A-Za-z0-9_.-]){re.escape(spelling)}(?![A-Za-z0-9_-])", text) is not None
-
-    qualified = {topic: named(f"{topic}/{miss.item.id}") or named(f"{topic}.{miss.item.id}")
-                 for topic in miss.item.topic.split(",")}
-    if any(qualified[topic] for topic in miss.topics or qualified):
-        return True
-    return not any(qualified.values()) and named(miss.item.id)
-
-
 # The solo route reviews one direct result, not the plan's steps: those are only the fallback (route_decision).
 SOLO_OWNER = "단독 처리"
-
-
-def review_with_checklist(review: dict, plan: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
-                          precedents: Any, *, research: bool = False, owner: str | None = None) -> dict:
-    """The review plus a P2 issue for each check the plan answered with a step that the reviewer found partly or not
-    done (#586). In the 10-13 trial the reviewers got the checklist and cited it in no finding.
-
-    A P1 or P2 issue that already names the check's id stands in for it; a P3 one does not. assumption and
-    not_applicable answers add nothing: the plan stated why, and the review already files a wrong reason. A check
-    several topics share, answered per topic, gets one issue per topic on that topic's own step. The research lane's
-    issues carry its extra fields (claim_id, category, evidence_quote).
-
-    ``owner`` is the result a solo review judged (SOLO_OWNER). The plan's steps never ran then, so the issue goes
-    to that result: it is neither filed on a plan step nor tells the PI to fix one (PR #600 review)."""
-    body = plan if isinstance(plan, dict) else {}
-    required = required_checklist_items(body, catalog, precedents)
-    issues = [issue for issue in review.get("issues") or [] if isinstance(issue, dict)]
-    added: list[dict] = []
-    for miss in topic_checklists.review_misses(body.get("checklist"), required, review.get("checklist")):
-        if any(issue.get("priority") in ("P1", "P2") and _names_check(issue, miss) for issue in [*issues, *added]):
-            continue
-        verdict = "일부만 했다" if miss.status == "partly" else "하지 않았다"
-        if owner:
-            issue = {"step_id": owner, "priority": "P2",
-                     "problem": f"점검 {miss.name}: {owner} 결과에서 리뷰어는 {verdict}고 판정했습니다. "
-                                f"근거: {miss.evidence or '없음'}",
-                     "request": f"{owner} 결과에서 점검 {miss.name}을(를) 끝내거나, 못 하는 이유를 한계에 남기세요."}
-        else:
-            steps = ", ".join(miss.steps)
-            issue = {"step_id": miss.steps[0], "priority": "P2",
-                     "problem": f"점검 {miss.name}: 계획은 {steps} 단계로 답했지만 리뷰어는 {verdict}고 "
-                                f"판정했습니다. 근거: {miss.evidence or '없음'}",
-                     "request": f"{steps} 단계에서 점검 {miss.name}을(를) 끝내거나, 못 하는 이유를 계획에 "
-                                "assumption으로 남기세요."}
-        if research:
-            issue.update(claim_id="", category="other", evidence_quote=miss.evidence)
-        added.append(issue)
-    return {**review, "issues": [*issues, *added]} if added else review
 
 
 def checklist_appendix(plan: Any, review: Any, catalog: dict[str, list[topic_checklists.ChecklistItem]],
@@ -4314,6 +3986,7 @@ class Orchestrator:
         final_step = bool(task.meta.get("final_budget_turn"))  # nothing runs after this step but its own turns
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
                                 {"paper_skill", "recruit_check", "plan_recruit"})
+        repairing_audit = task.meta.get("kind") == audit_repair.KIND
 
         async def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -4402,15 +4075,23 @@ class Orchestrator:
             retry_answers = []
             tool_errors: list[str] = []
             for attempt in range(first_attempt, limit + 1):
-                if optional_support:
+                if repairing_audit:
+                    self._count_recorded_costs(rid)
+                    remaining = self._request_budget_remaining(rid)
+                    if rid in self.budget_denials or (remaining is not None and remaining < float(_CENT)):
+                        raise BudgetExceeded("audit repair budget exhausted")
+                    current = current.model_copy(update={"budget_usd": min(
+                        cap for cap in (self._turn_cap(current, 0), remaining) if cap is not None)})
+                elif optional_support:
                     if not self._diagnosis_budget_available(rid):
                         raise BudgetExceeded("facilities diagnosis budget exhausted")
                 else:
                     await self._check_budget(rid)
                 login_hold = getattr(self.hub, "login_hold", lambda _engine: None)(engine)
-                if optional_support and login_hold:
+                if (optional_support or repairing_audit) and login_hold:
                     return TaskResult(task_id=current.id, agent_id=current.agent_id, ok=False,
-                                      error="facilities engine login required")
+                                      error="optional turn engine login required" if repairing_audit else
+                                            "facilities engine login required")
                 if login_hold:
                     deadline = (await login_deadline(current))
                     if not await self.hub.wait_login(rid, key, engine,
@@ -4421,8 +4102,9 @@ class Orchestrator:
                         return await login_failure(current, "engine login wait exceeded the configured maximum")
                     await self._check_budget(rid)
                 hold = getattr(self.hub, "quota_hold", lambda _engine: None)(engine)
-                if optional_support and hold:
-                    return quota_failure(current, "facilities engine quota unavailable")
+                if (optional_support or repairing_audit) and hold:
+                    return quota_failure(current, "optional turn engine quota unavailable" if repairing_audit else
+                                         "facilities engine quota unavailable")
                 if hold:
                     deadline = (await quota_deadline())
                     if not await self.hub.wait_quota(rid, key, engine,
@@ -4508,7 +4190,7 @@ class Orchestrator:
                         proofs[execution_step] = None  # sticky mixed-input attempts
                     await persist_request(self.hub, rid)
                 # Last await before the send: hold this attempt's whole cap now (#862, opt-in).
-                attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support)
+                attempt_task = await self._reserve_dispatch(rid, attempt_task, optional=optional_support or repairing_audit)
                 self._note_inflight_cap(rid, attempt_task)
                 try:
                     placement = self.first_step_dispatch.get(rid) if execution_step else None
@@ -4589,6 +4271,8 @@ class Orchestrator:
                     tool_errors = list(dict.fromkeys([*tool_errors, *res.tool_errors]))
                 if tool_errors:  # a retry that succeeds keeps the earlier attempts' failed lookups (PR #363 review)
                     res = res.model_copy(update={"tool_errors": list(tool_errors)})
+                if repairing_audit and (res.cost_usd or 0) > attempt_task.budget_usd:
+                    return res.model_copy(update={"ok": False, "error_kind": "audit_repair_budget"})
                 # Audit even failed/exceptional attempts. Keep answered asks across
                 # every retry, including engines without session resume.
                 answers = getattr(self.hub, "ask_results_for_task", lambda _tid: [])(res.task_id)
@@ -4605,7 +4289,7 @@ class Orchestrator:
                         retry_answers.append(update)
                 # A finished turn of the last step is judged once run_step knows no wake turn follows it: one that
                 # still waits on an answer or job is not final, and the next turn's gate decides (PR #527 review).
-                if not optional_support and not (kind is None and final_step):
+                if not (optional_support or repairing_audit) and not (kind is None and final_step):
                     await self._check_budget(rid, block=False)
                 previous_result = res
                 if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
@@ -4829,6 +4513,13 @@ class Orchestrator:
                 tool_errors.extend(res.tool_errors)
                 res = res.model_copy(update={"tool_errors": list(dict.fromkeys(tool_errors))})
 
+        if repairing_audit:
+            if engine not in {"claude_code", "mock"}:
+                raise BudgetExceeded("audit repair requires an engine with a per-turn spending cap")
+            result = await dispatch_with_retry(task, max_attempts=1)
+            if result.pending_jobs:
+                await self._release_step_jobs(result.task_id)
+            return result
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
         if not res.ok and (res.exit_code in (0xC000013A, -1073741510) or res.early_exit_attempted):
             if final_step:
@@ -5736,6 +5427,8 @@ class Orchestrator:
                          ((req_state or {}).get("research_contract") or {}).get("execution_enabled") else None)
         branch_topology = branch_plan_topology((research_plan or {}).get("branches") or [], steps)
         branch_ids = branch_topology["branch_ids"]
+        draft = analysis_draft.for_request(req_state, research_plan) if research_plan else None
+        transfer = bool(draft and analysis_draft.artifact_loader(self.hub, req_state))
         branch_by_step = branch_topology["branch_by_step"]
         branch_terminals = branch_topology["terminals"]
         shared_environment_protected = any(
@@ -5791,42 +5484,25 @@ class Orchestrator:
 
         def upstream(step: dict, whole_hpc: bool) -> str:
             parts = []
-            for d in step["depends_on"]:
+            for d in input_steps(step):
                 r = results.get(d)
-                if r and r.ok:
-                    head = f"## {d} · {by_id[d]['agent_id']}"
-                    if whole_hpc and r.outputs and r.provenance.get("hpc_remote_data"):
-                        parts.append(remote_context(r, head, True))
-                        continue
-                    artifacts = [{"workdir_id": r.workdir_id, "path": path}
-                                 for path in r.outputs]
-                    # Relative to the step folder, where the runner links inputs/<step id> (#423): a script that
-                    # names these paths still runs from a request bundle on another machine.
-                    remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
-                    paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n" +
-                             "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
-                             "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
-                                       if whole_hpc and output_relpath(path) else input_relpath(d, path)) or str(Path(r.workdir) / path)
-                                      for path in r.outputs) if r.workdir else "")
-                    parts.append(f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
-                                 f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}\n"
-                                 f"{clip(r.text, self.cfg.context_chars_per_step)}")
-            for d in input_steps(step)[len(step["depends_on"]):]:
-                r = results.get(d)
-                if r and r.ok and r.workdir and r.outputs:
-                    if whole_hpc and r.provenance.get("hpc_remote_data"):
-                        parts.append(remote_context(r, f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)", False))
-                        continue
-                    artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
-                    remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
-                    paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n" +
-                             "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
-                             "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
-                                       if whole_hpc and output_relpath(path) else input_relpath(d, path)) or str(Path(r.workdir) / path)
-                                      for path in r.outputs))
-                    parts.append(f"## {d} · {by_id[d]['agent_id']} (earlier step, files only)\n"
-                                 f"Declared output artifacts: {json.dumps(artifacts)}\n"
-                                 f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}")
+                direct = d in step["depends_on"]
+                if not r or not r.ok or not (direct or r.workdir and r.outputs):
+                    continue
+                head = f"## {d} · {by_id[d]['agent_id']}" + ("" if direct else " (earlier step, files only)")
+                remote = r.provenance.get("hpc_remote_data") if whole_hpc else None
+                if remote and r.outputs:
+                    parts.append(remote_context(r, head, direct))
+                    continue
+                artifacts = [{"workdir_id": r.workdir_id, "path": path} for path in r.outputs]
+                paths = ("Remote paths relative to site remote_workdir (absolute roots are in runner context):\n"
+                         + "\n".join(f"{m['data']}/{row['path']}" for m in remote for row in m['files']) if remote else
+                         "\n".join((f"../../../data/{d}/{r.task_id}/" + output_relpath(path).removeprefix("outputs/")
+                                    if whole_hpc and output_relpath(path) else input_relpath(d, path))
+                                   or str(Path(r.workdir) / path) for path in r.outputs) if r.workdir else "")
+                part = (f"{head}\nDeclared output artifacts: {json.dumps(artifacts)}\n"
+                        f"Readable files (relative to {'HPC job cwd' if whole_hpc else 'your folder'}):\n{paths}")
+                parts.append(f"{part}\n{clip(r.text, self.cfg.context_chars_per_step)}" if direct else part)
             if step.get("branch") == "synthesis" and branch_ids:
                 failed_lines = []
                 for branch_id in branch_ids:
@@ -5883,9 +5559,19 @@ class Orchestrator:
                 if cp1.get("approved"):  # the receipt of the CP1 this plan's steps run under (PI 점검 R11)
                     prompt += approval_note_block("CP1", [("", cp1.get("note") or "")], CP1_NOTE_RULE)
                 prompt += self._spending_cap_line(rid)
+                if not branch_ids and compact_workflow.enabled(req_state.get("research_options")):
+                    prompt += compact_workflow.ANALYSIS_INSTRUCTIONS
             prompt += self._lookup_usage_line(rid)  # at the start of this step: what is left to spend (#1088)
             declared = [rel for rel in map(output_relpath, step.get("outputs") or []) if rel]
             optional = [rel for rel in map(output_relpath, step.get("optional_outputs") or []) if rel]
+            step_draft = draft if draft and draft.inline and step["id"] == draft.step_id else None
+            if step_draft:
+                draft_prompt = step_draft.prompt()
+                if preapproval_audit.enabled(req_state):
+                    draft_prompt += approval_note_block(
+                        "CP2", research_cp2_notes(contract, include_current=False), CP2_REPORT_NOTE_RULE)
+                prompt += draft_prompt
+                optional.append(step_draft.path)
             if declared or optional:
                 prompt += STEP_OUTPUTS_RULE.format(
                     required=", ".join(f"./{rel}" for rel in declared) or "(none)",
@@ -5937,16 +5623,13 @@ class Orchestrator:
             # Whole-request HPC steps run in scheduler jobs that never read them, so they get none (#1336).
             stored_precedents = (precedent_texts.rows(self.hub.requests.get(rid, {}).get("analysis_precedents"))
                                  if research_plan and not whole_hpc else [])
-            upstream_dirs = [results[d].workdir for d in linked
-                             if d in results and results[d].ok and results[d].workdir and results[d].outputs]
-            upstream_steps = {d: results[d].workdir for d in linked
-                              if d in results and results[d].ok and results[d].workdir and results[d].outputs}
             pin = step_execution.runner_pin((req_state or {}).get("plan") or {}, step, environment_runner_pin(step))
             if pin and (session_id or workdir):
                 origin = self._session_origin(rid, step["agent_id"], session_id)
                 if origin != pin:
                     return TaskResult(task_id="", agent_id=step["agent_id"], ok=False,
                                       error="environment runner differs from or cannot verify resumed workspace runner")
+            optional_outputs = [*step.get("optional_outputs", []), *([step_draft.path] if step_draft else [])]
             task = Task(agent_id=step["agent_id"], request_id=rid, prompt=prompt, context=ctx,
                         output_schema=RESEARCH_STEP_SCHEMA if research_plan else None,
                         resume_session_id=session_id if can_resume else None,
@@ -5959,16 +5642,12 @@ class Orchestrator:
                               "revision": self._step_revision(rid, step["id"]),
                               "title": f"{step['id']}: {step['instruction'][:100]}" + (" (리뷰 반영 수정)" if feedback else ""),
                               "project_dirs": self.hub.requests.get(rid, {}).get("project_dirs", []),
-                              "upstream_dirs": upstream_dirs, "upstream_steps": upstream_steps,
-                              "upstream_artifacts": {d: {
-                                  "task_id": results[d].task_id,
-                                  "workdir": results[d].workdir, "outputs": list(results[d].outputs),
-                                  "output_sha256": dict(results[d].output_sha256),
-                              } for d in upstream_steps},
+                              **step_execution.upstream_inputs(results, linked),
                               **({"precedent_texts": stored_precedents} if stored_precedents else {}),
-                              "outputs": [*step.get("outputs", []), *step.get("optional_outputs", [])],
+                              "outputs": [*step.get("outputs", []), *optional_outputs],
                               "required_outputs": step.get("outputs", []),
-                              "optional_outputs": step.get("optional_outputs", []),
+                              "optional_outputs": optional_outputs,
+                              **analysis_draft.transfer_meta(step_draft, transfer),
                               "environment_step": ENV_LOCK_OUTPUT in [*step.get("outputs", []),
                                                                         *step.get("optional_outputs", [])],
                               **({"session_runner": pin} if pin else {}),
@@ -5985,6 +5664,8 @@ class Orchestrator:
                                **({"finish_turns": self.hub.s.research.finish_turns} if research_plan else {}),
                                **({"workdir": workdir} if workdir else {})})
             if updates:
+                if step_draft and can_resume:
+                    updates.append(draft_prompt)
                 task = task.model_copy(update={
                     "prompt": continuation_prompt(task, "\n\n".join(updates), resumable=can_resume,
                                                    previous_result=previous,
@@ -6608,7 +6289,63 @@ class Orchestrator:
                 reuse_lines.append(f"- {len(pinned)} DOI/PMID reference(s) of the reused steps are pinned by identifier "
                                    f"only; their content was not checked ({', '.join(pinned[:5])}"
                                    f"{', ...' if len(pinned) > 5 else ''}).")
+        preaudited, audit_record = None, None
         recorded = (contract.get("checkpoints") or {}).get("cp2") or {}
+        if preapproval_audit.enabled(req) and (draft := analysis_draft.for_request(req)):
+            reviewer = self.cfg.reviewer_agent
+            cp2_report = self.format_results(steps, results, n)
+            earlier_notes = research_cp2_notes(contract, include_current=False)
+            try:
+                if not reviewer or reviewer not in self.hub.agents:
+                    raise ValueError("Research reviewer unavailable")
+                body = await self._collect_research_draft(
+                    rid, draft, results, cp2_report, earlier_notes, lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True), raw=True)
+                if body is None:
+                    raise ValueError(self.budget_denials[rid])
+                prepared = await preapproval_audit.prepare(
+                    self.hub, req, draft, body, results, earlier_notes=earlier_notes,
+                    restricted=self._restricted_draft_inputs(rid),
+                    claim_context={"ledgers": ledgers, "refused": refused, "unsupported": unsupported,
+                                   "artifact_sha256": artifact_sha256, "literal_checks": literal_checks})
+                review, reason = await independent_review.run(
+                    self.hub, rid, text, reviewer=reviewer, refs=reference_meta(req), packs=packs,
+                    cp2_notes=earlier_notes,
+                    run_step=self.run_step, budget_denials=self.budget_denials, before_cp2=prepared,
+                    render_evidence=lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, draft_path=draft.path),
+                    spending_cap=lambda: self._spending_cap_line(rid))
+                if not review:
+                    raise ValueError(reason or self.budget_denials.get(rid) or "Research audit unavailable")
+            except (BudgetExceeded, ValueError) as error:
+                contract["failure"] = {"stage": "independent_audit", "plan_sha256": contract["plan_sha256"],
+                                       "error": str(error)}
+                req["outcome"] = "research_failed"
+                await self._finish(rid, cp2_report + f"\n\nResearch stopped before CP2: {error}.",
+                                   serialized(), ok=False, error=str(error))
+                return
+            preaudited = (draft.for_report(body), review)
+            audit_record = detail["independent_audit"] = prepared.card(reviewer, review)
+            detail["analysis_draft"] = body
+            summary += f"\n독립 감사 {review['verdict']} · 남은 지적 {len(review['issues'])}건"
+            if audit_repair.enabled(req):
+                repair_record = audit_repair.record_for(contract, draft)
+                if recorded.get("plan_sha256") != contract["plan_sha256"] or not recorded.get("decision"):
+                    recheck, repair_record = await audit_repair.repair_once(
+                        self.hub, rid, draft, review, results,
+                        restricted=prepared.restricted, session_origin=self._session_origin,
+                        free_session=self._free_session, run_step=self.run_step, budget_error=BudgetExceeded)
+                    if recheck:
+                        return await self._research_after_steps(rid, text, all_steps, results, n, serialized, packs)
+                if repair_record:
+                    audit_record["repair"], note = audit_repair.card(repair_record)
+                    summary += note
+            summary += "\n승인 메모는 보고서 본문에 인용합니다."
+            if revise_continues:
+                summary += " 초안을 고치려면 수정 요청을 고르세요."
+
+        audit_changed = bool(audit_record and (not audit_record["artifacts_verified"]
+                                              or recorded.get("independent_audit") != audit_record))
         source_changed = ((live_resolver is not None or self.hub.s.research.literal_source_check)
                           and bool(recorded.get("decision"))
                           and recorded.get("plan_sha256") == contract["plan_sha256"]
@@ -6620,7 +6357,7 @@ class Orchestrator:
             prefix = 'Live source' if live_resolver is not None else 'Saved source'
             summary = prefix + " verification changed after the recorded CP2 decision. " + summary
         if (recorded.get("decision") and recorded.get("plan_sha256") == contract["plan_sha256"]
-                and not source_changed):
+                and not source_changed and not audit_changed):
             # A restart after the receipt was saved: the PI already decided this plan's CP2, so it is not asked again.
             decided, note, asks = recorded["decision"], str(recorded.get("note") or ""), recorded.get("asks")
             refused = recorded.get("refused_evidence") or []
@@ -6630,39 +6367,14 @@ class Orchestrator:
             literal_checks = recorded.get('literal_checks') or literal_checks
             update_conclusion_depth()  # the saved CP2 refusal set is authoritative after a restart
         else:
-            cp2: str | None = None
-            decision: dict[str, Any] = {}
-            asks = 0
-            retry = ""
-            while cp2 is None and asks < CP2_MAX_ASKS:
-                asks += 1
-                decision = await self.hub.request_approval(
-                    kind="research_evidence", request_id=rid, detail=detail, summary=retry + summary)
-                cp2 = read_evidence_decision(decision)
-                if (cp2 == "revision_requested" and revise_continues and asks < CP2_MAX_ASKS
-                        and not str(decision.get("note") or "").strip()):
-                    # The new plan is written from the note, so a revise without one is asked again (R10).
-                    cp2, retry = None, ("수정 요청에 메모가 없어 다시 묻습니다. 무엇을 고칠지 메모에 적고 수정 요청을 "
-                                        "누르세요. ")
-                elif cp2 is None:
-                    retry = ("The previous CP2 answer had no readable approve/revise/deny choice and was not "
-                             "approved. ")
-            decided = cp2 or "unreadable"
-            note = str(decision.get("note") or "").strip()
-            # Kept per step in the receipt: a continuation reuses a step together with its salvage records (#90).
-            salvage = contract.pop("result_salvage", None) or {}
-            contract.setdefault("checkpoints", {})["cp2"] = {
-                "gate": "research_evidence", "decision": decided, "choice": decision.get("choice"), "note": note,
-                "approval_id": decision.get("approval_id"), "decided_at": decision.get("decided_at"),
-                "plan_sha256": contract["plan_sha256"], "asks": asks,
-                **({"warnings": warnings} if warnings else {}),
-                **({"refused_rows": refused_rows} if refused_rows else {}),
-                "refused_evidence": refused, "unsupported_claims": unsupported,
-                "artifact_sha256": artifact_sha256, "unreported_outputs": unreported_outputs,
-                **({'literal_checks': literal_checks} if literal_checks else {}),
-                **({"source_verification": source_verification,
-                    "source_verification_reports": source_reports} if live_resolver is not None else {}),
-                **({"result_salvage": salvage} if salvage else {})}
+            decided, note, asks, decision = await evidence_checkpoint.ask(self.hub, rid, detail, summary,
+                                                                        revise_continues)
+            evidence_checkpoint.record_receipt(
+                contract, decision, decided, note, asks, warnings=warnings, refused_rows=refused_rows,
+                refused=refused, unsupported=unsupported, artifact_sha256=artifact_sha256,
+                unreported_outputs=unreported_outputs, literal_checks=literal_checks,
+                source_verification=source_verification,
+                source_reports=source_reports if live_resolver is not None else None, independent_audit=audit_record)
         req["outcome"] = f"evidence_{decided}"
         await persist_request(self.hub, rid)
         audit = f"CP2 evidence review: {decided}."
@@ -6684,7 +6396,8 @@ class Orchestrator:
             audit += "\n" + "\n".join(reuse_lines)
         if decided == "revision_requested":
             # The PI's note is the revision request: the CSO re-plans from it and the PI approves a new CP1 (R10).
-            ended = (await self._research_continue(rid, None, results, cp2_note=note) if note else
+            ended = (await self._research_continue(rid, preaudited[1] if preaudited else None, results,
+                                                   cp2_note=note) if note else
                      "수정 요청에 메모가 없어 새 계획을 세우지 않았습니다.")
             if ended is None:  # a new plan, CP1 and run took this request over
                 return
@@ -6713,15 +6426,19 @@ class Orchestrator:
             review_audit = audit + (("\n" + source_audit) if source_audit else "")
             await self._research_report(rid, text, steps, results, n, serialized, packs, report, review_audit, ledgers,
                                         refused=refused, unsupported=unsupported,
-                                        artifact_sha256=receipt.get("artifact_sha256") or artifact_sha256)
+                                        artifact_sha256=receipt.get("artifact_sha256") or artifact_sha256,
+                                        preaudited=preaudited)
             return
         if decided == "approved":
             report += ("\nNo reviewer agent is configured (orchestrator.reviewer_agent), so the research review and "
                        "report did not run.")
         if source_audit:
             report = _append_report_metadata(report, [source_audit])
-        (await self._finish(rid, report, serialized(), ok=decided == "approved",
-                     error=None if decided == "approved" else RESEARCH_END_ERRORS.get(f"evidence_{decided}")))
+        missing_review = decided == "approved" and analysis_draft.for_request(req) is not None
+        req["outcome"] = "research_failed" if missing_review else req["outcome"]
+        (await self._finish(rid, report, serialized(), ok=decided == "approved" and not missing_review,
+                     error=("Research reviewer unavailable" if missing_review else
+                            RESEARCH_END_ERRORS.get(f"evidence_{decided}"))))
 
     async def _blind_draft(self, rid: str, req: dict, text: str, refs: dict) -> bool:
         """The sealed blind draft (#889): the reviewer answers the original request alone, after CP1 approval and
@@ -6760,11 +6477,22 @@ class Orchestrator:
         await persist_request(self.hub, rid)
         return True
 
+    def _restricted_draft_inputs(self, rid: str) -> bool:
+        return bool(self._external_guard(rid) and restricted_input_steps(
+            self.hub.requests[rid]["plan"]["steps"], *self._request_inputs(rid), self.hub.s))
+
+    async def _collect_research_draft(self, rid, draft, results, report, notes, render_evidence, *, raw=False):
+        return await analysis_draft.collect(
+            self.hub, rid, draft, results, cp2_report=report, cp2_notes=notes, render_evidence=render_evidence,
+            restricted_inputs=lambda: self._restricted_draft_inputs(rid), session_origin=self._session_origin,
+            free_session=self._free_session, run_step=self.run_step, budget_denials=self.budget_denials, raw=raw)
+
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
                                cp2_audit: str, ledgers: dict[str, Any], *, refused: list[dict],
                                unsupported: list[dict],
-                               artifact_sha256: dict[str, str | None]) -> None:
+                               artifact_sha256: dict[str, str | None],
+                               preaudited: tuple[str, dict] | None = None) -> None:
         """After CP2 approval: one research review, then the CSO's report and its claim-anchor check (#58 ③⑤).
 
         The plan stays frozen, so a review that asks for revision ends the request unless the PI continues through
@@ -6807,52 +6535,37 @@ class Orchestrator:
                 False, review, {"stage": stage, "budget": self.budget_denials[rid]},
                 error="예산 승인을 받지 못해 연구를 멈췄어요"))
 
-        stored = contract.get("review") or {}
-        review: dict = {}
-        if stored.get("plan_sha256") == plan_hash:
-            saved = {"verdict": stored.get("verdict"), "issues": stored.get("issues"),
-                     **{key: stored[key] for key in ("checklist", "blind_comparison") if key in stored}}
-            review = lenient_review(saved, RESEARCH_LANE_REVIEW_SCHEMA) or {}
-        if not review:
-            catalog = topic_checklists.load()
-            prompt = RESEARCH_REVIEW_PROMPT.format(
-                request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
-                packs=render_pack_review(packs),
-                ledgers=self._research_ledgers(steps, results, ledgers, refused, unsupported, artifact_sha256, n)) + \
-                plan_review_context(req.get("plan"), catalog, req.get("analysis_precedents"))
-            carried = contract.get("continuation") or {}
-            if carried.get("plan_sha256") == plan_hash:
-                prompt += research_continuation.review_prompt(carried.get("p1_issues") or [],
-                                                              approval_note(carried.get("pi_request")),
-                                                              trigger=carried.get("trigger") or "")
-            prompt += blind_draft.review_block(contract.get(blind_draft.KEY))
-            prompt += approval_note_block("CP2", cp2_notes, CP2_REVIEW_NOTE_RULE) + self._spending_cap_line(rid)
-            if contract.get("result_warnings"):
-                prompt += "\nCP2 result limitations:\n" + "\n".join(contract["result_warnings"])
-            reply: TaskResult | None = None
-            for parse_attempt in (1, 2):
-                reply = await self.run_step(Task(
-                    agent_id=reviewer, request_id=rid, output_schema=RESEARCH_LANE_REVIEW_SCHEMA,
-                    prompt=prompt if parse_attempt == 1 else prompt + RESEARCH_REVIEW_RETRY,
-                    meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "parse_attempt": parse_attempt, "request": text,
-                          "title": "연구 리뷰"}))
-                if rid in self.budget_denials:
-                    (await budget_denied("review", None))
+        draft = analysis_draft.for_request(req)
+        if draft and not preaudited:
+            try:
+                draft_body = await self._collect_research_draft(
+                    rid, draft, results, cp2_report, cp2_notes, lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n, staged=True))
+                if draft_body is None:
+                    await budget_denied("analysis draft", None)
                     return
-                parsed = (lenient_review(reply.structured, RESEARCH_LANE_REVIEW_SCHEMA)
-                          or lenient_review(extract_json(reply.text), RESEARCH_LANE_REVIEW_SCHEMA))
-                if reply.ok and parsed:
-                    review = blind_draft.without_unfounded_comparison(with_p1_verdict(review_with_checklist(
-                        parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True)),
-                        contract.get(blind_draft.KEY))
-                    break
-            if not review:
-                reason = (reply.error if reply else None) or "missing or invalid research review"
-                (await end("research_review_unparsed", cp2_report + f"\n\nResearch review: unparsed ({reason}).", False,
-                    {"status": "review_unparsed", "reason": reason}))
+            except ValueError as exc:
+                await end("research_failed", cp2_report + f"\n\nAnalysis draft unavailable: {exc}.",
+                          False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc))
                 return
-            contract["review"] = {"plan_sha256": plan_hash, "reviewer": reviewer, **review}
-            await persist_request(self.hub, rid)
+
+        if preaudited:
+            draft_body, review = preaudited
+            reason = None
+        else:
+            review, reason = await independent_review.run(
+                self.hub, rid, text, reviewer=reviewer, refs=refs, packs=packs, cp2_notes=cp2_notes,
+                run_step=self.run_step, budget_denials=self.budget_denials,
+                render_evidence=lambda: independent_review.render_ledgers(
+                    steps, results, ledgers, refused, unsupported, artifact_sha256, n),
+                spending_cap=lambda: self._spending_cap_line(rid))
+        if not review:
+            if reason is None:
+                await budget_denied("review", None)
+            else:
+                await end("research_review_unparsed", cp2_report + f"\n\nResearch review: unparsed ({reason}).", False,
+                          {"status": "review_unparsed", "reason": reason})
+            return
         issues = _research_issue_lines(review["issues"])
         if review["verdict"] == "revise":
             note = await self._research_continue(rid, review, results)
@@ -6865,92 +6578,94 @@ class Orchestrator:
                 False, review))
             return
 
-        citable, other = claim_rows(ledgers, unsupported, refused=refused)
-        resumable = self.hub.supports_resume(self.cfg.cso_agent)
-        session_id, workdir = await self._free_session(
-            self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
-            req.get("cso_workdir") if resumable else None, rid=rid, step="synthesis")
-        final = await self.run_step(Task(
-            agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
-            prompt=RESEARCH_SYNTH_PROMPT.format(
-                request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
-                citable="\n".join(map(_citable_claim_line, citable)) or "(none)",
-                uncitable="\n".join(f"- {row['step_id']}/{row['claim'].get('id')} ({row['reason']}): "
-                                    f"{row['claim'].get('statement')}" for row in other) or "(none)",
-                gaps="\n".join([*_research_gap_lines(ledgers, lookups),
-                                *(contract.get("result_warnings") or [])]) or "(none)", verdict=review["verdict"],
-                issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)) +
-                plan_report_context(req.get("plan"), topic_checklists.load(),
-                                    req.get("analysis_precedents")) +
-                precedent_texts.synthesis_note(req.get("analysis_precedents")) +
-                approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE) +
-                ("\n\nRecorded claim/source metadata (not a new support judgment):\n" + clip(source_section, n)
-                 if source_section else "") +
-                ("\n\nEarlier rounds of this request:\n" + "\n".join(earlier) + "\n" + EARLIER_ROUNDS_RULE
-                 if (earlier := earlier_round_lines(contract)) else ""),
-            meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 작성",
-                  "final_budget_turn": True,
-                  **({"workdir": workdir} if workdir else {})}))
-        if not final.ok:
-            if rid in self.budget_denials:
-                (await budget_denied("synthesis", review))
-            else:
-                (await end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
-                    {"stage": "synthesis", "error": final.error or "unknown error"},
-                    error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}"))
-            return
-        # A report that finished keeps its text and check even if the budget card after it was denied; the denial
-        # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
-        body, model_appendix = _split_report_appendix(report_body(final.text))
-        check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                             artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+        def check_claims(body: str) -> dict:
+            return check_report(body, ledgers, unsupported=unsupported, refused=refused,
+                                artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+
+        if draft:
+            body, model_appendix = _split_report_appendix(draft_body)
+        else:
+            citable, other = claim_rows(ledgers, unsupported, refused=refused)
+            resumable = self.hub.supports_resume(self.cfg.cso_agent)
+            session_id, workdir = await self._free_session(
+                self.cfg.cso_agent, req.get("cso_session_id") if resumable else None,
+                req.get("cso_workdir") if resumable else None, rid=rid, step="synthesis")
+            async def write_report(prompt: str, title: str, **meta) -> TaskResult:
+                return await self.run_step(Task(
+                    agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id, prompt=prompt,
+                    meta={**refs, "kind": "synthesis", "request": text, "title": title, "final_budget_turn": True,
+                          **({"workdir": workdir} if workdir else {}), **meta}))
+
+            final = await write_report(
+                RESEARCH_SYNTH_PROMPT.format(
+                    request=text, plan_sha256=plan_hash, plan=_research_plan_digest(req["plan"]),
+                    citable="\n".join(map(_citable_claim_line, citable)) or "(none)",
+                    uncitable="\n".join(f"- {row['step_id']}/{row['claim'].get('id')} ({row['reason']}): "
+                                        f"{row['claim'].get('statement')}" for row in other) or "(none)",
+                    gaps="\n".join([*_research_gap_lines(ledgers, lookups),
+                                    *(contract.get("result_warnings") or [])]) or "(none)", verdict=review["verdict"],
+                    issues="\n".join(issues) or "(none)", results=self.format_results(steps, results, n)) +
+                    plan_report_context(req.get("plan"), topic_checklists.load(),
+                                        req.get("analysis_precedents")) +
+                    precedent_texts.synthesis_note(req.get("analysis_precedents")) +
+                    approval_note_block("CP2", cp2_notes, CP2_REPORT_NOTE_RULE) +
+                    ("\n\nRecorded claim/source metadata (not a new support judgment):\n" + clip(source_section, n)
+                     if source_section else "") +
+                    ("\n\nEarlier rounds of this request:\n" + "\n".join(earlier) + "\n" + EARLIER_ROUNDS_RULE
+                     if (earlier := earlier_round_lines(contract)) else ""),
+                "연구 보고서 작성")
+            if not final.ok:
+                if rid in self.budget_denials:
+                    (await budget_denied("synthesis", review))
+                else:
+                    (await end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
+                        {"stage": "synthesis", "error": final.error or "unknown error"},
+                        error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}"))
+                return
+            # A report that finished keeps its text and check even if the budget card after it was denied; the denial
+            # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
+            body, model_appendix = _split_report_appendix(report_body(final.text))
+        check = check_claims(body)
         # One failed claim check used to end the request after the whole study ran (17th run: no anchor at all).
         # The writer gets the problems and the citable anchors back, up to REPORT_CORRECTIONS times (#956).
         corrections = 0
-        while check["problems"] and corrections < REPORT_CORRECTIONS:
+        while not draft and check["problems"] and corrections < REPORT_CORRECTIONS:
             corrections += 1
             try:
                 # The whole report, never clipped: the corrected text replaces it, so nothing may be elided (#956).
-                fixed = await self.run_step(Task(
-                    agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id,
-                    prompt=report_correction(check["problems"],
-                                             "\n".join(map(_citable_claim_line, citable)) or "(none)", body),
-                    meta={**refs, "kind": "synthesis", "request": text, "title": "연구 보고서 교정",
-                          "report_correction": corrections, "final_budget_turn": True,
-                          **({"workdir": workdir} if workdir else {})}))
+                fixed = await write_report(
+                    report_correction(check["problems"], "\n".join(map(_citable_claim_line, citable)) or "(none)", body),
+                    "연구 보고서 교정", report_correction=corrections)
             except BudgetExceeded:
                 break  # a refused budget card: the finished report and its problems stand, as for a late denial
             if rid in self.budget_denials or not fixed.ok:
                 break  # the report written so far and its problems stand
             body, model_appendix = _split_report_appendix(report_body(fixed.text))
-            check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                                 artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+            check = check_claims(body)
         if corrections:
             contract["report_corrections"] = corrections
 
-        async def fix_consistency(prompt: str) -> str | None:  # the body vs its tables, sent back once (#1374)
-            if rid in self.budget_denials:
-                return None
-            try:
-                done = await self.run_step(Task(
-                    agent_id=self.cfg.cso_agent, request_id=rid, resume_session_id=session_id, prompt=prompt,
-                    meta={**refs, "kind": "synthesis", "request": text, "title": "보고서 수치·방향 교정",
-                          "final_budget_turn": True, **({"workdir": workdir} if workdir else {})}))
-            except BudgetExceeded:
-                return None
-            return _split_report_appendix(report_body(done.text))[0] if done.ok else None
+        if not draft:
+            async def fix_consistency(prompt: str) -> str | None:  # the body vs its tables, sent back once (#1374)
+                if rid in self.budget_denials:
+                    return None
+                try:
+                    done = await write_report(prompt, "보고서 수치·방향 교정")
+                except BudgetExceeded:
+                    return None
+                return _split_report_appendix(report_body(done.text))[0] if done.ok else None
 
-        body, contract["report_consistency"] = await report_consistency.correct_once(
-            body, results, fix_consistency, accept=lambda fixed: len(check_report(
-                fixed, ledgers, unsupported=unsupported, refused=refused,
-                artifact_sha256=artifact_sha256, literal_checks=literal_checks)["problems"]) <= len(check["problems"]))
-        check = check_report(body, ledgers, unsupported=unsupported, refused=refused,
-                             artifact_sha256=artifact_sha256, literal_checks=literal_checks)
+            body, contract["report_consistency"] = await report_consistency.correct_once(
+                body, results, fix_consistency,
+                accept=lambda fixed: len(check_claims(fixed)["problems"]) <= len(check["problems"]))
+            check = check_claims(body)
         contract["report_check"] = check
         claim_check = (["Claim check: the report is incomplete.\n" +
                         "\n".join(_problem_lines(check["problems"], "- "))] if check["problems"] else [])
         if check["problems"]:
             body = _execution_warning_summary(body)
+        if preaudited and (approval_text := (contract["checkpoints"]["cp2"].get("note") or "")):
+            body = _before_bench_block(body, preapproval_audit.approval_section(approval_text))
         fallback = "" if EARLIER_ROUNDS_HEADING.search(body) else _earlier_rounds_fallback(contract)
         if fallback:
             body = _before_bench_block(body, fallback)
@@ -6999,7 +6714,7 @@ class Orchestrator:
                         if limit else "")
             issues = ([{"step_id": sid, "priority": "P1", "problem": reason,
                         "request": "Resolve the stopped step in the revised plan."} for sid, reason in stops]
-                      if stops else [] if cp2_revise else research_continuation.p1_issues(review))
+                      if stops else research_continuation.p1_issues(review))
             round_no = len(rounds) + 2
             if cp2_revise:  # the CP2 card that asked for the revision is the decision
                 receipt = (contract.get("checkpoints") or {}).get("cp2") or {}
@@ -7061,7 +6776,8 @@ class Orchestrator:
         contract = req["research_contract"]
         carried = contract["continuation"]
         carry = research_continuation.carry_over(contract["rounds"][-1], plan, pack_hashes,
-                                                 carried.get("p1_issues") or [])
+                                                 carried.get("p1_issues") or [],
+                                                 analysis_draft.new_round_rerun(req, plan))
         if (carried.get("refusal_retry") or {}).get("state") in {"approved", "planning"}:
             carried["refusal_retry"]["state"] = "planned"  # ordinary CP1/reuse resume from this point
         carried.update(plan_sha256=research_plan_sha256(plan), verified=False, dispatch_started=False)
@@ -7164,7 +6880,7 @@ class Orchestrator:
         previous = contract['rounds'][-1]
         tools = self._research_reuse_tools(rid, plan)
         input_proofs = await asyncio.to_thread(step_execution.capture_reuse_inputs, req, plan, self.hub.s)
-        refused = dict(sealed.get('rerun') or {}) if sealed else {}
+        refused = {**analysis_draft.new_round_rerun(req, plan), **((sealed or {}).get('rerun') or {})}
         carry = research_continuation.carry_over(previous, plan, contract.get('pack_snapshot'),
                                                 carried.get('p1_issues') or [], refused)
         refused.update(step_execution.continuation_proof_problems(previous, plan, carry, tools, req, input_proofs))
@@ -7274,28 +6990,6 @@ class Orchestrator:
             if problems:
                 unbound[step["id"]] = problems
         return unbound
-
-    def _research_ledgers(self, steps: list[dict], results: dict[str, TaskResult], ledgers: dict[str, Any],
-                          refused: list[dict], unsupported: list[dict], artifact_sha256: dict[str, str | None],
-                          n: int) -> str:
-        """Each step's CP2-approved ledger for the research reviewer, with recorded hashes and readable files."""
-        parts = []
-        for step in steps:
-            sid, result = step["id"], results[step["id"]]
-            ledger = dict(ledgers.get(sid) or {})
-            ledger["artifact_refs"] = [
-                {**ref, "artifact_sha256": artifact_sha256.get(f"{sid}/{ref.get('artifact_id')}")}
-                for ref in ledger.get("artifact_refs") or []]
-            ledger["refused_at_cp2"] = [row for row in refused if row.get("step_id") == sid]
-            ledger["unsupported_at_cp2"] = [row for row in unsupported if row.get("step_id") == sid]
-            # Claim, evidence and link rows lose their empty optional fields. Everything else stays as is, so an
-            # artifact without a recorded hash still reads "artifact_sha256": null.
-            ledger = {key: [_without_empty(row) for row in value] if key in {"claims", "evidence", "links"}
-                      and isinstance(value, list) else value for key, value in ledger.items()}
-            files = "\n".join(str(Path(result.workdir) / path) for path in result.outputs) if result.workdir else ""
-            parts.append(f"### {sid} · {step['agent_id']}\nReadable files:\n{files or '(none)'}\n"
-                         f"Ledger:\n{clip(json.dumps(ledger, ensure_ascii=False), n)}")
-        return "\n\n".join(parts)
 
     @staticmethod
     def format_results(steps: list[dict], results: dict[str, TaskResult], n: int) -> str:
@@ -7559,6 +7253,8 @@ class Orchestrator:
             # A request that already carries a research contract stays research whatever the config now says,
             # so it never reaches the generic re-plan, review or synthesis paths (#90 CP2).
             research_lane = bool(intake and intake.work_kind == "research") or bool(req.get("research_contract"))
+            research_options = req.get("research_options") if research_lane else None
+            unbranched_limit = compact_workflow.unbranched_plan_limit(self.cfg.max_steps, research_options)
             research_execution = bool(research_lane and self.hub.s.research.evidence_checkpoint
                                       and req["mode"] != "plan_only")
             if research_lane:
@@ -7989,7 +7685,7 @@ class Orchestrator:
                 roster = [a for a in all_available if a["id"] not in orchestration]
                 # Apply the existing agent, DAG and external-data checks to the final assignments too.
                 research_limit = (len(req["plan"].get("branches") or []) * self.cfg.max_branch_steps + 3
-                                  if req["plan"].get("branches") else self.cfg.max_steps)
+                                  if req["plan"].get("branches") else unbranched_limit)
                 validate_steps(req["plan"]["steps"], known, research_limit, orchestration,
                                stored_environment=any("environment_binding" in s or "environment_bindings" in s
                                                       for s in req["plan"]["steps"]),
@@ -8023,7 +7719,7 @@ class Orchestrator:
                                                   topics=req["plan"].get("topics")))
                     active_pack_hashes = pack_snapshot(packs)
                     req["plan"], _ = _normalize_plan_outputs(req["plan"])
-                    validated = validate_research_plan(req["plan"], max_steps=self.cfg.max_steps,
+                    validated = validate_research_plan(req["plan"], max_steps=unbranched_limit,
                                                        max_branches=self.cfg.max_branches,
                                                        max_branch_steps=self.cfg.max_branch_steps,
                                                        active_packs=active_pack_hashes,
@@ -8222,10 +7918,12 @@ class Orchestrator:
                         topic_vocab = output_vocab.current()
                         template = RESEARCH_CP2_PLAN_PROMPT if research_execution else RESEARCH_PLAN_PROMPT
                         template = _planning_prompt(template, self.hub.s, research=True)
+                        if compact_workflow.enabled(research_options):
+                            template = compact_workflow.plan_template(template)
                         prompt = template.format(
                             request=plan_request, roster=format_roster(roster, alphagenome=self._alphagenome_ready),
                             capabilities=capabilities or "No workers available",
-                            briefing=clip(briefing, 4000) or "(none)", max_steps=self.cfg.max_steps,
+                            briefing=clip(briefing, 4000) or "(none)", max_steps=unbranched_limit,
                             max_branches=self.cfg.max_branches,
                             max_branch_steps=self.cfg.max_branch_steps,
                             branched_max_steps=self.cfg.max_branches * self.cfg.max_branch_steps + 3,
@@ -8338,7 +8036,7 @@ class Orchestrator:
 
                     def plan_problems(candidate: Any, candidate_packs: dict[str, Any]) -> list[str]:
                         try:
-                            problems = research_plan_errors(candidate, max_steps=self.cfg.max_steps,
+                            problems = research_plan_errors(candidate, max_steps=unbranched_limit,
                                                             max_branches=self.cfg.max_branches,
                                                             max_branch_steps=self.cfg.max_branch_steps,
                                                             active_packs=pack_snapshot(candidate_packs),
@@ -8461,7 +8159,7 @@ class Orchestrator:
                             plan = with_checklist_skip_warnings(plan, checklist_catalog,
                                                                 req.get("analysis_precedents"))
                             plan = with_paused_host_warning(plan, self._paused_lookup_hosts(rid))  # frozen with the plan
-                            validated = validate_research_plan(plan, max_steps=self.cfg.max_steps,
+                            validated = validate_research_plan(plan, max_steps=unbranched_limit,
                                                                max_branches=self.cfg.max_branches,
                                                                max_branch_steps=self.cfg.max_branch_steps,
                                                                active_packs=pack_snapshot(candidate_packs),
@@ -8584,7 +8282,7 @@ class Orchestrator:
                     req["plan"] = {**req["plan"], "steps": steps}
                     if research_lane:
                         req["plan"] = validate_research_plan(
-                            req["plan"], max_steps=self.cfg.max_steps, max_branches=self.cfg.max_branches,
+                            req["plan"], max_steps=unbranched_limit, max_branches=self.cfg.max_branches,
                             max_branch_steps=self.cfg.max_branch_steps, active_packs=active_pack_hashes,
                             expected_intake=intake, pack_definitions=packs).model_dump(mode="json")
                         steps = req["plan"]["steps"]
@@ -9376,8 +9074,9 @@ class Orchestrator:
         if style_note:
             req["execution_record"] += "\n\n" + style_note
         # What is left after the writer's one correction: the report front shows it as an unverified draft (#1374).
-        req["report_consistency"] = report_consistency.check(report, report_consistency.tables_for(report, results))
-        if left := report_consistency.record_lines(req["report_consistency"]):
+        draft, tables = await analysis_draft.report_tables(self.hub, req, report, results)
+        consistency = req["report_consistency"] = report_consistency.check(report, tables)
+        if left := report_consistency.record_lines(consistency):
             req["execution_record"] += "\n\n" + left
         package = build_report_package(req, report, results)
         contract_check = validate_report_package(
@@ -9390,6 +9089,11 @@ class Orchestrator:
         if contract_check["problems"]:
             lines = "\n".join(f"- {problem['message']}" for problem in contract_check["problems"])
             req["execution_record"] += "\n\n## 공통 보고 계약 경고\n\n" + lines
+        if draft:
+            req["research_contract"]["report_consistency"] = consistency
+            if consistency["findings"] or consistency["checked"]["unread_tables"] or contract_check["problems"]:
+                req["outcome"], ok = "report_incomplete", False
+                error = "Analysis draft did not pass the report checks"
         req.update(status="done" if ok else "failed", report=report, report_appendix=report_appendix,
                    results=results, review=review,
                    cost_usd=max(self.cost.get(rid, 0.0), float(req.get("cost_usd") or 0)), finished_at=time.time())

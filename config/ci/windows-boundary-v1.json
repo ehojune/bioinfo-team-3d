@@ -410,6 +410,7 @@
     "tests/test_tool_card_review_fixes.py",
     "tests/test_topic_checklists_precedents.py",
     "tests/test_topics.py",
+    "tests/test_trusted_local_1482.py",
     "tests/test_variant_effect_topic.py",
     "tests/test_vm_provision_666.py",
     "tests/test_vocab_tables.py",
