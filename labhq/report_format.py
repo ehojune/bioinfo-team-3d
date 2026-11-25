@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from . import edition_sources
+from .evidence.report_check import REPORT_CONTEXT
 from .report_contract import clean_reader_report
 
 PAPER_RULE = '''Use the basic paper format in this order: "제목", "요약(Abstract)", "서론", "방법", "결과",
@@ -60,18 +61,24 @@ def scientific_appendix(existing: str, req: dict, review: dict | None, checklist
     return clean_reader_report("## 부록\n\n" + "\n\n".join(p for p in parts if p))
 
 
-def add_references(report: str, appendix: str, references: list) -> str:
+def add_references(report: str, appendix: str, references: list, *, grounded: list[str] | None = None) -> str:
     """Prepare a new paper's reader text and fill its references using the same extraction as SOURCES.md."""
     report = clean_reader_report(report)
     heading = re.search(r"(?m)^## 참고[ \t]*$", report)
     if not heading:
         return report
     tail = report[heading.end():]
-    end = re.search(r"(?m)^## |^<!-- LABHQ_BENCH_RESULT -->", tail)
+    boundary = r"(?m)^## |^<!-- LABHQ_BENCH_RESULT -->"
+    if grounded is not None:
+        boundary += rf"|^{REPORT_CONTEXT}$"
+    end = re.search(boundary, tail)
     stop = heading.end() + (end.start() if end else len(tail))
-    found = edition_sources.collect([report, appendix], references)
-    listing = edition_sources.render(found).removeprefix("# 출처·인용\n\n")
-    listing = re.sub(r"(?m)^## ", "### ", listing).strip()
+    if grounded is None:
+        found = edition_sources.collect([report, appendix], references)
+        listing = edition_sources.render(found).removeprefix("# 출처·인용\n\n")
+        listing = re.sub(r"(?m)^## ", "### ", listing).strip()
+    else:
+        listing = "\n".join(["### 확인된 식별자", "", *grounded]) if grounded else ""
     # Keep model-written citations as well as the deterministic identifiers.
     citations = report[heading.end():stop].strip()
     content = "\n\n".join(p for p in (citations, listing) if p)

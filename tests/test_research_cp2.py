@@ -1440,7 +1440,7 @@ async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeyp
 
 # Compact report handoff after the evidence checkpoint (#1490).
 
-def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None):
+def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=None, source=None):
     from tests.test_research_report import REPORT, _hub
     from labhq.runner import report_artifacts
 
@@ -1469,7 +1469,9 @@ def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None):
             "table": f"The [measured effect]({table}) was 0.75 [[claim:s1/c1]].",
             "table_missing": "The [measured effect](outputs/missing.tsv) was 0.25 [[claim:s1/c1]].",
             "portable": REPORT + f"\n\nThe [measured effect](steps/s1/{table}) was 0.25 [[claim:s1/c1]].",
-        }.get(problem, REPORT)
+        }.get(problem, REPORT if draft_body is None else draft_body)
+        if source:
+            result.structured["evidence"][0]["source"].update(source)
         data = b"\xff" if problem == "encoding" else body.encode("utf-8")
         target.write_bytes(data)
         hashes = {**result.output_sha256, table: sha256(b"effect\n0.25\n").hexdigest()}
@@ -1591,6 +1593,84 @@ def test_compact_draft_flags_unanchored_text_in_bibliography(bibliography_draft,
         problem = ("possible conclusion needs a claim anchor (review context): "
                    "The source supports the proposed mechanism.")
     assert check_report(body, ledgers)["problems"] == [problem]
+
+
+@pytest.mark.parametrize(("scheme", "recorded", "citation"), [
+    ("doi", "10.1234/accepted", "[DOI](https://doi.org/10.1234/unrelated)"),
+    ("pmid", "12345678", "PMID 87654321"),
+    ("geo", "GSE12345", "GSE54321"),
+])
+async def test_compact_bibliography_rejects_identifier_from_another_source(tmp_path, scheme, recorded, citation):
+    from tests.test_research_report import REPORT
+
+    hub = _draft_hub(tmp_path, draft_body=f"{REPORT}\n\n## 참고\n\n- {citation} [[claim:s1/c1]]\n",
+                     source={"id_scheme": scheme, "id_value": recorded, "accessed_at": "2026-10-01"})
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "report_incomplete"
+    assert req["research_contract"]["report_check"]["problems"]
+
+
+async def test_compact_bibliography_recheck_uses_the_assembled_report(tmp_path):
+    from labhq.evidence.audit import rerun_report_check
+    from tests.test_research_report import REPORT
+
+    doi, unrelated = "10.1234/supported", "10.1234/input-only"
+    draft = f"{REPORT}\n\n## 참고\n\n- [Paper](https://doi.org/{doi}) [[claim:s1/c1]]\n"
+    hub = _draft_hub(tmp_path, draft_body=draft,
+                     source={"id_scheme": "doi", "id_value": doi, "accessed_at": "2026-10-01"})
+    hub.requests["r"]["references"] = [{"kind": "doi", "value": unrelated}]
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["outcome"] == "research_reported"
+    check = rerun_report_check(req)
+    assert check["recorded"] == check["rerun"]
+    assert check["rerun"]["problems"] == []
+    assert f"- [{doi}](https://doi.org/{doi})" in req["report"]
+    assert unrelated not in req["report"]
+    assert check["rerun"]["anchors"] == 3
+
+
+async def test_compact_bibliography_fails_when_assembly_adds_an_unsupported_citation(tmp_path, monkeypatch):
+    from labhq.evidence.audit import rerun_report_check
+    from labhq.orchestrator import cso
+    from tests.test_research_report import REPORT
+
+    assemble = cso.add_references
+
+    def with_bad_citation(report, *args, **kwargs):
+        report = assemble(report, *args, **kwargs)
+        return report.replace("## 참고\n", "## 참고\n\n- PMID 87654321 [[claim:s1/c1]]\n", 1)
+
+    monkeypatch.setattr(cso, "add_references", with_bad_citation)
+    hub = _draft_hub(tmp_path, draft_body=f"{REPORT}\n\n## 참고\n")
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
+    check = rerun_report_check(req)
+    assert check["recorded"] == check["rerun"]
+    assert check["rerun"]["problems"] == [
+        "bibliography PMID 87654321 has no accepted evidence linked to its anchors",
+    ]
+
+
+@pytest.mark.parametrize("options", [None, {"compact_workflow": False}])
+async def test_legacy_bibliography_still_lists_attached_references(options):
+    from tests.test_research_report import REPORT, _hub
+
+    doi = "10.1234/input-only"
+    hub = _hub(report=f"{REPORT}\n\n## 참고\n")
+    req = hub.requests["r"]
+    if options is not None:
+        req["research_options"] = options
+    req["references"] = [{"kind": "doi", "value": doi}]
+    await Orchestrator(hub).run_request("r")
+
+    assert req["outcome"] == "research_reported"
+    assert f"https://doi.org/{doi}" in req["report"]
 
 
 @pytest.mark.parametrize("case", ["linked", "mixed_evidence", "unreported", "wrong_file", "unanchored", "unsupported"])
