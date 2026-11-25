@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:18 | [`0bbefcb`](https://github.com/ehojune/bioinfo-team-3d/pull/1509/commits/0bbefcb) | **사이트마다 HPC에 올릴 파일의 크기 한도를 정할 수 있습니다.**<br>파일당 upload_max_bytes를 설정합니다. 기본값은 512 KiB이며 가짜 스케줄러에서 512 KiB와 10 MiB 경계를 확인했습니다. Refs |
 | 10:49 | [`f79e6cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/f79e6cc) | **후속 초안에서 지지 근거와 반대 근거를 함께 읽습니다.**<br>원장이 잘려도 제공한 표식마다 승인된 지지·반대 관계와 각 출처 위치가 남는다. |
 | 10:43 | [`240b1c8`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/240b1c8) | **후속 초안에서 원본 단계의 근거 파일을 바로 찾습니다.**<br>결과 승인에 기록된 경로와 해시로 생산 단계를 찾아 후속 작업공간의 입력 경로를 표시한다. |
 | 10:37 | [`1b192d0`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/1b192d0) | **후속 초안에 주장 표식과 근거 위치를 함께 전달합니다.**<br>긴 원장의 일부가 잘려도 초안 작성자가 제시된 표식의 파일과 위치를 찾도록 한 줄로 묶었다. |

@@ -43,6 +43,10 @@ def test_the_empty_example_is_a_valid_profile_with_everything_unknown():
     ({"name": "../x"}, "name"),
     ({"labhq_site_profile": 2}, "version"),
     ({"idle_lock_minutes": 0}, "idle_lock_minutes"),
+    ({"upload_max_bytes": 0}, "upload_max_bytes"),
+    ({"upload_max_bytes": -1}, "upload_max_bytes"),
+    ({"upload_max_bytes": True}, "upload_max_bytes"),
+    ({"upload_max_bytes": "100"}, "upload_max_bytes"),
     ({"fetch_max_bytes": 0}, "fetch_max_bytes"),
     ({"fetch_max_bytes": True}, "fetch_max_bytes"),
     ({"fetch_total_bytes": -1}, "fetch_total_bytes"),
@@ -67,8 +71,10 @@ def test_a_file_that_is_not_a_profile_mapping_is_an_error(text):
         site.parse_profile(text)
 
 
-@pytest.mark.parametrize('limits', [{}, {'fetch_max_bytes': 12_000_000, 'fetch_total_bytes': 40_000_000}])
-def test_site_fetch_limits_reach_scheduler_transfer(limits):
+@pytest.mark.parametrize('limits', [
+    {}, {'upload_max_bytes': 10 * 1024 * 1024, 'fetch_max_bytes': 12_000_000, 'fetch_total_bytes': 40_000_000},
+])
+def test_site_transfer_limits_reach_scheduler_transfer(limits):
     from types import SimpleNamespace
     from labhq.tools.scheduler import Scheduler
 
@@ -77,6 +83,7 @@ def test_site_fetch_limits_reach_scheduler_transfer(limits):
     scheduler = Scheduler(HpcSettings())
     scheduler._session = session
     transfer = scheduler.transfer()
+    assert transfer.limits.upload_max_bytes == limits.get('upload_max_bytes', 512 * 1024)
     assert transfer.limits.fetch_max_bytes == limits.get('fetch_max_bytes', 1024 * 1024)
     assert transfer.limits.fetch_total_bytes == limits.get('fetch_total_bytes', 8 * 1024 * 1024)
 

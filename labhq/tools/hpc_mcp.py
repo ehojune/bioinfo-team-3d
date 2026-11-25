@@ -21,7 +21,7 @@ import httpx
 from ..adapters.held_dir import HeldDir
 from ..adapters.owned import chmod_owned, plain_directory, read_owned, write_owned, write_owned_bytes
 from ..hpc_cpu_ledger import SUBMISSION_ID
-from ..hpc_transfer import UPLOAD_BUDGET_S, TransferError, read_confined
+from ..hpc_transfer import DEFAULT_UPLOAD_MAX_BYTES, UPLOAD_BUDGET_S, TransferError, read_confined
 from ..settings import Settings
 from ._mcpcompat import make_server, tool_failure
 from .scheduler import (
@@ -344,7 +344,7 @@ def nested_output_write(script: str) -> bool:
     return False
 
 
-def crlf_shell_inputs(workdir: Path, inputs: list[str]) -> list[str]:
+def crlf_shell_inputs(workdir: Path, inputs: list[str], limit: int = DEFAULT_UPLOAD_MAX_BYTES) -> list[str]:
     """The shell scripts among ``inputs`` that have CRLF line endings (#1331). A script written on Windows with
     PowerShell or a CRLF editor runs on the cluster's bash as `cmd\r`, which fails with a confusing error long after the
     submit. Each file is read with ``read_confined`` (held, no-follow folder handles inside the workspace, the upload
@@ -353,7 +353,7 @@ def crlf_shell_inputs(workdir: Path, inputs: list[str]) -> list[str]:
     found = []
     for relative in inputs:
         try:
-            head = read_confined(workdir, relative, 512 * 1024)
+            head = read_confined(workdir, relative, limit)
         except (TransferError, OSError, ValueError):
             continue
         shell = Path(relative).suffix.lower() in SHELL_SUFFIXES or (
@@ -379,9 +379,11 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
     existing execution approval; this guidance authorizes no new execution. Do not invent an estimate or use
     a large default or zero/unlimited as one. If the proposed limit exceeds a site or PI limit, propose splitting
     the work or ask for a decision; never silently clip it. Existing approval and resubmission protections apply.
-    inputs: small files your script reads, as paths relative to your workspace (at most 20, 512 KiB each). A cluster
+    inputs: at most 20 files your script reads, as paths relative to your workspace. A cluster
     that does not share files with this machine gets them in the job's work folder under the same relative path; a
-    cluster that does share them ignores this list. Larger files are not sent: say so in your reason.
+    cluster that does share them ignores this list. The site profile's upload_max_bytes limits each file (default
+    512 KiB). The input total is limited to the larger of 4 MiB and that per-file limit. Larger files are not sent:
+    say so in your reason.
     submission_id: for CPU-limited Slurm, assign a different stable ID to each intended job, even if jobs
     use identical scripts and settings. Reuse the same ID and payload only when retrying that job.
     Without an ID, identical jobs within a task are treated as replays. An explicit ID must start with an
@@ -410,9 +412,12 @@ async def hpc_submit(script: str, job_name: str, cores: int = 1, mem: str = "4G"
         raise tool_failure(".tmp/ is private task scratch and cannot be an HPC job input. "
                            "Move scripts to outputs/scripts/ and small supporting files to outputs/; "
                            "update the script and inputs paths before submitting. Upload limits are unchanged.")
-    if crlf := crlf_shell_inputs(WORKDIR, inputs or []):
-        raise tool_failure("CRLF line endings in " + ", ".join(crlf) + ": bash on the cluster reads the \\r as part "
-                           "of each command and fails. Rewrite them with LF line endings and submit again")
+    if inputs:
+        transfer = None if SESSION_ERROR else SCHED.transfer()
+        limit = transfer.limits.upload_max_bytes if transfer is not None else DEFAULT_UPLOAD_MAX_BYTES
+        if crlf := crlf_shell_inputs(WORKDIR, inputs, limit):
+            raise tool_failure("CRLF line endings in " + ", ".join(crlf) + ": bash on the cluster reads the \\r as part "
+                               "of each command and fails. Rewrite them with LF line endings and submit again")
     upload_inputs = inputs  # `inputs` is reused below for the shared data snapshots
     name = sanitize_job_name(job_name)
     logs = WORKDIR / "jobs" / "logs"
