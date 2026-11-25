@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 09:35 | [`6f1dc3a`](https://github.com/ehojune/bioinfo-team-3d/pull/1505/commits/6f1dc3a) | **연구 요청이 근거 승인 전 감사와 P1 수정 설정을 처음부터 끝까지 유지합니다.**<br>두 옵션을 인스턴스 설정으로 옮기고 기본값을 false로 둔다. Gateway가 요청을 처음 저장할 때 값을 기록한다. |
 | 09:11 | [`9dc8e11`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/9dc8e11) | **감사 지적을 고칠 때 분석 뒤에 바뀐 원본 폴더가 다시 전달되지 않게 했습니다.**<br>수정 세션에는 해시를 확인한 수집 산출물의 읽기 전용 사본을 전달한다. 요청의 참조 경로와 직원의 프로젝트 폴더는 수정 turn에 열지 않는다. |
 | 09:01 | [`91ebc0e`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/91ebc0e) | **감사자가 지적마다 승인된 계획을 바꿔야 하는지 밝힙니다.**<br>자동 수정용 감사 응답에서 설계 변경 여부를 필수로 받는다. 별도 차례에서 쓴 초안도 수정할 때는 결과 원장과 산출물을 함께 받는다. |
 | 08:55 | [`bef9ce8`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/bef9ce8) | **옵션을 켜면 근거 승인 전에 감사에서 발견한 중요한 오류를 다시 확인하고 고칩니다.**<br>원래 분석 세션이 P1을 최대 두 번 수정한다. 수정본을 다시 감사하고 남은 지적과 수정 결과를 CP2 카드에 표시한다. |
