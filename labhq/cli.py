@@ -1990,9 +1990,11 @@ async def _demo(web: bool = False, port: int = 8787, phone: bool = False,
                 hub, ev["data"]["id"], _approval_delay(phone, approve_timeout, web=web), phone))
 
     hub.publish = _tap_publish(publish, after)
+    from .runner.report_artifacts import GATEWAY_WS_MAX_BYTES
     from .security import gateway_log_config
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=gport, log_level="warning",
+                                          ws_max_size=GATEWAY_WS_MAX_BYTES, ws_max_queue=2,
                                           log_config=gateway_log_config()))
     tasks = [asyncio.create_task(server.serve())]
     while not server.started:
@@ -2358,6 +2360,7 @@ def main(argv: list[str] | None = None) -> None:
             import uvicorn
 
             from .gateway.server import create_app
+            from .runner.report_artifacts import GATEWAY_WS_MAX_BYTES
 
             from .security import gateway_log_config
 
@@ -2386,6 +2389,7 @@ def main(argv: list[str] | None = None) -> None:
             _claim_or_exit(s, "gateway")
             try:
                 uvicorn.run(app, host=s.gateway.host, port=s.gateway.port, log_level="info",
+                            ws_max_size=GATEWAY_WS_MAX_BYTES, ws_max_queue=2,
                             log_config=gateway_log_config())
             finally:
                 error = sys.exc_info()[1]

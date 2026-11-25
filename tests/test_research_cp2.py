@@ -1440,15 +1440,16 @@ async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeyp
 
 # Compact report handoff after the evidence checkpoint (#1490).
 
-def _large_effect_table():
+def _large_effect_table(size=2_299_178):
     header = b"gene\tlog2FoldChange\n"
-    row = b"filler\t0.25\n"
+    row = b"filler" + b"x" * 512 + b"\t0.25\n"
     last = b"TAIL1\t-0.71\n"
-    count, padding = divmod(2_299_178 - len(header) - len(last), len(row))
+    count, padding = divmod(size - len(header) - len(last), len(row))
     return header + row * count + b"\n" * padding + last
 
 
-def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=None, source=None, table_data=None):
+def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=None, source=None, table_data=None,
+               effect="0.25"):
     from tests.test_research_report import REPORT, _hub
     from labhq.runner import report_artifacts
 
@@ -1472,7 +1473,6 @@ def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=
         table = result.outputs[0]
         table_content = b"effect\n0.25\n" if table_data is None else table_data
         (tmp_path / table).write_bytes(table_content)
-        effect = "-0.71" if remote == "large_table" else "0.25"
         body = {
             "empty": " \n",
             "anchor": "Unknown claim [[claim:s1/wrong]].",
@@ -1505,6 +1505,8 @@ def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=
                 payload[path] = payload[table]
             elif remote == "changed_table":
                 payload[table] = payload[path]
+            elif remote == "partial_table":
+                payload[table] = "effect\n"
             elif remote == "wrong_dispatch":
                 result = result.model_copy(update={"agent_id": "unrelated"})
             target.unlink()
@@ -1826,10 +1828,12 @@ async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_pa
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("remote", "audit"), [
     ("complete", False), ("missing_draft", False), ("changed_draft", False), ("changed_source", False),
-    ("changed_table", False), ("wrong_dispatch", False), ("complete", True), ("large_table", True),
+    ("changed_table", False), ("partial_table", False), ("wrong_dispatch", False), ("complete", True),
+    ("large_table", True), ("oversize_table", True),
 ])
 async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path, remote, audit):
     from labhq.gateway.server import Hub
+    from labhq.runner.report_artifacts import MAX_TABLE_BYTES
     from tests.test_research_report import ACCEPT
 
     class Socket:
@@ -1847,8 +1851,12 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
     runner_dir.mkdir()
     try:
         gateway.register_runner("remote", Socket(), [{"id": "worker"}], incarnation="remote-1")
-        data = _large_effect_table() if remote == "large_table" else b"effect\n0.25\n"
-        hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway, table_data=data)
+        if remote in {"large_table", "oversize_table"}:
+            data = _large_effect_table(2_299_178 if remote == "large_table" else MAX_TABLE_BYTES + 1)
+        else:
+            data = b"effect\n0.25\n"
+        effect = "-0.71" if remote == "large_table" else "0.25"
+        hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway, table_data=data, effect=effect)
         if audit:
             hub.requests["r"]["research_options"]["audit_before_cp2"] = True
             reply = hub.reply
@@ -1888,6 +1896,159 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
     else:
         assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
         assert req["report_consistency"]["checked"]["unread_tables"] == [table]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["match", "mismatch", "oversize", "partial"])
+async def test_compact_report_table_crosses_runner_websocket(tmp_path, monkeypatch, case):
+    import uvicorn
+
+    from labhq.adapters.mock import MockAdapter
+    from labhq.gateway.server import create_app
+    from labhq.models import AgentSpec, Engine
+    from labhq.runner import report_artifacts
+    from labhq.runner.daemon import Runner
+    from labhq.util import free_port
+    from tests.support.serve_task import serve_task, wait_started
+    from tests.test_research_report import ACCEPT, REPORT, _hub
+
+    settings = _settings()
+    settings.gateway.state_dir = str(tmp_path / "gateway")
+    port = free_port()
+    settings.gateway.port, settings.gateway.url = port, f"ws://127.0.0.1:{port}"
+    settings.runner.id = "remote"
+    settings.runner.state_dir = str(tmp_path / "runner")
+    settings.runner.workspace_root = str(tmp_path / "runs")
+    settings.runner.agents_dir = str(tmp_path / "agents")
+    settings.runner.talent_dir = str(tmp_path / "talent")
+    settings.hpc.scheduler = "none"
+    app = create_app(settings)
+    gateway = app.state.hub
+    runner = Runner(settings)
+    runner.registry.agents["worker"] = AgentSpec(id="worker", name="worker", role="test", engine=Engine.mock)
+    runner.engine_versions, runner.local_software = {}, {}
+    hub = _hub()
+    req = hub.requests["r"]
+    req["research_options"] = {"compact_workflow": True, "audit_before_cp2": True}
+    hub.report_artifacts = gateway.report_artifacts
+    reply = hub.reply
+    size = report_artifacts.MAX_TABLE_BYTES + 1 if case == "oversize" else 55_000_000
+    effect = "-0.70" if case == "mismatch" else "-0.71"
+
+    async def write_outputs(_, ctx):
+        result = await reply(ctx.task)
+        [table] = result.outputs
+        [draft] = ctx.task.meta["optional_outputs"]
+        (ctx.workdir / table).write_bytes(_large_effect_table(size))
+        (ctx.workdir / draft).write_text(
+            f"{REPORT}\n\nThe [measured effect](steps/s1/{table}) was {effect} [[claim:s1/c1]].",
+            encoding="utf-8",
+        )
+        return result
+
+    async def dispatch(task):
+        if task.meta["kind"] == "step":
+            result = await asyncio.wait_for(gateway.dispatch(task), 60)
+            assert result.ok, result.error
+            assert result.workdir and result.outputs
+            for output in result.outputs:
+                (Path(result.workdir) / output).unlink()
+            return result
+        if task.meta["kind"] == "review":
+            return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True, structured=ACCEPT)
+        return await reply(task)
+
+    monkeypatch.setattr(MockAdapter, "run", write_outputs)
+    hub.reply = dispatch
+    if case == "partial":
+        collect = report_artifacts.collect
+
+        def cut_tail(root, meta, result):
+            files = collect(root, meta, result)
+            [table] = [path for path in files if path.endswith(".tsv")]
+            files[table] = files[table][:-len("TAIL1\t-0.71\n")]
+            return files
+
+        monkeypatch.setattr(report_artifacts, "collect", cut_tail)
+
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
+                                          ws_max_size=report_artifacts.GATEWAY_WS_MAX_BYTES, ws_max_queue=2))
+    serve = serve_task(server.serve())
+    connection = asyncio.create_task(runner._connection_loop())
+    try:
+        await wait_started(lambda: "worker" in gateway.agents, serve, 15, "runner registration")
+        await Orchestrator(hub).run_request("r")
+        result = req["results"]["s1"]
+        files = gateway.report_artifacts(result["task_id"])
+        [table] = req["plan"]["steps"][0]["outputs"]
+        assert analysis_draft.for_request(req).path in files
+        assert all(report_artifacts.RESULT_FIELD not in event.get("data", {})
+                   for event in gateway.store.events_since(0))
+        consistency = req["report_consistency"]
+        link = f"steps/s1/{table}"
+        if case in {"match", "mismatch"}:
+            data = files[table].encode("utf-8")
+            assert len(data) == size and data.endswith(b"TAIL1\t-0.71\n")
+            assert sha256(data).hexdigest() == result["output_sha256"][table]
+            assert consistency["checked"]["tables"] == [link]
+            assert [finding["value"] for finding in consistency["findings"]] == (
+                ["-0.70"] if case == "mismatch" else [])
+        else:
+            assert table not in files and consistency["checked"]["unread_tables"] == [link]
+        assert req["outcome"] == ("research_reported" if case == "match" else "report_incomplete")
+        [_, evidence_card] = hub.approvals
+        audit_scan = evidence_card["detail"]["independent_audit"]["checks"]["table_consistency"]
+        assert audit_scan["checked"]["tables"] == consistency["checked"]["tables"]
+        assert audit_scan["checked"]["unread_tables"] == consistency["checked"]["unread_tables"]
+    finally:
+        connection.cancel()
+        await asyncio.gather(connection, return_exceptions=True)
+        runner.store.close()
+        server.should_exit = True
+        await asyncio.wait_for(serve, 15)
+
+
+@pytest.mark.parametrize("limit", ["MAX_TRANSFER_BYTES", "MAX_WIRE_BYTES"])
+def test_report_transfer_keeps_the_draft_when_a_table_exhausts_the_budget(tmp_path, monkeypatch, limit):
+    from labhq.runner import report_artifacts
+
+    draft, table = "outputs/report.md", "outputs/table.tsv"
+    copies = {draft: "draft", table: "value\té\n" * 18}
+    (tmp_path / "outputs").mkdir()
+    data = {path: text.encode("utf-8") for path, text in copies.items()}
+    for path, content in data.items():
+        (tmp_path / path).write_bytes(content)
+    result = TaskResult(task_id="task", agent_id="worker", ok=True, outputs=[table, draft],
+                        output_sha256={path: sha256(content).hexdigest() for path, content in data.items()})
+    meta = {report_artifacts.RESULT_FIELD: draft}
+    monkeypatch.setattr(report_artifacts, limit, 200)
+
+    assert report_artifacts.collect(tmp_path, meta, result) == {draft: "draft"}
+    assert report_artifacts.receive(copies, meta, result) == {draft: "draft"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["match", "mismatch", "invalid_utf8"])
+async def test_compact_report_reads_large_local_table_through_eof(tmp_path, case):
+    data = _large_effect_table(55_000_000)
+    if case == "invalid_utf8":
+        data += b"\xff\n"
+    hub = _draft_hub(tmp_path, problem="portable", table_data=data, effect="-0.70" if case == "mismatch" else "-0.71")
+    await Orchestrator(hub).run_request("r")
+
+    req = hub.requests["r"]
+    consistency = req["report_consistency"]
+    table = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
+    if case == "match":
+        assert req["outcome"] == "research_reported"
+        assert consistency["findings"] == []
+    else:
+        assert req["outcome"] == "report_incomplete"
+        if case == "mismatch":
+            assert [finding["value"] for finding in consistency["findings"]] == ["-0.70"]
+        else:
+            assert consistency["checked"]["unread_tables"] == [table]
+    assert consistency["checked"]["tables"] == ([] if case == "invalid_utf8" else [table])
 
 
 @pytest.mark.asyncio
@@ -2106,14 +2267,25 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
             body = (REPORT + f"\n\nTAIL1 {direction} to -0.71 ([table](steps/s1/{path})) [[claim:s1/c1]]."
                     "\n\nRevised analysis.")
         if case == "large_table_unreadable":
-            read_text = Path.read_text
+            from contextlib import contextmanager
+            from labhq.evidence.report_consistency import _LocalTable
 
-            def fail_table_read(file, *args, **kwargs):
-                if file == original / path:
-                    raise OSError("simulated error reading the collected table")
-                return read_text(file, *args, **kwargs)
+            open_table = _LocalTable.open
 
-            monkeypatch.setattr(Path, "read_text", fail_table_read)
+            @contextmanager
+            def fail_table_read(table):
+                with open_table(table) as opened:
+                    if table.workdir / table.output != original / path:
+                        yield opened
+                        return
+
+                    def read_then_fail():
+                        yield from opened
+                        raise OSError("simulated read failure after scanning the collected table")
+
+                    yield read_then_fail()
+
+            monkeypatch.setattr(_LocalTable, "open", fail_table_read)
         data = {draft_path: body.encode()}
         if case in {"ignored_ledger", "replacement_table"}:
             data[path] = b"effect\n0.99\n"

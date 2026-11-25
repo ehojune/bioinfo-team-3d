@@ -59,8 +59,9 @@ MAX_LOCATED_QUOTE_WORDS = 80
 MAX_SOURCE_BYTES = 2_000_000
 
 
-def _source_bytes(root, relative: str, limit: int = MAX_SOURCE_BYTES) -> bytes:
-    """Bounded read through held directories; never follow a link or accept a hard link."""
+@contextlib.contextmanager
+def _open_source(root, relative: str):
+    """Open a regular workspace-relative file through held directories, without following links."""
     from ..adapters.held_dir import HeldDir
 
     parts = PurePosixPath(relative.replace('\\', '/')).parts
@@ -71,13 +72,21 @@ def _source_bytes(root, relative: str, limit: int = MAX_SOURCE_BYTES) -> bytes:
         for part in parts[:-1]:
             held = stack.enter_context(held.child(part))
         with os.fdopen(held.open_read_file(parts[-1]), 'rb') as opened:
-            info = os.fstat(opened.fileno())
-            if info.st_nlink != 1 or info.st_size > limit:
-                raise ValueError('source is linked or too large')
-            data = opened.read(limit + 1)
-            if len(data) > limit:
-                raise ValueError('source grew beyond limit')
-            return data
+            if os.fstat(opened.fileno()).st_nlink != 1:
+                raise ValueError('source is hard linked')
+            yield opened
+
+
+def _source_bytes(root, relative: str, limit: int = MAX_SOURCE_BYTES) -> bytes:
+    """Bounded read through held directories; never follow a link or accept a hard link."""
+    with _open_source(root, relative) as opened:
+        info = os.fstat(opened.fileno())
+        if info.st_size > limit:
+            raise ValueError('source is too large')
+        data = opened.read(limit + 1)
+        if len(data) > limit:
+            raise ValueError('source grew beyond limit')
+        return data
 
 
 def _paper_keys(receipt):

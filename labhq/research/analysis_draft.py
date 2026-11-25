@@ -1,6 +1,7 @@
 """Select the analyst who writes the report and verify their collected draft."""
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -166,19 +167,21 @@ def tables_for(report: str, results: dict, load) -> dict[str, str | None]:
         for link, path in matches.items():
             try:
                 tables[link] = report_artifacts.transferred_text(
-                    payload, path, result.get("output_sha256", {}).get(path), report_consistency.MAX_TABLE_BYTES)
+                    payload, path, result.get("output_sha256", {}).get(path), report_artifacts.MAX_TABLE_BYTES)
             except ValueError:
                 pass
     return tables
 
 
-async def report_tables(hub, request: dict, report: str, results: dict) -> tuple[bool, dict[str, str | None]]:
+async def report_tables(hub, request: dict, report: str, results: dict
+                        ) -> tuple[bool, Mapping[str, report_consistency.Table]]:
     """Report whether the compact draft is being finalized and read its linked tables."""
     draft = request.get("outcome") == "research_reported" and for_request(request) is not None
     return draft, await check_tables(hub, request, report, results, use_transfer=draft)
 
 
-async def check_tables(hub, request: dict, report: str, results: dict, *, use_transfer: bool = True) -> dict:
+async def check_tables(hub, request: dict, report: str, results: dict, *,
+                       use_transfer: bool = True) -> Mapping[str, report_consistency.Table]:
     load = artifact_loader(hub, request) if use_transfer else None
     if load:
         return await asyncio.to_thread(tables_for, report, results, load)
