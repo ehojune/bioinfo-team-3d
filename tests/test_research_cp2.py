@@ -1597,6 +1597,14 @@ def test_compact_bibliography_accepts_linked_counterevidence_until_refused(bibli
         f"bibliography DOI {doi} has no accepted evidence linked to its anchors",
     ]
 
+    ledger["claims"].append({**ledger["claims"][0], "id": "c2"})
+    ledger["links"].append({"claim_id": "c2", "evidence_id": "e2", "relation": "supports"})
+    other = "10.1000/fake-bibliography"
+    table = f"| Source | Claim |\n|---|---|\n| {other} | [[claim:s1/c2]] |\n| {doi} | [[claim:s1/c1]] |\n"
+    assert check_report(body + "\n" + table, ledgers, bibliography=True)["problems"] == [
+        f"bibliography DOI {other} has no accepted evidence linked to its anchors",
+    ]
+
 
 @pytest.mark.parametrize("case", ["unmarked_entry", "judgment"])
 def test_compact_draft_flags_unanchored_text_in_bibliography(bibliography_draft, case):
@@ -1631,10 +1639,20 @@ async def test_compact_bibliography_rejects_identifier_from_another_source(tmp_p
     assert req["research_contract"]["report_check"]["problems"]
 
 
-async def test_compact_bibliography_recheck_uses_the_assembled_report(tmp_path):
+@pytest.mark.parametrize("unsupported_in_assembly", [False, True])
+async def test_compact_bibliography_recheck_uses_the_assembled_report(tmp_path, monkeypatch, unsupported_in_assembly):
     from labhq.evidence.audit import rerun_report_check
+    from labhq.orchestrator import cso
     from tests.test_research_report import REPORT
 
+    if unsupported_in_assembly:
+        assemble = cso.add_references
+
+        def with_bad_citation(report, *args, **kwargs):
+            return assemble(report, *args, **kwargs).replace(
+                "## 참고\n", "## 참고\n\n- PMID 87654321 [[claim:s1/c1]]\n", 1)
+
+        monkeypatch.setattr(cso, "add_references", with_bad_citation)
     doi, unrelated = "10.1234/supported", "10.1234/input-only"
     draft = f"{REPORT}\n\n## 참고\n\n- [Paper](https://doi.org/{doi}) [[claim:s1/c1]]\n"
     hub = _draft_hub(tmp_path, draft_body=draft,
@@ -1643,37 +1661,18 @@ async def test_compact_bibliography_recheck_uses_the_assembled_report(tmp_path):
     await Orchestrator(hub).run_request("r")
 
     req = hub.requests["r"]
-    assert req["outcome"] == "research_reported"
     check = rerun_report_check(req)
     assert check["recorded"] == check["rerun"]
-    assert check["rerun"]["problems"] == []
     assert f"- [{doi}](https://doi.org/{doi})" in req["report"]
     assert unrelated not in req["report"]
-    assert check["rerun"]["anchors"] == 3
-
-
-async def test_compact_bibliography_fails_when_assembly_adds_an_unsupported_citation(tmp_path, monkeypatch):
-    from labhq.evidence.audit import rerun_report_check
-    from labhq.orchestrator import cso
-    from tests.test_research_report import REPORT
-
-    assemble = cso.add_references
-
-    def with_bad_citation(report, *args, **kwargs):
-        report = assemble(report, *args, **kwargs)
-        return report.replace("## 참고\n", "## 참고\n\n- PMID 87654321 [[claim:s1/c1]]\n", 1)
-
-    monkeypatch.setattr(cso, "add_references", with_bad_citation)
-    hub = _draft_hub(tmp_path, draft_body=f"{REPORT}\n\n## 참고\n")
-    await Orchestrator(hub).run_request("r")
-
-    req = hub.requests["r"]
-    assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
-    check = rerun_report_check(req)
-    assert check["recorded"] == check["rerun"]
-    assert check["rerun"]["problems"] == [
-        "bibliography PMID 87654321 has no accepted evidence linked to its anchors",
-    ]
+    if unsupported_in_assembly:
+        assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
+        assert check["rerun"]["problems"] == [
+            "bibliography PMID 87654321 has no accepted evidence linked to its anchors",
+        ]
+    else:
+        assert req["outcome"] == "research_reported"
+        assert check["rerun"] == {"anchors": 3, "problems": []}
 
 
 @pytest.mark.parametrize("options", [None, {"compact_workflow": False}])

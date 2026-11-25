@@ -393,8 +393,8 @@ def compact_report_body(report: str) -> str:
 
 
 def _bibliography_entries(report: str) -> Iterable[tuple[str, str, set[tuple[str, str]]]]:
-    """Read bibliography paragraphs and list entries, including Markdown link destinations."""
-    tokens = MarkdownIt("commonmark").parse(report)
+    """Read bibliography paragraphs and table rows with their Markdown link destinations."""
+    tokens = MarkdownIt("commonmark").enable("table").parse(report)
     level = 0
     for index, token in enumerate(tokens):
         if token.type == "heading_open" and token.level == 0:
@@ -403,11 +403,17 @@ def _bibliography_entries(report: str) -> Iterable[tuple[str, str, set[tuple[str
                 level = rank
             elif rank <= level:
                 level = 0
-        if not level or token.type != "inline" or tokens[index - 1].type != "paragraph_open":
+        if not level:
             continue
-        children = token.children or []
-        visible = "".join(child.content if child.type == "text" else " " if child.type in
-                          {"code_inline", "softbreak", "hardbreak"} else "" for child in children)
+        if token.type == "paragraph_open":
+            parts = [tokens[index + 1]]
+        elif token.type == "tr_open" and tokens[index + 1].type == "td_open":
+            end = next(i for i in range(index + 1, len(tokens)) if tokens[i].type == "tr_close")
+            parts = [part for part in tokens[index + 1:end] if part.type == "inline"]
+        else:
+            continue
+        children = [child for part in parts for child in part.children or []]
+        visible = " ".join(child.content for child in children if child.type == "text")
         plain = ANCHOR.sub(" ", visible) + " " + " ".join(child.content for child in children if child.type == "code_inline")
         links = [child.attrGet("href") or "" for child in children if child.type == "link_open"]
         candidates = edition_sources.collect([plain, *links])
@@ -417,7 +423,7 @@ def _bibliography_entries(report: str) -> Iterable[tuple[str, str, set[tuple[str
         for link in links:
             if (named := registry_id(link)) and named[0] in _BIBLIOGRAPHIC_SCHEMES:
                 identifiers.add((named[0], normalize_id(*named)))
-        yield token.content, visible, identifiers
+        yield " ".join(part.content for part in parts), visible, identifiers
 
 
 def _check_bibliography(report: str, sources: Mapping[str, set[tuple[str, str]]],
