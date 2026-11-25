@@ -337,10 +337,11 @@ async def test_cp1_planner_and_correction_use_the_saved_option(compact):
 
 
 @pytest.mark.parametrize("async_create", [False, True], ids=["sync", "async"])
-async def test_new_research_request_persists_compact_option_before_dispatch(tmp_path, monkeypatch, async_create):
+async def test_new_research_request_persists_workflow_options_before_dispatch(tmp_path, monkeypatch, async_create):
     settings = _research_settings()
     settings.gateway.state_dir = str(tmp_path / "state")
     settings.research.evidence_checkpoint = settings.research.final_checkpoint = True
+    assert settings.research.audit_before_cp2 is settings.research.audit_repair_before_cp2 is False
     hub = create_app(settings).state.hub
     observed = asyncio.Queue()
 
@@ -350,20 +351,31 @@ async def test_new_research_request_persists_compact_option_before_dispatch(tmp_
 
     monkeypatch.setattr(hub, "_start_request", observe_first_save)
     try:
-        for enabled, mode, work_kind, compact, final in (
-            (False, "orchestrate", "research", False, True),
-            (True, "orchestrate", "research", True, True),
-            (True, "plan_only", "research", True, False),
-            (True, "orchestrate", "simple", False, False),
+        snapshots = {}
+        for enabled, audit, repair, mode, work_kind in (
+            (False, False, False, "orchestrate", "research"),
+            (True, True, True, "orchestrate", "research"),
+            (True, False, False, "orchestrate", "research"),
+            (True, True, False, "plan_only", "research"),
+            (True, True, True, "direct", "research"),
+            (True, True, True, "orchestrate", "simple"),
         ):
             settings.research.compact_workflow = enabled
+            settings.research.audit_before_cp2 = audit
+            settings.research.audit_repair_before_cp2 = repair
             body = RequestIn(text="Compare expression by condition", mode=mode, work_kind=work_kind)
             rid = await hub.acreate_request(body) if async_create else hub.create_request(body)
             settings.research.compact_workflow = not enabled
-            expected = {"contract_version": 2, "final_checkpoint": final}
-            if compact:
-                expected["compact_workflow"] = True
+            settings.research.audit_before_cp2 = not audit
+            settings.research.audit_repair_before_cp2 = not repair
+            expected = {"contract_version": 2, "final_checkpoint": mode == "orchestrate" and work_kind == "research"}
+            if work_kind == "research" and mode != "direct":
+                if enabled:
+                    expected["compact_workflow"] = True
+                expected.update(audit_before_cp2=audit, audit_repair_before_cp2=repair)
             assert await asyncio.wait_for(observed.get(), timeout=5) == (rid, expected)
-            assert hub.requests[rid]["research_options"] == expected
+            snapshots[rid] = expected
+        for rid, expected in snapshots.items():
+            assert hub.requests[rid]["research_options"] == hub.store.get("request", rid)["research_options"] == expected
     finally:
         hub.store.close()

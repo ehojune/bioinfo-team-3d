@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import re
 from dataclasses import dataclass
 from hashlib import sha256
@@ -12,17 +11,10 @@ from pathlib import Path
 from ..evidence import report_consistency
 from ..evidence.audit import MISMATCH, OK, verify_request
 from ..evidence.report_check import check_report
-from . import analysis_draft, audit_repair
+from . import analysis_draft
 
 
 OPTION = "audit_before_cp2"
-
-
-def capture(request: dict) -> None:
-    """Keep the switch separate from the frozen plan and preserve it on resume."""
-    if os.environ.get("LABHQ_AUDIT_BEFORE_CP2") == "1":
-        request.setdefault("research_options", {}).setdefault(OPTION, True)
-    audit_repair.capture(request)
 
 
 def enabled(request: dict) -> bool:
