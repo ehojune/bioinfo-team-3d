@@ -160,7 +160,8 @@ async def test_option_is_frozen_at_creation(tmp_path, monkeypatch, changes, want
     rid = hub.create_request(RequestIn(**{'text':'compare conditions', 'work_kind':'research', **changes}))
     settings.research.final_checkpoint = False
     saved = Hub(settings).requests[rid]
-    assert saved['research_options'] == {'contract_version':2, 'final_checkpoint':wanted}
+    assert saved['research_options']['contract_version'] == 2
+    assert saved['research_options']['final_checkpoint'] is wanted
 
 
 @pytest.mark.asyncio

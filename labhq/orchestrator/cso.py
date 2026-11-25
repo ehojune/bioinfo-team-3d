@@ -7247,8 +7247,6 @@ class Orchestrator:
             # A request that already carries a research contract stays research whatever the config now says,
             # so it never reaches the generic re-plan, review or synthesis paths (#90 CP2).
             research_lane = bool(intake and intake.work_kind == "research") or bool(req.get("research_contract"))
-            if research_lane and not resume and not req.get("research_contract"):
-                preapproval_audit.capture(req)
             research_options = req.get("research_options") if research_lane else None
             unbranched_limit = compact_workflow.unbranched_plan_limit(self.cfg.max_steps, research_options)
             research_execution = bool(research_lane and self.hub.s.research.evidence_checkpoint

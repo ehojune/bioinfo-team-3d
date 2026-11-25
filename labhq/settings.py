@@ -681,6 +681,8 @@ class ResearchSettings(_SettingsModel):
     evidence_checkpoint: bool = False  # execute approved research steps and stop at CP2
     final_checkpoint: bool = False  # PI report review accepts a frozen final draft (CP4)
     compact_workflow: bool = False  # cap unbranched plans at three steps, fixed at request creation
+    audit_before_cp2: bool = False  # audit a compact draft before PI evidence approval
+    audit_repair_before_cp2: bool = False  # let the original analysis session repair P1 findings
     # The science reviewer first answers the original request alone, sealed before the first step (#889).
     blind_draft: bool = False
     literal_source_check: StrictBool = True  # local saved text/hash checks at CP2; never sends HTTP

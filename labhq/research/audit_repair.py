@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import re
 
 from ..evidence.wiki_contract import AUDIT, collect_audit, step_findings
@@ -29,11 +28,6 @@ _STATUS = {
     "invalid_result": "수정 산출물을 검증하지 못함",
     "limit": "수정 횟수 상한 도달",
 }
-
-
-def capture(request: dict) -> None:
-    if os.environ.get("LABHQ_AUDIT_REPAIR_BEFORE_CP2") == "1":
-        request.setdefault("research_options", {}).setdefault(OPTION, True)
 
 
 def enabled(request: dict) -> bool:

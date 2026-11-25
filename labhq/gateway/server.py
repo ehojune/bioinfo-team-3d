@@ -6298,8 +6298,11 @@ class Hub:
             "final_checkpoint": bool(research_request and research.evidence_checkpoint and research.final_checkpoint
                                      and body.mode == "orchestrate"),
         }
-        if research_request and body.mode != "direct" and research.compact_workflow:
-            options["compact_workflow"] = True
+        if research_request and body.mode != "direct":
+            if research.compact_workflow:
+                options["compact_workflow"] = True
+            options["audit_before_cp2"] = research.audit_before_cp2
+            options["audit_repair_before_cp2"] = research.audit_repair_before_cp2
         return options
 
     def create_request(self, body: RequestIn, extra: dict[str, Any] | None = None) -> str:

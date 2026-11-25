@@ -1675,6 +1675,7 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
 
     hub = _draft_hub(tmp_path, problem=problem)
     hub.s.runner.workspace_root = str(tmp_path.parent)
+    hub.requests["r"]["research_options"]["audit_before_cp2"] = True
     base_reply = hub.reply
 
     async def reply(task):
@@ -1710,10 +1711,6 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     from labhq.runner.step_inputs import stage_inputs
     from tests.test_research_report import ACCEPT, REVISE, REPORT, _kinds
 
-    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "0" if case == "audit_off" else "1")
-    monkeypatch.delenv("LABHQ_AUDIT_REPAIR_BEFORE_CP2", raising=False)
-    if case != "unset":
-        monkeypatch.setenv("LABHQ_AUDIT_REPAIR_BEFORE_CP2", "0" if case == "off" else "1")
     original = tmp_path / "original"
     original.mkdir()
     hub = _draft_hub(original)
@@ -1722,6 +1719,11 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     if case == "no_engine_cap":
         hub.agents["worker"]["engine"] = "codex"
     req = hub.requests["r"]
+    req["research_options"]["audit_before_cp2"] = case != "audit_off"
+    if case != "unset":
+        req["research_options"]["audit_repair_before_cp2"] = case != "off"
+    hub.s.research.audit_repair_before_cp2 = case in {"off", "unset"}
+    monkeypatch.setenv("LABHQ_AUDIT_REPAIR_BEFORE_CP2", "1" if hub.s.research.audit_repair_before_cp2 else "0")
     if case == "reference_drift":
         source = tmp_path / "live-reference"
         source.mkdir()
@@ -1848,15 +1850,13 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
 async def test_audit_option_orders_checks_review_and_cp2(tmp_path, monkeypatch, option):
     from tests.test_research_report import ACCEPT, _kinds
 
-    if option is None:
-        monkeypatch.delenv("LABHQ_AUDIT_BEFORE_CP2", raising=False)
-    else:
-        monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1" if option else "0")
     enabled = option is True
     hub = (_audit_hub if enabled else _draft_hub)(tmp_path, problem="table")
     req = hub.requests["r"]
     if option is False:
         req["research_options"]["audit_before_cp2"] = False
+    hub.s.research.audit_before_cp2 = not enabled
+    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "0" if enabled else "1")
     original = hub.request_approval
 
     async def approval(**kwargs):
@@ -1874,6 +1874,7 @@ async def test_audit_option_orders_checks_review_and_cp2(tmp_path, monkeypatch, 
     cp2 = contract["checkpoints"]["cp2"]
     assert ("independent_audit" in detail) is enabled
     assert ("independent_audit" in cp2) is enabled
+    assert req["research_options"].get("audit_before_cp2") is option
     if enabled:
         card = detail["independent_audit"]
         assert card == cp2["independent_audit"]
@@ -1885,10 +1886,9 @@ async def test_audit_option_orders_checks_review_and_cp2(tmp_path, monkeypatch, 
 
 
 @pytest.mark.parametrize("changed", [None, "artifact", "draft", "plan_receipt"])
-async def test_pre_cp2_audit_reuse_requires_all_hashes(tmp_path, monkeypatch, changed):
+async def test_pre_cp2_audit_reuse_requires_all_hashes(tmp_path, changed):
     from tests.test_research_report import _kinds
 
-    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
     hub = _audit_hub(tmp_path, problem="portable")
     await Orchestrator(hub).run_request("r")
     req = hub.requests["r"]
@@ -1906,7 +1906,6 @@ async def test_pre_cp2_audit_reuse_requires_all_hashes(tmp_path, monkeypatch, ch
         contract["review"]["plan_sha256"] = "a" * 64
     calls, approvals = len(hub.calls), len(hub.approvals)
     _interrupt(hub)
-    monkeypatch.delenv("LABHQ_AUDIT_BEFORE_CP2")
     await Orchestrator(hub).run_request("r", resume=True)
 
     contract = req["research_contract"]
@@ -1918,10 +1917,9 @@ async def test_pre_cp2_audit_reuse_requires_all_hashes(tmp_path, monkeypatch, ch
 
 
 @pytest.mark.parametrize("failure", ["missing", "unparsed"])
-async def test_cp2_waits_for_a_completed_audit(tmp_path, monkeypatch, failure):
+async def test_cp2_waits_for_a_completed_audit(tmp_path, failure):
     from tests.test_research_report import _kinds
 
-    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
     hub = _audit_hub(tmp_path, problem=failure, malformed=failure == "unparsed")
     await Orchestrator(hub).run_request("r")
 
@@ -1931,8 +1929,7 @@ async def test_cp2_waits_for_a_completed_audit(tmp_path, monkeypatch, failure):
     assert req["status"] == "failed" and req["research_contract"]["failure"]["stage"] == "independent_audit"
 
 
-async def test_cached_audit_rejects_changed_file_with_old_hash(tmp_path, monkeypatch):
-    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
+async def test_cached_audit_rejects_changed_file_with_old_hash(tmp_path):
     hub = _audit_hub(tmp_path, problem="portable")
     await Orchestrator(hub).run_request("r")
     req = hub.requests["r"]
@@ -1945,10 +1942,9 @@ async def test_cached_audit_rejects_changed_file_with_old_hash(tmp_path, monkeyp
     assert [card["kind"] for card in hub.approvals] == ["research_plan", "research_evidence"]
 
 
-async def test_pre_cp2_audit_keeps_pi_notes_in_review_and_reader_report(tmp_path, monkeypatch):
+async def test_pre_cp2_audit_keeps_pi_notes_in_review_and_reader_report(tmp_path):
     from tests.test_research_report import _kinds
 
-    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
     hub = _audit_hub(tmp_path)
     req = hub.requests["r"]
     earlier = "Use the same comparison as the earlier round."
@@ -1983,10 +1979,9 @@ async def test_pre_cp2_audit_keeps_pi_notes_in_review_and_reader_report(tmp_path
     assert latest not in hub.approvals[1]["detail"]["analysis_draft"]
 
 
-async def test_cp2_revision_carries_prior_audit_p1_to_new_plan_and_review(tmp_path, monkeypatch):
+async def test_cp2_revision_carries_prior_audit_p1_to_new_plan_and_review(tmp_path):
     from tests.test_research_report import APPROVE, REVISE, _kinds
 
-    monkeypatch.setenv("LABHQ_AUDIT_BEFORE_CP2", "1")
     hub = _audit_hub(tmp_path)
     note = "Add a sensitivity check."
     p1 = next(issue for issue in REVISE["issues"] if issue["priority"] == "P1")
