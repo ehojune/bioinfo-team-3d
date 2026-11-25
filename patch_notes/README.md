@@ -14,7 +14,15 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 21:32 | [`71e1f43`](https://github.com/ehojune/bioinfo-team-3d/commit/71e1f43) | **경로를 가린 선택 로그가 PC 단계로 넘길 필수 파일을 막지 않습니다.**<br>수신 기록에서 가림을 확인한 선택 로그만 PC 입력에서 빼고, 필수 파일의 크기와 SHA-256은 계속 대조한다. |
+| 20:05 | [`5fd202f`](https://github.com/ehojune/bioinfo-team-3d/commit/5fd202f) | **받을 파일이 모두 선택 산출이면 빈 입력으로 PC 단계를 계속합니다.**<br>검증을 마친 수신 기록에 복사할 파일이 없으면 입력 폴더를 열지 않고 PC 단계를 실행한다. |
+| 19:56 | [`6755cc1`](https://github.com/ehojune/bioinfo-team-3d/commit/6755cc1) | **크기 상한을 넘긴 선택 파일이 있어도 PC가 필수 결과를 읽습니다.**<br>원격 목록과 수신 누락 기록에 크기 상한이 확인된 선택 파일만 입력 복사에서 건너뛴다. |
+| 19:46 | [`a37799c`](https://github.com/ehojune/bioinfo-team-3d/commit/a37799c) | **HPC 결과가 한 폴더 더 깊게 저장돼도 PC 단계에서 읽을 수 있습니다.**<br>선언 산출과 일치하는 중첩 경로를 수신 기록에 연결하고, 원본 위치의 크기와 체크섬을 다시 검사해 입력으로 복사한다. PC에서 만든 선택 산출은 후속 단계에 넘기지 않는다. |
+| 12:53 | [`5f1062a`](https://github.com/ehojune/bioinfo-team-3d/commit/5f1062a) | **HPC에 보낼 참고 파일의 한도를 선택된 runner에 맞춰 표시합니다.**<br>계획 승인과 재개 카드 모두 runner의 사이트별 업로드 한도를 쓴다. 한도를 보고받지 못하면 기본값을 참고로 표시한다. |
 | 12:18 | [`0bbefcb`](https://github.com/ehojune/bioinfo-team-3d/pull/1509/commits/0bbefcb) | **사이트마다 HPC에 올릴 파일의 크기 한도를 정할 수 있습니다.**<br>파일당 upload_max_bytes를 설정합니다. 기본값은 512 KiB이며 가짜 스케줄러에서 512 KiB와 10 MiB 경계를 확인했습니다. Refs |
+| 11:54 | [`9d7e882`](https://github.com/ehojune/bioinfo-team-3d/commit/9d7e882) | **혼합 실행의 초안을 PC에서 쓸 수 있는지 계획 승인 전에 확인합니다.**<br>초안 작성 단계를 HPC 생산 단계와 같은 runner의 PC로 배정하도록 교정한다. 조건에 어긋난 저장 계획은 재개 카드에서 함께 승인하지 않는다. |
+| 11:46 | [`74afcab`](https://github.com/ehojune/bioinfo-team-3d/commit/74afcab) | **혼합 실행의 보고서 초안과 감사 수정에서도 HPC 수신 기록을 확인합니다.**<br>CP1에서 승인한 PC 분석 runner에 작업을 배정한다. HPC 생산 단계의 revision과 수신 체크섬이 맞아야 복사한다. |
+| 11:36 | [`76bc1ef`](https://github.com/ehojune/bioinfo-team-3d/commit/76bc1ef) | **혼합 실행 브랜치를 최신 연구 검토 코드에 맞췄습니다.**<br>이어가기의 단계별 입력 확인과 PC 부분 결과의 HPC 수신 검사를 유지하고, CP2에 최신 감사 상세를 표시한다. |
 | 10:49 | [`f79e6cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/f79e6cc) | **후속 초안에서 지지 근거와 반대 근거를 함께 읽습니다.**<br>원장이 잘려도 제공한 표식마다 승인된 지지·반대 관계와 각 출처 위치가 남는다. |
 | 10:43 | [`240b1c8`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/240b1c8) | **후속 초안에서 원본 단계의 근거 파일을 바로 찾습니다.**<br>결과 승인에 기록된 경로와 해시로 생산 단계를 찾아 후속 작업공간의 입력 경로를 표시한다. |
 | 10:37 | [`1b192d0`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/1b192d0) | **후속 초안에 주장 표식과 근거 위치를 함께 전달합니다.**<br>긴 원장의 일부가 잘려도 초안 작성자가 제시된 표식의 파일과 위치를 찾도록 한 줄로 묶었다. |
@@ -72,6 +80,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 01:15 | [`97eb588`](https://github.com/ehojune/bioinfo-team-3d/commit/97eb588) | **새 스크립트 안내를 반영해 Research 프롬프트의 회귀 테스트를 갱신합니다.**<br>pipefail 안내 한 줄을 뺀 본문이 이전과 일치하는지 확인하고 전체 SHA256 기대값을 갱신했다. 결과 필드 단언은 유지했다. |
+| 01:01 | [`094fe4b`](https://github.com/ehojune/bioinfo-team-3d/commit/094fe4b) | **HPC에 보낼 참고 파일이 기본 전송 한도를 넘으면 계획 승인 전에 알려 줍니다.**<br>CP1과 CP1을 겸하는 재개 카드에 파일 크기와 초과량을 표시하고, 분할 전송이나 HPC에서 직접 받는 방법을 안내한다. |
 | 00:59 | [`0dade97`](https://github.com/ehojune/bioinfo-team-3d/commit/0dade97) | **HPC 작업 스크립트에서 버전 기록이 분석을 멈출 수 있는 경우를 매뉴얼에 설명합니다.**<br>한영 직원 도구 매뉴얼에 pipefail과 SIGPIPE 주의를 추가하고 부가 진단에만 실패를 허용한다고 명시했다. |
 | 00:58 | [`195c11b`](https://github.com/ehojune/bioinfo-team-3d/commit/195c11b) | **설정 매뉴얼에 Slurm 잡의 CPU 예약이 풀리는 시점을 적었습니다.**<br>한영 매뉴얼에 sacct 종료 확인 조건과 CANCELLED+ 처리를 설명했다. |
 | 00:53 | [`685712b`](https://github.com/ehojune/bioinfo-team-3d/commit/685712b) | **직원에게 직접 보낸 요청도 HPC로 실행하면 같은 스크립트 주의를 받습니다.**<br>Direct HPC 배정 프롬프트에 공통 pipefail 지시를 추가하고 HPC와 PC 경로를 비교했다. |
@@ -82,6 +91,9 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 07:32 | [`e08fd2a`](https://github.com/ehojune/bioinfo-team-3d/commit/e08fd2a) | **PC에서만 읽는 파일이 바뀌어도 입력과 산출을 확인한 HPC 단계는 이어서 쓸 수 있습니다.**<br>continuation에서 HPC 단계와 PC 단계의 입력 증명을 각각 대조한다. 근거가 빠지거나 확인할 수 없는 입력은 재사용을 보류한다. |
+| 07:25 | [`094a4ef`](https://github.com/ehojune/bioinfo-team-3d/commit/094a4ef) | **혼합 실행 중에도 승인된 작업 폴더 정리와 PC 단계의 부분 결과 저장을 이어갑니다.**<br>혼합 단계의 facilities_fix를 허용하고 PC wrap_up에 동일한 HPC 수신 증명 검사를 적용한다. |
+| 07:16 | [`b47dcbe`](https://github.com/ehojune/bioinfo-team-3d/commit/b47dcbe) | **연구 계획에서 무거운 단계는 HPC로 보내고 그 결과를 이 PC의 다음 단계로 넘길 수 있습니다.**<br>CP1에서 승인한 버전 1 계획에 따라 단계를 배분한다. PC 단계만 참고 폴더를 열고 HPC 산출은 같은 runner에서 수신 기록과 체크섬을 확인한 뒤 복사한다. |
 | 06:43 | [`df436e4`](https://github.com/ehojune/bioinfo-team-3d/commit/df436e4) | **HPC 산출을 PC로 넘길 때 쓸 파일별 수신 검증을 준비했습니다.**<br>향후 PC 전달에 쓸 검증에서 원격 목록에 없는 산출을 거절하도록 준비한다. 매뉴얼에는 현재 저장하는 수신 기록만 설명한다. |
 | 06:35 | [`d50818c`](https://github.com/ehojune/bioinfo-team-3d/commit/d50818c) | **HPC 단계가 끝나면 PC에서 받은 파일과 생략 사유를 작업 기록에 남깁니다.**<br>HPC 단계의 PC 수신 기록을 저장하고 단계 간 전달에 쓸 검사를 준비한다. |
 | 06:10 | [`4614883`](https://github.com/ehojune/bioinfo-team-3d/commit/4614883) | **결과를 다듬기 전에 담당 runner가 바뀌면 원래 산출물을 남기고 새 계획을 요청합니다.**<br>결과 교정과 증거 칸 보완 전에도 CP1 배정을 확인하고 변경 시 원래 산출 기록을 보존한다. |
