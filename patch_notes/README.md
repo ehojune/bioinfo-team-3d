@@ -14,6 +14,10 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:49 | [`f79e6cc`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/f79e6cc) | **후속 초안에서 지지 근거와 반대 근거를 함께 읽습니다.**<br>원장이 잘려도 제공한 표식마다 승인된 지지·반대 관계와 각 출처 위치가 남는다. |
+| 10:43 | [`240b1c8`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/240b1c8) | **후속 초안에서 원본 단계의 근거 파일을 바로 찾습니다.**<br>결과 승인에 기록된 경로와 해시로 생산 단계를 찾아 후속 작업공간의 입력 경로를 표시한다. |
+| 10:37 | [`1b192d0`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/1b192d0) | **후속 초안에 주장 표식과 근거 위치를 함께 전달합니다.**<br>긴 원장의 일부가 잘려도 초안 작성자가 제시된 표식의 파일과 위치를 찾도록 한 줄로 묶었다. |
+| 10:29 | [`0ccf362`](https://github.com/ehojune/bioinfo-team-3d/pull/1506/commits/0ccf362) | **분석 보고서의 수치와 결론을 수집한 근거 파일에 연결합니다.**<br>간소화 연구 계획에 요약 파일과 주장 ID를 선언하고, 분석 원장에 값이 있는 위치를 적어 초안 문장과 표 행에 연결하도록 안내한다. 후속 초안에는 인용 가능한 원장 표식을 제공한다. |
 | 09:35 | [`6f1dc3a`](https://github.com/ehojune/bioinfo-team-3d/pull/1505/commits/6f1dc3a) | **연구 요청이 근거 승인 전 감사와 P1 수정 설정을 처음부터 끝까지 유지합니다.**<br>두 옵션을 인스턴스 설정으로 옮기고 기본값을 false로 둔다. Gateway가 요청을 처음 저장할 때 값을 기록한다. |
 | 09:11 | [`9dc8e11`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/9dc8e11) | **감사 지적을 고칠 때 분석 뒤에 바뀐 원본 폴더가 다시 전달되지 않게 했습니다.**<br>수정 세션에는 해시를 확인한 수집 산출물의 읽기 전용 사본을 전달한다. 요청의 참조 경로와 직원의 프로젝트 폴더는 수정 turn에 열지 않는다. |
 | 09:01 | [`91ebc0e`](https://github.com/ehojune/bioinfo-team-3d/pull/1503/commits/91ebc0e) | **감사자가 지적마다 승인된 계획을 바꿔야 하는지 밝힙니다.**<br>자동 수정용 감사 응답에서 설계 변경 여부를 필수로 받는다. 별도 차례에서 쓴 초안도 수정할 때는 결과 원장과 산출물을 함께 받는다. |
