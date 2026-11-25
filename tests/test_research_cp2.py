@@ -1440,7 +1440,15 @@ async def test_cp1_kind_stays_first_with_paper_and_reassignment_warnings(monkeyp
 
 # Compact report handoff after the evidence checkpoint (#1490).
 
-def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=None, source=None):
+def _large_effect_table():
+    header = b"gene\tlog2FoldChange\n"
+    row = b"filler\t0.25\n"
+    last = b"TAIL1\t-0.71\n"
+    count, padding = divmod(2_299_178 - len(header) - len(last), len(row))
+    return header + row * count + b"\n" * padding + last
+
+
+def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=None, source=None, table_data=None):
     from tests.test_research_report import REPORT, _hub
     from labhq.runner import report_artifacts
 
@@ -1462,19 +1470,21 @@ def _draft_hub(tmp_path, *, problem=None, remote=None, gateway=None, draft_body=
         target = tmp_path / path
         target.parent.mkdir(exist_ok=True)
         table = result.outputs[0]
-        (tmp_path / table).write_bytes(b"effect\n0.25\n")
+        table_content = b"effect\n0.25\n" if table_data is None else table_data
+        (tmp_path / table).write_bytes(table_content)
+        effect = "-0.71" if remote == "large_table" else "0.25"
         body = {
             "empty": " \n",
             "anchor": "Unknown claim [[claim:s1/wrong]].",
             "table": f"The [measured effect]({table}) was 0.75 [[claim:s1/c1]].",
             "table_missing": "The [measured effect](outputs/missing.tsv) was 0.25 [[claim:s1/c1]].",
-            "portable": REPORT + f"\n\nThe [measured effect](steps/s1/{table}) was 0.25 [[claim:s1/c1]].",
+            "portable": REPORT + f"\n\nThe [measured effect](steps/s1/{table}) was {effect} [[claim:s1/c1]].",
         }.get(problem, REPORT if draft_body is None else draft_body)
         if source:
             result.structured["evidence"][0]["source"].update(source)
         data = b"\xff" if problem == "encoding" else body.encode("utf-8")
         target.write_bytes(data)
-        hashes = {**result.output_sha256, table: sha256(b"effect\n0.25\n").hexdigest()}
+        hashes = {**result.output_sha256, table: sha256(table_content).hexdigest()}
         if problem != "unhashed":
             hashes[path] = sha256(data).hexdigest()
         result = result.model_copy(update={
@@ -1816,7 +1826,7 @@ async def test_compact_numbers_link_collected_summary_and_sensitivity_row(tmp_pa
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("remote", "audit"), [
     ("complete", False), ("missing_draft", False), ("changed_draft", False), ("changed_source", False),
-    ("changed_table", False), ("wrong_dispatch", False), ("complete", True),
+    ("changed_table", False), ("wrong_dispatch", False), ("complete", True), ("large_table", True),
 ])
 async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path, remote, audit):
     from labhq.gateway.server import Hub
@@ -1837,7 +1847,8 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
     runner_dir.mkdir()
     try:
         gateway.register_runner("remote", Socket(), [{"id": "worker"}], incarnation="remote-1")
-        hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway)
+        data = _large_effect_table() if remote == "large_table" else b"effect\n0.25\n"
+        hub = _draft_hub(runner_dir, problem="portable", remote=remote, gateway=gateway, table_data=data)
         if audit:
             hub.requests["r"]["research_options"]["audit_before_cp2"] = True
             reply = hub.reply
@@ -1861,9 +1872,10 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
         gateway.store.close()
     table = f"steps/s1/{req['plan']['steps'][0]['outputs'][0]}"
     assert not list((runner_dir / "outputs").iterdir())
-    if remote == "complete":
-        assert files[table.removeprefix("steps/s1/")] == "effect\n0.25\n"
+    if remote in {"complete", "large_table"}:
+        assert files[table.removeprefix("steps/s1/")] == data.decode("utf-8")
         assert req["status"] == "done" and req["outcome"] == "research_reported"
+        assert req["report_consistency"]["findings"] == []
         assert req["report_consistency"]["checked"]["tables"] == [table]
         assert f"]({table})" in req["report"]
         if audit:
@@ -1969,6 +1981,8 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
     ("claims_only", 1, "resolved"), ("claims_and_p1", 1, "resolved"),
     ("claims_after_p1", 1, "invalid_result"), ("replacement_table", 1, "invalid_result"),
     ("claims_off", 0, None), ("claims_no_session", 0, "session_unavailable"),
+    ("large_table_ok", 1, "resolved"), ("large_table_direction", 1, "invalid_result"),
+    ("large_table_unreadable", 1, "invalid_result"),
 ])
 async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, status):
     from labhq.evidence.audit import rerun_report_check
@@ -1981,7 +1995,8 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     original.mkdir()
     bad_text = "\n\nWe counted 12345 samples.\n\n## 참고\n\n- PMID 87654321 [[claim:s1/c1]]."
     initial_claim_problems = case in {"claims_only", "claims_and_p1", "claims_off", "claims_no_session"}
-    hub = _draft_hub(original, draft_body=REPORT + bad_text if initial_claim_problems else None)
+    table_data = _large_effect_table() if case.startswith("large_table_") else b"effect\n0.25\n"
+    hub = _draft_hub(original, draft_body=REPORT + bad_text if initial_claim_problems else None, table_data=table_data)
     hub.s.runner.workspace_root = str(tmp_path)
     hub.supports_resume = lambda agent_id: case not in {"no_session", "claims_no_session"} and agent_id == "worker"
     if case == "no_engine_cap":
@@ -2002,7 +2017,10 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     base_reply = hub.reply
     generations = []
     audits = []
-    resolved = case in {"resolved", "unclassified", "reference_drift", "claims_only", "claims_and_p1", "ignored_ledger"}
+    resolved = case in {"resolved", "unclassified", "reference_drift", "claims_only", "claims_and_p1", "ignored_ledger",
+                        "large_table_ok"}
+    rejected_with = {"claims_after_p1": "numeric prose needs a claim anchor", "replacement_table": "0.99",
+                     "large_table_direction": "TAIL1 -0.71", "large_table_unreadable": "Could not check linked table:"}
 
     def save_manifest(task, result):
         manifest = {"task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}}}
@@ -2072,7 +2090,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         folder = tmp_path / f"repair{len(generations)}"
         folder.mkdir()
         ws = SimpleNamespace(dir=folder, task=task)
-        _, unavailable = stage_inputs(ws, task.meta["upstream_artifacts"], tmp_path, [], [], 1_000_000, 1_000_000)
+        _, unavailable = stage_inputs(ws, task.meta["upstream_artifacts"], tmp_path, [], [], 3_000_000, 4_000_000)
         assert not unavailable
         path = first.outputs[0]
         draft_path, = task.meta["required_outputs"]
@@ -2083,6 +2101,19 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
             body += bad_text
         if case == "replacement_table":
             body += f"\n\nThe [measured effect](steps/s1/{path}) was 0.99 [[claim:s1/c1]]."
+        if case.startswith("large_table_"):
+            direction = "increased" if case == "large_table_direction" else "decreased"
+            body = (REPORT + f"\n\nTAIL1 {direction} to -0.71 ([table](steps/s1/{path})) [[claim:s1/c1]]."
+                    "\n\nRevised analysis.")
+        if case == "large_table_unreadable":
+            read_text = Path.read_text
+
+            def fail_table_read(file, *args, **kwargs):
+                if file == original / path:
+                    raise OSError("simulated error reading the collected table")
+                return read_text(file, *args, **kwargs)
+
+            monkeypatch.setattr(Path, "read_text", fail_table_read)
         data = {draft_path: body.encode()}
         if case in {"ignored_ledger", "replacement_table"}:
             data[path] = b"effect\n0.99\n"
@@ -2101,7 +2132,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
                             output_sha256={name: sha256(body).hexdigest() for name, body in data.items()},
                             cost_usd=4.01 if case == "budget" else 1)
         save_manifest(task, result)
-        if case not in {"new_session", "budget", "claims_after_p1", "replacement_table"}:
+        if case not in {"new_session", "budget"} and case not in rejected_with:
             generations.append(result)
         return result
 
@@ -2123,17 +2154,16 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     assert req["results"]["s1"]["task_id"] == first.task_id
     assert req["results"]["s1"]["structured"] == first.structured
     assert req["results"]["s1"]["output_sha256"] == first.output_sha256
-    if case in {"claims_after_p1", "replacement_table", "claims_no_session", "claims_off"}:
+    if case in rejected_with or case in {"claims_no_session", "claims_off"}:
         approval_kinds = [row["kind"] for row in hub.approvals]
         assert approval_kinds == ["research_plan"] + (["research_evidence"] if case == "claims_off" else [])
         assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
         check = rerun_report_check(req)
         assert check["same"] is True
-        if case in {"claims_after_p1", "replacement_table"}:
+        if case in rejected_with:
             assert check["recorded"]["problems"] == []
             rejected = contract["audit_repair"]["rejected_problems"]
-            expected = "numeric prose needs a claim anchor" if case == "claims_after_p1" else "0.99"
-            assert any(expected in problem for problem in rejected)
+            assert any(rejected_with[case] in problem for problem in rejected), rejected
             assert "analysis_draft" not in contract
             assert "Revised analysis." not in req["report"]
         else:
@@ -2155,7 +2185,11 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         assert detail["artifact_sha256"]["s1/a1"] == first.output_sha256[first.outputs[0]]
         assert [x["priority"] for x in audit["issues"]] == (["P2"] if resolved else ["P3", "P1", "P2"])
         assert detail["analysis_draft"].endswith("Revised analysis.") == (resolved or case == "limit")
-    assert (original / generations[0].outputs[0]).read_bytes() == b"effect\n0.25\n"
+        if case == "large_table_ok":
+            consistency = audit["checks"]["table_consistency"]
+            assert consistency["findings"] == [] and consistency["checked"]["unread_tables"] == []
+            assert consistency["checked"]["numbers"] == consistency["checked"]["directions"] == 1
+    assert (original / generations[0].outputs[0]).read_bytes() == table_data
     if resolved or case == "limit":
         receipt = contract["analysis_draft"]
         assert receipt["parent_task"] == first.task_id
