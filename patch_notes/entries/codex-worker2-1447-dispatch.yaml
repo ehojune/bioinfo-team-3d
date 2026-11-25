@@ -1,5 +1,9 @@
 pr: null
 rows:
+- sha: '74afcab'
+  at: 2026-11-25 11:46
+  summary: 혼합 실행의 보고서 초안과 감사 수정에서도 HPC 수신 기록을 확인합니다.
+  text: CP1에서 승인한 PC 분석 runner에 작업을 배정한다. HPC 생산 단계의 revision과 수신 체크섬이 맞아야 복사한다.
 - sha: '76bc1ef'
   at: 2026-11-25 11:36
   summary: 혼합 실행 브랜치를 최신 연구 검토 코드에 맞췄습니다.

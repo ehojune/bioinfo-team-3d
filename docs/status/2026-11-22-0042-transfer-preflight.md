@@ -2,7 +2,8 @@
 
 - `main`의 `f66cc520`과 충돌한 5개 파일을 정리했습니다. 단계별 입력 증명과 HPC 수신 검사, main의 초안·감사 입력 처리, CP1 전송 경고와 CP2 감사 표시를 반영했습니다.
 - 가짜 Slurm에서 8 CPU·30분·문턱 4 core-h이면 제출 카드 0장입니다. `#SBATCH --time`을 넣으면 CPU 상한을 켠 사이트에서 제출이 거절됩니다. 시간과 CPU는 `hpc_submit` 인자로 넘깁니다.
-- `f66cc520` 대비 `cso.py` +30/-22, `server.py` +0/-0, `daemon.py` +6/-1줄입니다. 19시 실제 HPC→PC 재검증까지 draft·`hold`를 유지합니다.
+- 초안 수집·감사 수정도 CP1에서 승인한 PC 분석 runner와 HPC 생산 단계의 revision에 묶었습니다. 수신 기록이 빠지거나 분석 runner가 다르면 작업을 멈추는 회귀시험 두 건을 통과했습니다.
+- `f66cc520` 대비 `cso.py` +42/-24, `server.py` +0/-0, `daemon.py` +6/-1줄입니다. #1471·#1472를 합한 순증은 +99/+0/+12줄입니다. 19시 실제 HPC→PC 재검증까지 draft·`hold`를 유지합니다.
 
 # #1447 r13 · [PR #1473](https://github.com/ehojune/bioinfo-team-3d/pull/1473)
 
