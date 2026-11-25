@@ -70,6 +70,7 @@ RESEARCH_LANE_REVIEW_SCHEMA: dict[str, Any] = {
 REPAIR_REVIEW_SCHEMA = deepcopy(RESEARCH_LANE_REVIEW_SCHEMA)
 _repair_issue = REPAIR_REVIEW_SCHEMA["properties"]["issues"]["items"]
 _repair_issue["properties"]["requires_plan_change"] = {"type": "boolean"}
+_repair_issue["required"].append("requires_plan_change")
 
 
 # Independent review of the completed research plan after CP2 approval (#58 ③⑤).
@@ -316,6 +317,9 @@ async def run(
             review = blind_draft.without_unfounded_comparison(with_p1_verdict(review_with_checklist(
                 parsed, req.get("plan"), catalog, req.get("analysis_precedents"), research=True)),
                 contract.get(blind_draft.KEY))
+            if repair_enabled:
+                # Checklist-generated P2s did not come from the reviewer schema.
+                review["issues"] = [{"requires_plan_change": False, **issue} for issue in review["issues"]]
             contract["review"] = {"plan_sha256": plan_hash, "reviewer": reviewer, **review,
                                   **({"audit_binding": binding} if binding else {})}
             await persist_request(hub, rid)

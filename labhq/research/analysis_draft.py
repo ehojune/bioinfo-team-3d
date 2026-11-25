@@ -26,10 +26,15 @@ class AnalysisDraft:
     path: str
     inline: bool
 
-    def prompt(self) -> str:
-        handoff = ("Return the result ledger. Put graphical_abstract.svg below the title and include key figures "
-                   "if produced." if self.inline else "Read the final results from inputs/<step_id>/. Write the draft "
-                   "only. Omit the figures from individual steps and explain the omission.")
+    def prompt(self, *, repairing: bool = False) -> str:
+        if self.inline:
+            handoff = ("Return the result ledger. Put graphical_abstract.svg below the title and include key figures "
+                       "if produced.")
+        else:
+            handoff = "Read the final results from inputs/<step_id>/. "
+            if not repairing:
+                handoff += "Write the draft only. "
+            handoff += "Omit the figures from individual steps and explain the omission."
         return (
             f"\n\nIn this session, after analysis and QC, save a draft for the PI as UTF-8 Markdown at {self.path}. "
             f"{handoff} Omit the draft if you have to stop for a decision. Use only collected artifacts and "

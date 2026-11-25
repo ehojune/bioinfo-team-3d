@@ -1696,7 +1696,8 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
 
 
 @pytest.mark.parametrize(("case", "attempts", "status"), [
-    ("resolved", 1, "resolved"), ("limit", 2, "limit"), ("no_session", 0, "session_unavailable"),
+    ("resolved", 1, "resolved"), ("unclassified", 1, "resolved"), ("limit", 2, "limit"),
+    ("no_session", 0, "session_unavailable"),
     ("new_session", 1, "session_unavailable"), ("bad_ledger", 1, "invalid_result"),
     ("interrupted", 1, "interrupted"), ("budget", 1, "budget_exceeded"),
     ("no_engine_cap", 0, "budget_unavailable"),
@@ -1725,6 +1726,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     base_reply = hub.reply
     generations = []
     audits = []
+    resolved = case in {"resolved", "unclassified"}
 
     def save_manifest(task, result):
         manifest = {"task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}}}
@@ -1750,10 +1752,11 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
                 assert "review" not in req["research_contract"]
                 assert task.meta["parent_task"] == latest.task_id
                 assert latest.output_sha256[latest.outputs[0]] in task.prompt
-            findings = ACCEPT if case == "resolved" and len(generations) == 2 else REVISE
+            findings = ACCEPT if resolved and len(generations) == 2 else REVISE
             issues = [*findings["issues"]] if findings == ACCEPT else [*findings["issues"], *ACCEPT["issues"]]
             if "requires_plan_change" in task.output_schema["properties"]["issues"]["items"]["properties"]:
-                issues = [{**row, "requires_plan_change": case == "design"} for row in issues]
+                if case != "unclassified" or len(audits) > 1:
+                    issues = [{**row, "requires_plan_change": case == "design"} for row in issues]
             return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=True,
                               structured={**findings, "issues": issues}, cost_usd=0)
 
@@ -1806,7 +1809,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     contract = req["research_contract"]
     assert contract["plan_sha256"] == plan_sha256(req["plan"])
     assert _kinds(hub).count("audit_repair") == attempts
-    assert len(audits) == len(generations)
+    assert len(audits) == len(generations) + (case == "unclassified")
     latest = generations[-1]
     assert req["results"]["s1"]["task_id"] == latest.task_id
     approved = hub.approvals[1]
@@ -1818,10 +1821,10 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         assert audit == contract["checkpoints"]["cp2"]["independent_audit"]
         assert audit["draft_sha256"] == sha256(detail["analysis_draft"].encode()).hexdigest()
         assert detail["results"]["s1"]["claims"][0]["statement"] == latest.structured["claims"][0]["statement"]
-        assert [x["priority"] for x in audit["issues"]] == (["P2"] if case == "resolved" else ["P3", "P1", "P2"])
-        assert detail["analysis_draft"].endswith(f"Revision {attempts}.") == (case in {"resolved", "limit"})
+        assert [x["priority"] for x in audit["issues"]] == (["P2"] if resolved else ["P3", "P1", "P2"])
+        assert detail["analysis_draft"].endswith(f"Revision {attempts}.") == (resolved or case == "limit")
     assert (original / generations[0].outputs[0]).read_bytes() == b"effect\n0.25\n"
-    if case in {"resolved", "limit"}:
+    if resolved or case == "limit":
         calls, approvals = len(hub.calls), len(hub.approvals)
         _interrupt(hub)
         await Orchestrator(hub).run_request("r", resume=True)
@@ -2033,6 +2036,7 @@ def test_draft_owner_follows_the_frozen_dag_and_uses_a_new_path_per_round():
 
     draft = analysis_draft.for_request(req)
     assert draft.step_id == "s2" and not draft.inline
+    assert "Write the draft only." in draft.prompt() and "Write the draft only." not in draft.prompt(repairing=True)
     req["research_contract"]["round"] = 2
     assert analysis_draft.for_request(req).path != draft.path
     assert list(analysis_draft.new_round_rerun(req, plan)) == ["s2"]
