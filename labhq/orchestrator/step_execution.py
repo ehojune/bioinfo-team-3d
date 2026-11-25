@@ -289,14 +289,18 @@ def runner_pin(plan, step, environment_pin):
     return runner
 
 
-def card_detail(plan, request=None, settings=None):
+def card_detail(plan, request=None, settings=None, runner_capabilities=None):
     if plan.get("step_execution_version") is None:
         return {}
     detail = {"단계 실행 위치 · runner": "\n".join(
         f"{step['id']} · {step['execution']} · {step['runner_id']}" for step in plan["steps"]
     )}
-    if request and settings and is_mixed(plan, request.get("execution_location")):
-        warning = transfer_preflight.warning(plan["steps"], request, settings)
+    choice = (request or {}).get("execution_location")
+    if settings and is_mixed(plan, choice):
+        caps = (runner_capabilities or {}).get(choice["mixed_hpc_runner_id"], {})
+        if "hpc_upload_max_bytes" in caps and caps["hpc_upload_max_bytes"] is None:
+            return detail  # The runner reports that it does not use shell transfer.
+        warning = transfer_preflight.warning(plan["steps"], request, settings, limit=caps.get("hpc_upload_max_bytes"))
         if warning:
             detail["hpc_transfer_warning"] = warning
     return detail

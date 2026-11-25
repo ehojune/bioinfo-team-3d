@@ -10,7 +10,7 @@ When a consult is confirmed to have failed before process start because a file w
 
 **Running HPC and PC steps in one request.** When HPC is available, choose this PC as the default and approve a version 1 plan with both locations at CP1. PC steps that read HPC outputs run on the same runner. `--ref` opens read-only for PC steps. A missing receipt or mismatched checksum stops the dependent PC step. A plan that sends PC outputs to an HPC step is refused.
 
-When this PC can verify that a `--ref` file listed as an HPC step input exceeds the built-in transfer limit (512 KiB per file), CP1 and any resume card that serves as CP1 show the file size and how far it exceeds the limit. Before approving, revise the plan to split the file into pieces within the limit or fetch it directly on HPC using a method the site permits.
+When the PC can verify that a `--ref` file listed as an HPC step input exceeds the selected runner's transfer limit, CP1 and any resume card that serves as CP1 show the file size and how far it exceeds the limit. When the runner's limit is unavailable, the default of 512 KiB per file is a reference point. Before approving, revise the plan to split the file into pieces within the limit or fetch it directly on HPC using a method the site permits.
 
 When a completed HPC step has a verified remote inventory, the runner saves it with the checksums of the received files and reasons for omitted declared outputs.
 

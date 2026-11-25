@@ -1,11 +1,11 @@
-"""Report the built-in upload limit using metadata from declared PC file references."""
+"""Check the shell upload limit against declared PC file references."""
 
 import re
 import stat
 from collections import Counter
 from pathlib import Path
 
-from ..hpc_transfer import Limits
+from ..hpc_transfer import DEFAULT_UPLOAD_MAX_BYTES
 from ..intake import check_reference_path, overlaps_zone, path_pattern, reference_dirs
 from ..private_paths import credential_path, resolve_private_paths
 
@@ -23,7 +23,7 @@ def _local_file_size(path):
     return None
 
 
-def warning(steps, request, settings):
+def warning(steps, request, settings, *, limit=None):
     """Only inspect attached, local file paths named by an HPC step's input_refs."""
     hpc_inputs = {step["id"]: step.get("input_refs", []) for step in steps if step.get("execution") == "hpc"}
     paths = {}
@@ -36,8 +36,11 @@ def warning(steps, request, settings):
     names = Counter(path.name.casefold() for path in paths)
     private = [Path(path) for path in resolve_private_paths(settings).paths]
     restricted = [settings.path(zone.path) for zone in settings.policy.data_zones if zone.level == "restricted"]
-    limit = Limits().upload_max_bytes
+    reported = type(limit) is int and limit > 0
+    if not reported:
+        limit = DEFAULT_UPLOAD_MAX_BYTES
     rows = []
+    checked = False
     for path, raw in paths.items():
         literal = path_pattern(raw, boundary=True)
         if names[path.name.casefold()] == 1:
@@ -54,12 +57,19 @@ def warning(steps, request, settings):
             size = _local_file_size(path)
         except (OSError, ValueError):
             continue  # Only report sizes this gateway was able to verify.
-        if size is not None and size > limit:
+        if size is None:
+            continue
+        checked = True
+        if size > limit:
             rows.append(f"{path.name} ({', '.join(users)}) · {size:,} byte · {size - limit:,} byte 초과")
+    unknown = ("선택한 runner의 HPC 전송 한도를 확인하지 못했습니다. "
+               f"기본값은 파일당 {DEFAULT_UPLOAD_MAX_BYTES // 1024} KiB입니다.")
     if not rows:
-        return ""
+        return unknown if checked and not reported else ""
+    heading = (f"선택한 runner의 HPC 전송 한도는 파일당 {limit:,} byte입니다."
+               if reported else f"{unknown} 아래 초과량은 기본값 기준입니다.")
     return "\n".join([
-        f"PC 사본을 HPC 기본 전송으로 보낼 때 파일당 {limit // 1024} KiB 한도가 적용됩니다.",
+        heading,
         *rows,
         "한도 안으로 나눠 보내거나, 사이트에서 허용하는 방식으로 HPC에서 직접 받도록 계획을 바꾸세요.",
     ])

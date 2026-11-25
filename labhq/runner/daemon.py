@@ -980,6 +980,13 @@ class Runner:
                         "engine_cli_versions": dict(self.engine_versions or {}),
                         "platform": sys.platform,
                         "environment": {key: os.environ[key] for key in LOGIN_PATH_ENV if os.environ.get(key)}}
+        if self.s.hpc.scheduler in {"slurm", "sge", "pbs"}:
+            try:
+                transfer = self.scheduler.transfer()
+            except RuntimeError:
+                pass  # An unavailable profile has no verified upload limit.
+            else:
+                capabilities["hpc_upload_max_bytes"] = transfer.limits.upload_max_bytes if transfer else None
         # The runner registers the AlphaGenome tools, so it is the one that knows whether they exist: the key file on its
         # account and the client in its Python. Only the fact travels; the gateway never looks for the key (#1200).
         try:

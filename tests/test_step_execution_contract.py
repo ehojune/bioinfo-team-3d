@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import json
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -14,7 +15,9 @@ from labhq.orchestrator.cso import ENV_LOCK_OUTPUT, Orchestrator
 from labhq.orchestrator.step_execution import card_detail, refresh_for_approval
 from labhq.recruit import paper_skills, planning as recruit_planning
 from labhq.research import contract, continuation
+from labhq.runner.daemon import Runner
 from labhq.settings import Settings
+from labhq.tools.scheduler import Scheduler
 from tests.test_cso import FakeHub, result
 from tests.test_research_cp1_revise import _gateway
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
@@ -80,6 +83,24 @@ def test_mixed_card_does_not_include_restricted_or_unapproved_paths(tmp_path):
         "mode": "local", "approval_id": "choice", "mixed_hpc_runner_id": "mock-runner"}}
 
     assert "hpc_transfer_warning" not in card_detail(plan, request, settings)
+
+
+@pytest.mark.parametrize("shell_limit", [None, 10 * 1024 * 1024])
+def test_runner_reports_shell_upload_limit_without_connecting(shell_limit):
+    settings = Settings.model_validate({"hpc": {"scheduler": "slurm"}})
+    scheduler = Scheduler(settings.hpc)
+
+    def connect(*args, **kwargs):
+        pytest.fail("runner capability discovery must not connect to HPC")
+
+    scheduler._session = SimpleNamespace(
+        profile=SimpleNamespace(remote_workdir="/fixture" if shell_limit else None, upload_max_bytes=shell_limit,
+                                fetch_max_bytes=1024, fetch_total_bytes=2048),
+        cfg=SimpleNamespace(redact_words=()), run=connect,
+    )
+    runner = SimpleNamespace(s=settings, scheduler=scheduler, registry=SimpleNamespace(roster=lambda: []),
+                             engine_versions={})
+    assert Runner.capabilities(runner)["hpc_upload_max_bytes"] == shell_limit
 
 
 @pytest.mark.parametrize(("mode", "sha"), [
@@ -492,7 +513,8 @@ async def test_dag_dispatch_uses_the_approved_runner_pin(mode):
     assert task.meta["execution_location"]["mode"] == mode
 
 
-async def test_pc_choice_offers_a_mixed_plan_and_both_cards_warn_about_uploads(tmp_path, monkeypatch):
+@pytest.mark.parametrize('limit', ['unknown', 1024, 10 * 1024 * 1024, None])
+async def test_pc_choice_offers_a_mixed_plan_and_both_cards_use_the_runner_limit(tmp_path, monkeypatch, limit):
     settings = Settings()
     settings.research.enabled = True
     settings.orchestrator.chief_of_staff_agent = None
@@ -500,7 +522,7 @@ async def test_pc_choice_offers_a_mixed_plan_and_both_cards_warn_about_uploads(t
     settings.runner.reference_roots = [str(tmp_path)]
     reference = tmp_path / 'input.tsv'
     with reference.open('wb') as stream:
-        stream.truncate(Limits().upload_max_bytes + 7)
+        stream.truncate(1025 if limit == 1024 else Limits().upload_max_bytes + 7)
     references = [{'kind': 'path', 'value': str(reference)}]
 
     async def dispatch(task):
@@ -523,7 +545,10 @@ async def test_pc_choice_offers_a_mixed_plan_and_both_cards_warn_about_uploads(t
     hub.agents['worker'].update(runner_id='mock-runner', whole_request_hpc=True, hpc_tools=True,
                                builtin_mcp=['hpc'])
     hub.runners = {'mock-runner': object()}
-    hub.runner_capabilities = {'mock-runner': {'scheduler': 'mock'}}
+    caps = {'scheduler': 'mock'}
+    if limit != 'unknown':
+        caps['hpc_upload_max_bytes'] = limit
+    hub.runner_capabilities = {'mock-runner': caps, 'other-runner': {'hpc_upload_max_bytes': 7}}
     hub.requests['r']['references'] = references
     await Orchestrator(hub).run_request('r')
     row = hub.requests['r']
@@ -533,15 +558,24 @@ async def test_pc_choice_offers_a_mixed_plan_and_both_cards_warn_about_uploads(t
     assert '단계별 HPC·PC' in card['summary']
     assert card['detail']['단계 실행 위치 · runner'] == 's1 · hpc · mock-runner\ns2 · local · mock-runner'
     assert card['detail']['target_sha256'] == contract.plan_sha256(row['plan'])
-    warning = card['detail']['hpc_transfer_warning']
-    assert 'input.tsv (s1) · 524,295 byte · 7 byte' in warning
-    assert str(tmp_path) not in warning
+    warning = card['detail'].get('hpc_transfer_warning')
+    if limit == 'unknown':
+        assert '512 KiB' in warning and '확인하지 못했습니다' in warning
+        assert 'input.tsv (s1) · 524,295 byte · 7 byte' in warning
+    elif limit == 1024:
+        assert '1,024 byte' in warning
+        assert 'input.tsv (s1) · 1,025 byte · 1 byte 초과' in warning
+    else:
+        assert warning is None  # The configured ceiling admits this file, or there is no shell transfer.
+    assert str(tmp_path) not in (warning or '')
     assert 'hpc_transfer_warning' not in json.loads(card['detail']['plan_canonical'])
     assert [task.meta['kind'] for task in hub.calls] == ['plan']
 
     # Model a restart after the plan was saved, before the first CP1 decision was saved.
     restarted = _gateway(tmp_path, monkeypatch)
     restarted.s.runner.reference_roots = settings.runner.reference_roots
+    if limit != 'unknown':
+        restarted.runner_capabilities = hub.runner_capabilities
     restarted.requests['r'] = {
         'id': 'r', 'text': row['text'], 'mode': 'plan_only', 'status': 'running',
         'plan': row['plan'], 'execution_location': row['execution_location'], 'references': references,
@@ -549,7 +583,7 @@ async def test_pc_choice_offers_a_mixed_plan_and_both_cards_warn_about_uploads(t
     restarted.interrupt_request('r')
     [resume] = [entry['approval'] for entry in restarted.approvals.values()
                 if entry['approval']['kind'] == 'resume']
-    assert resume['detail']['hpc_transfer_warning'] == warning
+    assert resume['detail'].get('hpc_transfer_warning') == warning
     assert resume['detail']['cp1_target_sha256'] == card['detail']['target_sha256']
 
 
