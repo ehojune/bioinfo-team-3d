@@ -10,6 +10,7 @@ from ..models import TaskResult, waiting
 from ..util import output_relpath
 
 RESULT_FIELD = "report_artifacts"
+LARGE_TRANSFER_FIELD = "report_artifacts_large"
 MAX_TABLE_BYTES = 60_000_000
 MAX_TRANSFER_BYTES = 64_000_000  # UTF-8 contents and paths per task result
 MAX_WIRE_BYTES = 80 * 2**20  # JSON artifact object, including escaping
@@ -28,7 +29,11 @@ def _bounded(meta, result, read_bytes) -> dict[str, str]:
     draft = meta.get(RESULT_FIELD)
     if not draft or not result.ok or waiting(result):
         return {}
-    payload, remaining, wire_remaining = {}, MAX_TRANSFER_BYTES, MAX_WIRE_BYTES - 2
+    if meta.get(LARGE_TRANSFER_FIELD) is True:
+        table_limit, remaining, wire_limit = MAX_TABLE_BYTES, MAX_TRANSFER_BYTES, MAX_WIRE_BYTES
+    else:  # older gateways dispatch the same task without the large-frame opt-in
+        table_limit, remaining, wire_limit = 3_000_000, 4_000_000, 8 * 2**20
+    payload, wire_remaining = {}, wire_limit - 2
     for path in sorted(result.outputs, key=lambda path: path != draft):
         digest = result.output_sha256.get(path)
         if not digest or output_relpath(path) != path or (path != draft
@@ -36,7 +41,7 @@ def _bounded(meta, result, read_bytes) -> dict[str, str]:
             continue
         try:
             path_size = len(path.encode("utf-8"))
-            limit = min(MAX_SOURCE_BYTES if path == draft else MAX_TABLE_BYTES, remaining - path_size)
+            limit = min(MAX_SOURCE_BYTES if path == draft else table_limit, remaining - path_size)
             if limit < 0:
                 continue
             data = read_bytes(path, limit)

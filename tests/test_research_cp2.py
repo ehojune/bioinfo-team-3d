@@ -1899,7 +1899,7 @@ async def test_compact_report_uses_only_verified_transferred_artifacts(tmp_path,
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["match", "mismatch", "oversize", "partial"])
+@pytest.mark.parametrize("case", ["match", "mismatch", "oversize", "partial", "legacy_gateway"])
 async def test_compact_report_table_crosses_runner_websocket(tmp_path, monkeypatch, case):
     import uvicorn
 
@@ -1948,6 +1948,10 @@ async def test_compact_report_table_crosses_runner_websocket(tmp_path, monkeypat
 
     async def dispatch(task):
         if task.meta["kind"] == "step":
+            if case == "legacy_gateway":
+                legacy_meta = {key: value for key, value in task.meta.items()
+                               if key != report_artifacts.LARGE_TRANSFER_FIELD}
+                task = task.model_copy(update={"meta": legacy_meta})
             result = await asyncio.wait_for(gateway.dispatch(task), 60)
             assert result.ok, result.error
             assert result.workdir and result.outputs
@@ -1971,8 +1975,9 @@ async def test_compact_report_table_crosses_runner_websocket(tmp_path, monkeypat
 
         monkeypatch.setattr(report_artifacts, "collect", cut_tail)
 
+    frame_limit = 16 * 2**20 if case == "legacy_gateway" else report_artifacts.GATEWAY_WS_MAX_BYTES
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning",
-                                          ws_max_size=report_artifacts.GATEWAY_WS_MAX_BYTES, ws_max_queue=2))
+                                          ws_max_size=frame_limit, ws_max_queue=2))
     serve = serve_task(server.serve())
     connection = asyncio.create_task(runner._connection_loop())
     try:
@@ -2020,7 +2025,7 @@ def test_report_transfer_keeps_the_draft_when_a_table_exhausts_the_budget(tmp_pa
         (tmp_path / path).write_bytes(content)
     result = TaskResult(task_id="task", agent_id="worker", ok=True, outputs=[table, draft],
                         output_sha256={path: sha256(content).hexdigest() for path, content in data.items()})
-    meta = {report_artifacts.RESULT_FIELD: draft}
+    meta = {report_artifacts.RESULT_FIELD: draft, report_artifacts.LARGE_TRANSFER_FIELD: True}
     monkeypatch.setattr(report_artifacts, limit, 200)
 
     assert report_artifacts.collect(tmp_path, meta, result) == {draft: "draft"}
@@ -2270,7 +2275,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
             from contextlib import contextmanager
             from labhq.evidence.report_consistency import _LocalTable
 
-            open_table = _LocalTable.open
+            open_table = _LocalTable.open_lines
 
             @contextmanager
             def fail_table_read(table):
@@ -2285,7 +2290,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
 
                     yield read_then_fail()
 
-            monkeypatch.setattr(_LocalTable, "open", fail_table_read)
+            monkeypatch.setattr(_LocalTable, "open_lines", fail_table_read)
         data = {draft_path: body.encode()}
         if case in {"ignored_ledger", "replacement_table"}:
             data[path] = b"effect\n0.99\n"

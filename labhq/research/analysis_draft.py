@@ -152,7 +152,12 @@ async def collect(hub, rid: str, draft: AnalysisDraft, results: dict[str, TaskRe
 
 
 def transfer_meta(draft: AnalysisDraft | None, transfer: bool) -> dict:
-    return {report_artifacts.RESULT_FIELD: draft.path if draft else True} if transfer else {}
+    if not transfer:
+        return {}
+    return {
+        report_artifacts.RESULT_FIELD: draft.path if draft else True,
+        report_artifacts.LARGE_TRANSFER_FIELD: True,
+    }
 
 
 def tables_for(report: str, results: dict, load) -> dict[str, str | None]:
