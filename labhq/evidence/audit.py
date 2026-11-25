@@ -262,8 +262,12 @@ def _receipt(req: Mapping[str, Any]) -> dict[str, Any]:
 
 def check_request_report(req: Mapping[str, Any]) -> dict:
     report = str(req.get("report") or "")
-    compact = (req.get("research_contract") or {}).get("report_check_scope") == ASSEMBLED_COMPACT
-    receipt = _receipt(req)
+    contract = req.get("research_contract") or {}
+    compact = contract.get("report_check_scope") == ASSEMBLED_COMPACT
+    failure = contract.get("failure") or {}
+    preapproval = (failure.get("report_evidence") if failure.get("stage") == "preapproval_report_check"
+                   and failure.get("plan_sha256") == contract.get("plan_sha256") else None)
+    receipt = preapproval or _receipt(req)
     return check_report(compact_report_body(report) if compact else report, research_ledgers(req),
                         unsupported=receipt.get("unsupported_claims") or [],
                         refused=receipt.get("refused_evidence") or [],

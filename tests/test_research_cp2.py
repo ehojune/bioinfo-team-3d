@@ -1640,7 +1640,9 @@ async def test_compact_bibliography_rejects_identifier_from_another_source(tmp_p
 
 
 @pytest.mark.parametrize("unsupported_in_assembly", [False, True])
-async def test_compact_bibliography_recheck_uses_the_assembled_report(tmp_path, monkeypatch, unsupported_in_assembly):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+async def test_compact_bibliography_recheck_uses_the_assembled_report(tmp_path, monkeypatch, unsupported_in_assembly,
+                                                                    newline):
     from labhq.evidence.audit import rerun_report_check
     from labhq.orchestrator import cso
     from tests.test_research_report import REPORT
@@ -1655,7 +1657,7 @@ async def test_compact_bibliography_recheck_uses_the_assembled_report(tmp_path, 
         monkeypatch.setattr(cso, "add_references", with_bad_citation)
     doi, unrelated = "10.1234/supported", "10.1234/input-only"
     draft = f"{REPORT}\n\n## 참고\n\n- [Paper](https://doi.org/{doi}) [[claim:s1/c1]]\n"
-    hub = _draft_hub(tmp_path, draft_body=draft,
+    hub = _draft_hub(tmp_path, draft_body=draft.replace("\n", newline),
                      source={"id_scheme": "doi", "id_value": doi, "accessed_at": "2026-10-01"})
     hub.requests["r"]["references"] = [{"kind": "doi", "value": unrelated}]
     await Orchestrator(hub).run_request("r")
@@ -1964,8 +1966,11 @@ def _audit_hub(tmp_path, *, problem=None, malformed=False):
     ("interrupted", 1, "interrupted"), ("budget", 1, "budget_exceeded"),
     ("no_engine_cap", 0, "budget_unavailable"),
     ("design", 0, "ineligible"), ("off", 0, None), ("unset", 0, None), ("audit_off", 0, None),
+    ("claims_only", 1, "resolved"), ("claims_and_p1", 1, "resolved"), ("claims_after_p1", 2, "limit"),
+    ("claims_off", 0, None), ("claims_no_session", 0, "session_unavailable"),
 ])
 async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, status):
+    from labhq.evidence.audit import rerun_report_check
     from labhq.research.contract import validate_research_result
     from labhq.runner.step_handoff import artifact_contract_for
     from labhq.runner.step_inputs import stage_inputs
@@ -1973,16 +1978,18 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
 
     original = tmp_path / "original"
     original.mkdir()
-    hub = _draft_hub(original)
+    bad_text = "\n\nWe counted 12345 samples.\n\n## 참고\n\n- PMID 87654321 [[claim:s1/c1]]."
+    initial_claim_problems = case in {"claims_only", "claims_and_p1", "claims_off", "claims_no_session"}
+    hub = _draft_hub(original, draft_body=REPORT + bad_text if initial_claim_problems else None)
     hub.s.runner.workspace_root = str(tmp_path)
-    hub.supports_resume = lambda agent_id: case != "no_session" and agent_id == "worker"
+    hub.supports_resume = lambda agent_id: case not in {"no_session", "claims_no_session"} and agent_id == "worker"
     if case == "no_engine_cap":
         hub.agents["worker"]["engine"] = "codex"
     req = hub.requests["r"]
     req["research_options"]["audit_before_cp2"] = case != "audit_off"
     if case != "unset":
-        req["research_options"]["audit_repair_before_cp2"] = case != "off"
-    hub.s.research.audit_repair_before_cp2 = case in {"off", "unset"}
+        req["research_options"]["audit_repair_before_cp2"] = case not in {"off", "claims_off"}
+    hub.s.research.audit_repair_before_cp2 = case in {"off", "unset", "claims_off"}
     monkeypatch.setenv("LABHQ_AUDIT_REPAIR_BEFORE_CP2", "1" if hub.s.research.audit_repair_before_cp2 else "0")
     if case == "reference_drift":
         source = tmp_path / "live-reference"
@@ -1994,7 +2001,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     base_reply = hub.reply
     generations = []
     audits = []
-    resolved = case in {"resolved", "unclassified", "reference_drift"}
+    resolved = case in {"resolved", "unclassified", "reference_drift", "claims_only", "claims_and_p1"}
 
     def save_manifest(task, result):
         manifest = {"task": task.model_dump(mode="json"), "runs": {task.id: {"ok": True}}}
@@ -2024,7 +2031,9 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
                 assert "review" not in req["research_contract"]
                 assert task.meta["parent_task"] == latest.task_id
                 assert latest.output_sha256[latest.outputs[0]] in task.prompt
-            findings = ACCEPT if resolved and len(generations) == 2 else REVISE
+            findings = (ACCEPT if case in {"claims_only", "claims_off", "claims_no_session"}
+                        or (resolved and len(generations) == 2)
+                        or (case == "claims_after_p1" and len(generations) > 1) else REVISE)
             issues = [*findings["issues"]] if findings == ACCEPT else [*findings["issues"], *ACCEPT["issues"]]
             if "requires_plan_change" in task.output_schema["properties"]["issues"]["items"]["properties"]:
                 if case != "unclassified" or len(audits) > 1:
@@ -2035,7 +2044,14 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         assert kind == "audit_repair" and task.agent_id == "worker"
         assert task.resume_session_id == "original-session" and task.budget_usd == (4 if case == "budget" else 5)
         assert task.meta["parent_task"] == generations[-1].task_id and not task.meta.get("workdir")
-        assert "add the column" in task.prompt and "no external cohort" not in task.prompt
+        automated = initial_claim_problems or (case == "claims_after_p1" and len(generations) > 1)
+        assert ("add the column" in task.prompt) == (not automated or case == "claims_and_p1")
+        assert "no external cohort" not in task.prompt
+        assert ("Automated claim check findings:" in task.prompt) == automated
+        if automated:
+            assert "numeric prose needs a claim anchor" in task.prompt
+            assert "bibliography PMID 87654321 has no accepted evidence" in task.prompt
+            assert "[[claim:s1/c1]]" in task.prompt
         assert "say donor-level" not in task.prompt and artifact_contract_for(task)
         assert not task.meta.get("reference_dirs") and not task.meta.get("project_dirs")
         if case == "reference_drift":
@@ -2054,7 +2070,8 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         path, draft_path = task.meta["required_outputs"]
         assert (folder / "inputs" / "s1" / path.removeprefix("outputs/")).is_file()
         data = {path: f"effect\n0.{len(generations)}\n".encode(),
-                draft_path: (REPORT + f"\n\nRevision {len(generations)}.").encode()}
+                draft_path: (REPORT + "\n\nRevised analysis." +
+                             (bad_text if case == "claims_after_p1" else "")).encode()}
         (folder / "outputs").mkdir()
         for name, body in data.items():
             (folder / name).write_bytes(body)
@@ -2087,6 +2104,18 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
     assert len(audits) == len(generations) + (case == "unclassified")
     latest = generations[-1]
     assert req["results"]["s1"]["task_id"] == latest.task_id
+    if case in {"claims_after_p1", "claims_no_session", "claims_off"}:
+        approval_kinds = [row["kind"] for row in hub.approvals]
+        assert approval_kinds == ["research_plan"] + (["research_evidence"] if case == "claims_off" else [])
+        assert req["status"] == "failed" and req["outcome"] == "report_incomplete"
+        check = rerun_report_check(req)
+        assert check["same"] is True
+        assert any("numeric prose needs a claim anchor" in problem for problem in check["recorded"]["problems"])
+        assert "bibliography PMID 87654321 has no accepted evidence linked to its anchors" in check["recorded"]["problems"]
+        if status:
+            assert contract["audit_repair"]["status"] == status
+            assert "cp2" not in (contract.get("checkpoints") or {})
+        return
     approved = hub.approvals[1]
     assert approved["kind"] == "research_evidence"
     detail = approved["detail"]
@@ -2097,7 +2126,7 @@ async def test_p1_repair_before_cp2(tmp_path, monkeypatch, case, attempts, statu
         assert audit["draft_sha256"] == sha256(detail["analysis_draft"].encode()).hexdigest()
         assert detail["results"]["s1"]["claims"][0]["statement"] == latest.structured["claims"][0]["statement"]
         assert [x["priority"] for x in audit["issues"]] == (["P2"] if resolved else ["P3", "P1", "P2"])
-        assert detail["analysis_draft"].endswith(f"Revision {attempts}.") == (resolved or case == "limit")
+        assert detail["analysis_draft"].endswith("Revised analysis.") == (resolved or case == "limit")
     assert (original / generations[0].outputs[0]).read_bytes() == b"effect\n0.25\n"
     if resolved or case == "limit":
         calls, approvals = len(hub.calls), len(hub.approvals)

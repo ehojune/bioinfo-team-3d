@@ -38,6 +38,7 @@ class AuditDraft:
     path: str
     binding: dict
     checks: dict
+    reference_lines: list[str]
     restricted: bool
     workdirs: list[str]
 
@@ -47,7 +48,8 @@ class AuditDraft:
 
 
 async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body: str, results: dict, *,
-                  claim_context: dict, earlier_notes: list[tuple[str, str]], restricted: bool) -> AuditDraft:
+                  claim_context: dict, earlier_notes: list[tuple[str, str]], restricted: bool,
+                  claim_body: str | None) -> AuditDraft:
     contract = request["research_contract"]
     analyst = results[draft.step_id]
     collected = draft.restored(contract.get("analysis_draft") or {}, analyst) or analyst
@@ -70,7 +72,10 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
             raise ValueError(f"Collected output changed: {file['step_id']}/{file['path']}")
     verified = complete and all(file["status"] == OK for file in observed["files"])
     tables = await analysis_draft.check_tables(hub, request, body, {sid: inventory[sid] for sid in outputs})
-    checks = {"claims": check_report(body, **claim_context),
+    references: list[str] = []
+    claims = (check_report(body, **claim_context) if claim_body is None else
+              check_report(claim_body, **claim_context, bibliography=True, reference_lines=references))
+    checks = {"claims": claims,
               "table_consistency": report_consistency.check(body, tables)}
     binding = {"plan_sha256": contract["plan_sha256"],
                "artifacts_sha256": _digest(outputs) if complete else None,
@@ -81,5 +86,5 @@ async def prepare(hub, request: dict, draft: analysis_draft.AnalysisDraft, body:
                                 if result.ok and result.outputs and result.workdir))
     load = analysis_draft.artifact_loader(hub, request) if not restricted else None
     transferred_body = body if load and (load(collected.task_id) or {}).get(draft.path) == body else None
-    return AuditDraft(transferred_body, str(Path(collected.workdir) / draft.path), binding, checks,
+    return AuditDraft(transferred_body, str(Path(collected.workdir) / draft.path), binding, checks, references,
                       restricted, workdirs)
