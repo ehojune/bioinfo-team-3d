@@ -39,3 +39,23 @@ python kit.py blind 가림출력폴더 비공개폴더/대응표.json 보고서1
 - `existing`은 labhq 체크아웃의 본문·표 대조와 인용 감사를 실행합니다. 보고서 경로는 묶음 기준이며 기본값은 `report.md`입니다. 링크의 표 경로는 보고서가 있는 폴더 기준입니다. 인용 감사는 묶음의 `citations.json`, `records.json`, 원문 사본을 씁니다. 두 JSON 중 하나라도 없으면 `unavailable`로 기록합니다. 대조한 수와 읽지 못한 표를 함께 확인합니다.
 - `blind`는 본문에서 링크 주소(그냥 적은 HTTP(S) 주소 포함), 그림, 코드 블록, 메타데이터를 빼고 같은 UTF-8 텍스트 형식으로 씁니다. 새 출력 폴더만 채점자에게 넘기고 새 대응표는 별도로 봉인합니다. 출력 JSON에 대응표의 SHA-256이 나옵니다. 넘기기 전에 본문에 비교군을 밝히는 문구가 남았는지 확인합니다.
 - 종료 코드 `0`은 완료, `1`은 검사 지적, `2`는 입력·실행 오류입니다. `check`와 `blind`는 이 폴더만 복사해 실행합니다.
+
+## 6번 비교군 ② 실행
+
+`arm2.py`는 ①의 산출 묶음마다 한 번 준비합니다. 코드·표·보고서와 필요한 근거를 한 폴더에 내보내고, 원본 폴더 밖에 새 실행 폴더를 지정합니다. 상대 경로는 그대로 복사합니다. ①의 분석 세션 UUID와 [측정 B의 감사 지시문](https://github.com/ehojune/bioinfo-team-3d/issues/1481#issuecomment-7123864247)을 사용합니다.
+
+```sh
+python arm2.py prepare bundle run --report report/final.md --session ANALYSIS_UUID --audit-prompt measurement-b.txt
+python arm2.py next run
+python arm2.py record run 1 --cost-usd 3.80 --result review.json
+python arm2.py next run
+python arm2.py record run 2 --cost-usd 5.00 --result repair1.json
+python arm2.py next run
+python arm2.py record run 3 --cost-usd 1.20 --result repair2.json
+python arm2.py status run
+```
+
+- `next` 한 번이 호출 한 번을 배정합니다. 실행 담당자가 시작 전에 `max_usd`를 호출 도구에 적용하고 총 실험의 $400 정지선을 확인합니다. 측정 B에서 쓴 Codex CLI에는 달러 기준 중단 옵션이 없어 승인된 비용 제한 수단이 필요합니다. `record`에는 실패·중단 비용도 적습니다.
+- 감사는 출력의 `working_dir`에서 다른 벤더의 읽기 전용 세션으로 한 번 실행합니다. 출력의 `prompt`는 측정 B 지시문에 이번 보고서 경로를 붙인 것입니다. 감사 JSON 전체를 `record`에 넣으면 `issues`의 P1에만 ID를 붙여 수정에 보냅니다. P1이 없으면 끝납니다.
+- 수정은 출력의 `working_dir`에서 [측정 B의 수정 지시문](https://github.com/ehojune/bioinfo-team-3d/issues/1481#issuecomment-7124979566)에 `p1`과 `report`를 넣어 진행합니다. `fork_session`이 있으면 `resume_session`에서 그 UUID로 분기하고, 이후에는 분기 세션을 이어 엽니다. 수정 기록을 읽고 남은 ID를 `{"unresolved":["P1-1"]}`로 적습니다. 모두 닫혔으면 빈 배열을 씁니다. 실패 시 `--result` 대신 `--failed`를 쓰고, 분기가 생성됐으면 `--fork-created`도 붙입니다.
+- 감사는 $4, 수정은 회당 $5 및 두 회, 합계는 $10까지입니다. 다음 회차의 한도는 남은 돈과 회당 한도 중 작은 값입니다. 초과 청구는 실제 금액으로 기록하고 뒤 호출을 막습니다. `status`로 비용과 미해결 P1을 확인하고, 정상 종료의 `result_report`를 `kit.py blind`에 넘깁니다. `repair_limit`이면 수정 두 회 후 남은 P1도 기록합니다. 실행 실패와 예산 중단은 #1522 규칙을 따릅니다.
