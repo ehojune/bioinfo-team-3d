@@ -19,8 +19,8 @@ def cli(tmp_path):
     copied = tmp_path / "standalone-kit"
     shutil.copytree(KIT, copied, ignore=shutil.ignore_patterns("__pycache__"))
 
-    def invoke(*args, expected=0, error=None):
-        result = subprocess.run([sys.executable, str(copied / "arm2.py"), *map(str, args)],
+    def invoke(*args, expected=0, error=None, script="arm2.py"):
+        result = subprocess.run([sys.executable, str(copied / script), *map(str, args)],
                                 cwd=tmp_path, capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == expected, result.stderr or result.stdout
         if error:
@@ -179,3 +179,173 @@ def test_prepare_refuses_destination_within_original(cli, tmp_path):
     cli("prepare", source, output, "--report", "report.md", "--session", SESSION,
         "--audit-prompt", source / "report.md", expected=2, error="outside the original")
     assert not output.exists()
+
+
+def test_blind_preserves_commands_and_redacts_arm_markers(cli, tmp_path):
+    source = tmp_path / "synthetic-arm2.md"
+    report = (
+        "# Commands\n\n"
+        "From `<work>` run ``printf '`date`'`` or `cd arm_2`.\n\n"
+        "```sh compare=arm-2\n"
+        "python -I scripts/check.py --root '<work>' \\\n"
+        "    --arm 2  --label 'synthetic-cohort-z'\n"
+        "\n\n"
+        "\tpython -I scripts/summary.py --arch arm64\n"
+        "```\n\n"
+        "> ~~~~sh\n"
+        ">   echo '비교군 ②'\n"
+        ">   # ~~~\n"
+        "> ~~~~~\n\n"
+        "    python -I scripts/table.py\n"
+        "\tpython -I scripts/count.py --lane=B\n"
+    )
+    source.write_text(report, encoding="utf-8")
+    out, mapping = tmp_path / "blinded", tmp_path / "private.json"
+    result = cli("blind", out, mapping, source, "--redact", "synthetic-cohort-z", script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == (
+        "Commands\n\n"
+        "From `<work>` run ``printf '`date`'`` or `cd [redacted]`.\n\n"
+        "```sh compare=[redacted]\n"
+        "python -I scripts/check.py --root '<work>' \\\n"
+        "    --arm [redacted]  --label '[redacted]'\n"
+        "\n\n"
+        "\tpython -I scripts/summary.py --arch arm64\n"
+        "```\n\n"
+        "> ~~~~sh\n"
+        ">   echo '[redacted]'\n"
+        ">   # ~~~\n"
+        "> ~~~~~\n\n"
+        "    python -I scripts/table.py\n"
+        "\tpython -I scripts/count.py --lane=[redacted]\n"
+    )
+    assert source.read_text(encoding="utf-8") == report
+    assert export.suffix == ".txt" and len(export.stem) == 16
+    assert json.loads(mapping.read_bytes()) == {export.stem: str(source.resolve())}
+    assert result == {"reports": 1, "mapping_sha256": hashlib.sha256(mapping.read_bytes()).hexdigest()}
+
+
+def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
+    source = tmp_path / "synthetic-report.md"
+    source.write_text(
+        "---\nworkflow: private-frontmatter\n---\n"
+        "<!--\n```sh\necho private-comment\n```\n-->\n"
+        "<pre>\n```sh\necho private-pre\n```\n</pre>\n"
+        "<script>private-script</script>\n"
+        "<style>private-style</style>\n"
+        "<span title='`private-attribute`'>Visible</span>\n"
+        "See [the `<work>` placeholder](private-link) and ![`private-image`](private-image.png).\n"
+        "[[claim: private-claim]]\n"
+        "[ref]: private-reference\n"
+        "Visit <https://private-angle.invalid/> or https://private-bare.invalid/.\n\n"
+        "`curl 'https://private-inline.invalid/a;private-inline-tail=synthetic'`\n\n"
+        "```sh\n"
+        "  curl \"https://private-code.invalid/a;private-code-tail=synthetic\"\n"
+        "  curl https://private-bare-code.invalid/a;echo done\n"
+        "  curl https://private-pipe.invalid/a|head\n"
+        "  curl https://private-shell.invalid/a&&echo done\n"
+        "  curl https://private-query.invalid/a?public=1&private-query-tail=synthetic &\n"
+        "  curl https://private-escaped.invalid/a\\;private-escaped-tail=synthetic\n"
+        "  curl https://private-continued.invalid/a\\\n"
+        "?private-continued-tail=synthetic&&echo done\n"
+        "  curl \"https://private-quoted-continued.invalid/a\\\n"
+        "?private-quoted-tail=synthetic\"\n"
+        "  curl ht\\\n"
+        "tps://private-split-scheme.invalid/a\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, out / "map.json", source, script="kit.py", expected=2, error="outside output")
+    assert not out.exists()
+    cli("blind", out, mapping, source, script="kit.py")
+    [export] = out.iterdir()
+    result = export.read_text(encoding="utf-8")
+    assert "private-" not in result
+    assert "Visible\nSee the `<work>` placeholder and ." in result
+    assert "`curl '[redacted]'`" in result
+    assert (
+        '```sh\n  curl "[redacted]"\n'
+        "  curl [redacted];echo done\n"
+        "  curl [redacted]|head\n"
+        "  curl [redacted]&&echo done\n"
+        "  curl [redacted] &\n"
+        "  curl [redacted]\n"
+        "  curl [redacted]\\\n[redacted]&&echo done\n"
+        '  curl "[redacted]\\\n[redacted]"\n'
+        "  curl [redacted]\\\n[redacted]\n```"
+    ) in result
+
+
+def test_blind_preserves_fence_nested_in_list(cli, tmp_path):
+    source = tmp_path / "synthetic-list.md"
+    fence = (
+        "    ```sh\n"
+        "    printf \"<work>\" \\\n"
+        "      --arm 2\n"
+        "    ```\n"
+    )
+    source.write_text(
+        f"- Run:\n{fence}\n- Finish.\n\n<!-- private-comment -->\n", encoding="utf-8",
+    )
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == f"Run:\n{fence.replace('--arm 2', '--arm [redacted]')}\nFinish.\n"
+
+
+def test_blind_preserves_indented_code_in_quote(cli, tmp_path):
+    source = tmp_path / "synthetic-quote.md"
+    source.write_text(
+        'Intro\n\n>     printf "<work>"\n>\n>     --arm 2\n>\n> Summary.\n', encoding="utf-8",
+    )
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == (
+        'Intro\n\n>     printf "<work>"\n>\n>     --arm [redacted]\n\nSummary.\n'
+    )
+
+
+def test_blind_redacts_overlapping_aliases_and_defaults(cli, tmp_path):
+    source = tmp_path / "synthetic-overlap.md"
+    source.write_text(
+        "Run `check --arm 2 --branch=A --lane B` from `arm_2-synthetic-run`.\n", encoding="utf-8",
+    )
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, "--redact", "arm", "--redact", "branch",
+        "--redact", "lane", "--redact", "arm_2-synthetic-run", script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == (
+        "Run `check --[redacted] [redacted] --[redacted]=[redacted] --[redacted] [redacted]` from `[redacted]`.\n"
+    )
+
+
+def test_blind_keeps_line_continuations_in_commands(cli, tmp_path):
+    source = tmp_path / "synthetic-continuation.md"
+    report = (
+        "Run `python -I \\\n"
+        "  ~/scripts/check.py \\\n"
+        "    >result.txt --root '<work>'`.\n\n"
+        "```sh\n"
+        "check --arm \\\n"
+        "  2 --branch=\\\n"
+        "A --la\\\n"
+        "ne B\n"
+        "```\n"
+    )
+    source.write_text(report, encoding="utf-8")
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == (
+        "Run `python -I \\\n"
+        "  ~/scripts/check.py \\\n"
+        "    >result.txt --root '<work>'`.\n\n"
+        "```sh\n"
+        "check --arm \\\n"
+        "  [redacted] --branch=\\\n"
+        "[redacted] --la\\\n"
+        "ne [redacted]\n"
+        "```\n"
+    )

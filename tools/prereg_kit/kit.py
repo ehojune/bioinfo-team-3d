@@ -5,11 +5,13 @@ import html
 import json
 import re
 import sys
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextlib import redirect_stdout
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from io import StringIO
+from itertools import accumulate
 from pathlib import Path
 from secrets import token_hex
 from tempfile import TemporaryDirectory
@@ -198,29 +200,219 @@ def existing_checks(args):
     return result, int(bool(consistency["findings"] or citations.get("counts", {}).get("major")))
 
 
-def plain_report(text):
+QUOTE = r"(?: {0,3}>[ \t]?)*"
+INDENT = r"(?: {4}| {0,3}\t)"
+INLINE = (r"(?<![\\`])(?P<ticks>`+)(?!`)(?:[^\n]|\n(?![ \t]*\n| {0,3}(?:>|`{3,}|~{3,})))*?"
+          r"(?<!`)(?P=ticks)(?!`)")
+REPORT_MARKUP = re.compile(
+    rf"^(?P<quote>{QUOTE})(?P<margin>[ \t]*)(?P<fence>`{{3,}}(?!`)(?=[^`\n]*$)|~{{3,}})[^\n]*"
+    rf"|^(?P<indent_quote>{QUOTE})(?P<indent>{INDENT})"
+    rf"|<!--(?s:.*?)(?:-->|\Z)|<(?P<tag>script|style|pre)\b[^>]*>(?s:.*?)</(?P=tag)\s*>"
+    rf"|\[\[\s*claim\s*:[^\]\n]*\]\]|^{QUOTE} {{0,3}}\[[^\]\n]+\]:[^\n]*$"
+    rf"|(?P<image>!?)\[(?P<label>[^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])"
+    rf"|</?[A-Za-z][\w-]*(?:\s[^<>]*)?/?>|<https?://[^<>\s]+>"
+    rf"|(?P<inline>{INLINE})",
+    re.MULTILINE | re.IGNORECASE,
+)
+QUOTE_PREFIX = re.compile(QUOTE)
+LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+(?=\S)")
+CODE_INDENT = re.compile(INDENT)
+ARM_MARKER = re.compile(
+    r"(?<![a-z0-9])(?:arm(?:[ _-]*[1-6①②③④⑤⑥]|[ _-]+[a-f])|(?:branch|lane)[_-][a-f1-6]"
+    r"|(?:갈래|비교군)[ \t_-]*[①②③④⑤⑥1-6a-f])(?![a-z0-9])", re.IGNORECASE,
+)
+ARM_FIELD = re.compile(
+    r"(?<![\w-])(?:(?:--)?(?:arm|branch|lane)(?:[_-]id)?[\"']?[ \t]*[:=][ \t]*"
+    r"|--(?:arm|branch|lane)[ \t]+)[\"']?"
+    r"(?P<value>[a-f1-6①②③④⑤⑥])(?![\w-])", re.IGNORECASE,
+)
+CONTINUATION = "\\\n"
+CODE_URL = re.compile(
+    r"""(?P<quoted>"(?:\\[^\n]|[^"\\\n])*"|'[^'\n]*')"""
+    # Keep shell separators, but hide escaped characters and URL key/value pairs.
+    r"""|https?://(?:\\[^\n]|[;&](?=[\w.%~-]+=)|[^\s<>"'`\\|;&()])+""",
+    re.IGNORECASE,
+)
+QUOTED_URL = re.compile(r"https?://[^\s<>`]+", re.IGNORECASE)
+
+
+def code_url_spans(value):
+    for match in CODE_URL.finditer(value):
+        if match["quoted"]:
+            offset = match.start() + 1
+            for url in QUOTED_URL.finditer(value, offset, match.end() - 1):
+                yield url.span()
+        else:
+            yield match.span()
+
+
+def list_margin(body, opening, width):
+    depth = opening["quote"].count(">")
+    end = opening.start() - 1
+    while end >= 0:
+        start = body.rfind("\n", 0, end) + 1
+        line = body[start:end]
+        end = start - 1
+        prefix = QUOTE_PREFIX.match(line)
+        content = line[prefix.end():]
+        if not content.strip():
+            continue
+        if prefix[0].count(">") != depth:
+            break
+        item = LIST_ITEM.match(content)
+        if item:
+            margin = len(item[0].expandtabs(4))
+            if margin <= width <= margin + 3:
+                return margin
+        leading = content[:len(content) - len(content.lstrip(" \t"))]
+        if len(leading.expandtabs(4)) < width - 3:
+            break
+    return None
+
+
+def report_lines(body, start):
+    while start < len(body):
+        end = body.find("\n", start)
+        if end == -1:
+            end = len(body)
+        line = body[start:end]
+        prefix = QUOTE_PREFIX.match(line)
+        yield start, end, prefix[0].count(">"), line[prefix.end():]
+        start = end + 1
+
+
+def fenced_end(body, opening, margin):
+    fence = opening["fence"]
+    depth = opening["quote"].count(">")
+    close = re.compile(rf"{fence[0]}{{{len(fence)},}}[ \t]*")
+    for start, end, line_depth, content in report_lines(body, opening.end() + 1):
+        if line_depth < depth:
+            return start - 1
+        if line_depth == depth:
+            stripped = content.lstrip(" \t")
+            indent = len(content[:len(content) - len(stripped)].expandtabs(4))
+            if stripped and indent < margin:
+                return start - 1
+            if indent <= margin + 3 and close.fullmatch(stripped):
+                return end
+    return len(body) - int(body.endswith("\n"))
+
+
+def indented_end(body, start, depth):
+    end = start
+    for _, line_end, line_depth, content in report_lines(body, start):
+        if line_depth != depth:
+            break
+        if CODE_INDENT.match(content):
+            end = line_end
+        elif content.strip():
+            break
+    return end
+
+
+def plain_report(text, aliases=()):
     body = re.sub(r"(?ms)\A---[ \t]*\n.*?^(?:---|\.\.\.)[ \t]*(?:\n|\Z)", "", text)
-    body = re.sub(r"(?s)<!--.*?(?:-->|\Z)", "", "\n".join(unfenced(body, include_quotes=True)))
-    # Indented code can start at a block boundary, not inside a running paragraph.
-    body = re.sub(r"(?m)(\A|^[ \t]*\n|^ {0,3}#{1,6}(?:[ \t][^\n]*)?\n)"
-                  r"(?:(?: {4}| {0,3}\t)[^\n]*(?:\n|\Z))+", r"\1", body)
-    body = re.sub(r"(?is)<(script|style|pre)\b[^>]*>.*?</\1\s*>", "", body)
-    body = re.sub(r"(?i)\[\[\s*claim\s*:[^\]\n]*\]\]", "", body)
-    body = re.sub(r"(?m)^ {0,3}\[[^\]\n]+\]:[^\n]*$", "", body)
-    body = re.sub(r"(!?)\[([^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])",
-                  lambda match: "" if match[1] else match[2], body)
-    body = re.sub(r"</?[A-Za-z][\w-]*(?:\s[^<>]*)?/?>|<https?://[^<>\s]+>", "", body)
+    alias_choices = "|".join(map(re.escape, sorted(aliases, key=len, reverse=True)))
+    alias_pattern = re.compile(rf"(?=({alias_choices}))", re.IGNORECASE) if alias_choices else None
+
+    def redact(value, *, literal_code=False):
+        # Find sensitive spans in the logical command, then map them to the
+        # original so the output retains the shell's backslash-newline pairs.
+        if literal_code:
+            lines = value.split(CONTINUATION)
+            logical = "".join(lines)
+            breaks = tuple(accumulate(map(len, lines[:-1])))
+        else:
+            logical, breaks = value, ()
+        spans = [match.span("value") for match in ARM_FIELD.finditer(logical)]
+        field_ends = {end for _, end in spans}
+        # A recognized option keeps its name and only masks its value.
+        spans.extend(match.span() for match in ARM_MARKER.finditer(logical) if match.end() not in field_ends)
+        if alias_pattern:
+            spans.extend(match.span(1) for match in alias_pattern.finditer(logical))
+        if literal_code:
+            spans.extend(code_url_spans(logical))
+
+        merged = []
+        for start, end in sorted(spans):
+            if merged and start < merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+
+        parts = []
+        end = 0
+        for start, stop in merged:
+            start += len(CONTINUATION) * bisect_right(breaks, start)
+            stop += len(CONTINUATION) * bisect_left(breaks, stop)
+            masked = CONTINUATION.join("[redacted]" if part else "" for part in value[start:stop].split(CONTINUATION))
+            parts.extend((value[end:start], masked))
+            end = stop
+        parts.append(value[end:])
+        return "".join(parts)
+
+    # Keep literal code out of the prose cleanup. Markup that hides content is
+    # consumed as a whole, before any code inside it can be saved.
+    marker = "\0"
+    while marker in body:
+        marker += "\0"
+    code = []
+
+    def save(value):
+        code.append(redact(value, literal_code=True))
+        return f"{marker}{len(code) - 1}{marker}"
+
+    chunks = []
+    end = 0
+    while match := REPORT_MARKUP.search(body, end):
+        chunks.append(body[end:match.start()])
+        end = match.end()
+        if match["fence"]:
+            width = len(match["margin"].expandtabs(4))
+            margin = 0 if width <= 3 else list_margin(body, match, width)
+            if margin is not None:
+                end = fenced_end(body, match, margin)
+                chunks.append(save(body[match.start():end]))
+                continue
+            end = match.start("fence")
+        if match["indent"] or match["fence"]:
+            start = match.start()
+            quote = match["indent_quote"] if match["indent"] else match["quote"]
+            depth = quote.count(">")
+            previous_start = body.rfind("\n", 0, max(0, start - 1)) + 1
+            previous = body[previous_start:start].rstrip("\n")
+            previous_quote = QUOTE_PREFIX.match(previous)
+            previous_text = previous[previous_quote.end():]
+            if (previous_quote[0].count(">") < depth or not previous_text.strip()
+                    or re.match(r"^ {0,3}#{1,6}(?:[ \t]|$)", previous_text)):
+                code_end = indented_end(body, start, depth)
+                if code_end > start:
+                    end = code_end
+                    chunks.append(save(body[start:end]))
+                    continue
+            chunks.append(body[start:end])
+        elif match["inline"]:
+            chunks.append(save(match[0]))
+        elif match["label"] is not None and not match["image"]:
+            chunks.append(re.sub(INLINE, lambda span: save(span[0]), match["label"]))
+    chunks.append(body[end:])
+    body = "".join(chunks)
     body = re.sub(r"(?m)^[ \t]*\|?[ \t]*:?-{3,}:?(?:[ \t]*\|[ \t]*:?-{3,}:?)+[ \t]*\|?[ \t]*\n?", "", body)
-    body = re.sub(r"(?m)^ {0,3}(?:#{1,6}[ \t]+|> ?|[-*+] +|[0-9]+[.)] +)", "", body)
+    body = re.sub(rf"(?m)^{QUOTE} {{0,3}}(?:#{{1,6}}[ \t]+|[-*+] +|[0-9]+[.)] +)?", "", body)
     body = re.sub(r"(?m)^ {0,3}(?:={2,}|-{3,}|\*{3,}|_{3,})[ \t]*$", "", body)
-    body = re.sub(r"(?<!\w)(\*{1,3}|_{1,3}|`+)(?=\S)([^\n]+?)(?<=\S)\1(?!\w)", r"\2", body)
+    body = re.sub(r"(?<!\w)(\*{1,3}|_{1,3})(?=\S)([^\n]+?)(?<=\S)\1(?!\w)", r"\2", body)
     body = re.sub(r"(?i)\bhttps?://[^\s<>]+", "", html.unescape(body))
     lines = [" ".join(line.split()) for line in body.splitlines()]
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines).strip()) + "\n"
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines).strip())
+    fragments = re.split(rf"{marker}([0-9]+){marker}", body)
+    return "".join(code[int(fragment)] if index % 2 else redact(fragment)
+                   for index, fragment in enumerate(fragments)) + "\n"
 
 
 def blind(args):
     output, mapping = args.output.resolve(), args.mapping.resolve()
+    if any(not alias.strip() for alias in args.redact):
+        raise ValueError("redaction aliases must contain text")
     if mapping.is_relative_to(output) or mapping.exists() or output.exists():
         raise ValueError("output and private mapping must be new, with mapping outside output")
     if not mapping.parent.is_dir():
@@ -230,7 +422,7 @@ def blind(args):
         code = token_hex(8)
         while code in reports:
             code = token_hex(8)
-        plain = plain_report(read(source))
+        plain = plain_report(read(source), args.redact)
         if not plain.strip():
             raise ValueError(f"no report text: {source}")
         reports[code] = (str(source.resolve()), plain)
@@ -260,6 +452,8 @@ def main():
     export.add_argument("output", type=Path)
     export.add_argument("mapping", type=Path)
     export.add_argument("reports", nargs="+", type=Path)
+    export.add_argument("--redact", action="append", default=[], metavar="TEXT",
+                        help="hide an additional literal arm identifier (repeatable)")
     export.set_defaults(run=blind)
     args = parser.parse_args()
     try:
