@@ -246,6 +246,10 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
         "  curl https://private-shell.invalid/a&&echo done\n"
         "  curl https://private-query.invalid/a?public=1&private-query-tail=synthetic &\n"
         "  curl https://private-escaped.invalid/a\\;private-escaped-tail=synthetic\n"
+        "  curl https://private-continued.invalid/a\\\n"
+        "?private-continued-tail=synthetic&&echo done\n"
+        "  curl \"https://private-quoted-continued.invalid/a\\\n"
+        "?private-quoted-tail=synthetic\"\n"
         "```\n",
         encoding="utf-8",
     )
@@ -264,7 +268,9 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
         "  curl [redacted]|head\n"
         "  curl [redacted]&&echo done\n"
         "  curl [redacted] &\n"
-        "  curl [redacted]\n```"
+        "  curl [redacted]\n"
+        "  curl [redacted]\\\n[redacted]&&echo done\n"
+        '  curl "[redacted]\\\n[redacted]"\n```'
     ) in result
 
 
@@ -295,4 +301,18 @@ def test_blind_preserves_indented_code_in_quote(cli, tmp_path):
     [export] = out.iterdir()
     assert export.read_text(encoding="utf-8") == (
         'Intro\n\n>     printf "<work>"\n>\n>     --arm [redacted]\n\nSummary.\n'
+    )
+
+
+def test_blind_redacts_overlapping_aliases_and_defaults(cli, tmp_path):
+    source = tmp_path / "synthetic-overlap.md"
+    source.write_text(
+        "Run `check --arm 2 --branch=A --lane B` from `arm_2-synthetic-run`.\n", encoding="utf-8",
+    )
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, "--redact", "arm", "--redact", "branch",
+        "--redact", "lane", "--redact", "arm_2-synthetic-run", script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == (
+        "Run `check --[redacted] [redacted] --[redacted]=[redacted] --[redacted] [redacted]` from `[redacted]`.\n"
     )

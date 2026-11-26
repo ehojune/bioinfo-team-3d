@@ -219,24 +219,30 @@ ARM_MARKER = re.compile(
     r"|(?:갈래|비교군)[ \t_-]*[①②③④⑤⑥1-6a-f])(?![a-z0-9])", re.IGNORECASE,
 )
 ARM_FIELD = re.compile(
-    r"(?<![\w-])((?:(?:--)?(?:arm|branch|lane)(?:[_-]id)?[\"']?[ \t]*[:=][ \t]*"
-    r"|--(?:arm|branch|lane)[ \t]+)[\"']?)"
-    r"[a-f1-6①②③④⑤⑥](?![\w-])", re.IGNORECASE,
+    r"(?<![\w-])(?:(?:--)?(?:arm|branch|lane)(?:[_-]id)?[\"']?[ \t]*[:=][ \t]*"
+    r"|--(?:arm|branch|lane)[ \t]+)[\"']?"
+    r"(?P<value>[a-f1-6①②③④⑤⑥])(?![\w-])", re.IGNORECASE,
 )
+CONTINUATION = "\\\n"
 CODE_URL = re.compile(
-    r"""(?P<quoted>"(?:\\[^\n]|[^"\\\n])*"|'[^'\n]*')"""
+    r"""(?P<quoted>"(?:\\[\s\S]|[^"\\\n])*"|'[^'\n]*')"""
     # Keep shell separators, but hide escaped characters and URL key/value pairs.
-    r"""|https?://(?:\\[^\n]|[;&](?=[\w.%~-]+=)|[^\s<>"'`\\|;&()])+""",
+    r"""|https?://(?:\\[\s\S]|[;&](?=[\w.%~-]+=)|[^\s<>"'`\\|;&()])+""",
     re.IGNORECASE,
 )
-QUOTED_URL = re.compile(r"https?://[^\s<>`]+", re.IGNORECASE)
+QUOTED_URL = re.compile(r"https?://(?:\\\n|[^\s<>`])+", re.IGNORECASE)
+
+
+def mask_code_url(value):
+    return CONTINUATION.join("[redacted]" if part else "" for part in value.split(CONTINUATION))
 
 
 def redact_code_url(match):
     value = match["quoted"]
     if value:
-        return value[0] + QUOTED_URL.sub("[redacted]", value[1:-1]) + value[-1]
-    return "[redacted]"
+        content = QUOTED_URL.sub(lambda url: mask_code_url(url[0]), value[1:-1])
+        return value[0] + content + value[-1]
+    return mask_code_url(match[0])
 
 
 def list_margin(body, opening, width):
@@ -305,14 +311,25 @@ def indented_end(body, start, depth):
 
 def plain_report(text, aliases=()):
     body = re.sub(r"(?ms)\A---[ \t]*\n.*?^(?:---|\.\.\.)[ \t]*(?:\n|\Z)", "", text)
-    alias_pattern = re.compile("|".join(map(re.escape, sorted(aliases, key=len, reverse=True))),
-                               re.IGNORECASE) if aliases else None
+    alias_choices = "|".join(map(re.escape, sorted(aliases, key=len, reverse=True)))
+    alias_pattern = re.compile(rf"(?=({alias_choices}))", re.IGNORECASE) if alias_choices else None
 
     def redact(value):
+        # Identify every sensitive span against the original before replacing any.
+        spans = [match.span("value") for match in ARM_FIELD.finditer(value)]
+        field_ends = {end for _, end in spans}
+        # A recognized option keeps its name and only masks its value.
+        spans.extend(match.span() for match in ARM_MARKER.finditer(value) if match.end() not in field_ends)
         if alias_pattern:
-            value = alias_pattern.sub("[redacted]", value)
-        value = ARM_FIELD.sub(r"\1[redacted]", value)
-        return ARM_MARKER.sub("[redacted]", value)
+            spans.extend(match.span(1) for match in alias_pattern.finditer(value))
+        parts = []
+        end = 0
+        for start, stop in sorted(spans):
+            if start >= end:
+                parts.extend((value[end:start], "[redacted]"))
+            end = max(end, stop)
+        parts.append(value[end:])
+        return "".join(parts)
 
     # Keep literal code out of the prose cleanup. Markup that hides content is
     # consumed as a whole, before any code inside it can be saved.
