@@ -198,29 +198,114 @@ def existing_checks(args):
     return result, int(bool(consistency["findings"] or citations.get("counts", {}).get("major")))
 
 
-def plain_report(text):
+QUOTE = r"(?: {0,3}>[ \t]?)*"
+INDENT = r"(?: {4}| {0,3}\t)"
+INLINE = r"(?<![\\`])(?P<ticks>`+)(?!`)(?:[^\n]|\n(?![ \t]*(?:\n|[>`~])))*?(?<!`)(?P=ticks)(?!`)"
+REPORT_MARKUP = re.compile(
+    rf"^(?P<quote>{QUOTE}) {{0,3}}(?P<fence>`{{3,}}(?!`)(?=[^`\n]*$)|~{{3,}})[^\n]*"
+    rf"|(?P<indent>^{INDENT})"
+    rf"|<!--(?s:.*?)(?:-->|\Z)|<(?P<tag>script|style|pre)\b[^>]*>(?s:.*?)</(?P=tag)\s*>"
+    rf"|\[\[\s*claim\s*:[^\]\n]*\]\]|^{QUOTE} {{0,3}}\[[^\]\n]+\]:[^\n]*$"
+    rf"|(?P<image>!?)\[(?P<label>[^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])"
+    rf"|</?[A-Za-z][\w-]*(?:\s[^<>]*)?/?>|<https?://[^<>\s]+>"
+    rf"|(?P<inline>{INLINE})",
+    re.MULTILINE | re.IGNORECASE,
+)
+QUOTE_PREFIX = re.compile(QUOTE)
+INDENTED_BLOCK = re.compile(rf"{INDENT}[^\n]*(?:\n(?:[ \t]*\n)*{INDENT}[^\n]*)*")
+ARM_MARKER = re.compile(
+    r"(?<![a-z0-9])(?:arm(?:[ _-]*[1-6①②③④⑤⑥]|[ _-]+[a-f])|(?:branch|lane)[_-][a-f1-6]"
+    r"|(?:갈래|비교군)[ \t_-]*[①②③④⑤⑥1-6a-f])(?![a-z0-9])", re.IGNORECASE,
+)
+ARM_FIELD = re.compile(
+    r"(?<![\w-])((?:(?:--)?(?:arm|branch|lane)(?:[_-]id)?[\"']?[ \t]*[:=][ \t]*"
+    r"|--(?:arm|branch|lane)[ \t]+)[\"']?)"
+    r"[a-f1-6①②③④⑤⑥](?![\w-])", re.IGNORECASE,
+)
+CODE_URL = re.compile(r"https?://[^\s<>\"'`|;]+", re.IGNORECASE)
+
+
+def fenced_end(body, opening):
+    fence = opening["fence"]
+    depth = opening["quote"].count(">")
+    close = re.compile(rf" {{0,3}}{fence[0]}{{{len(fence)},}}[ \t]*")
+    start = opening.end() + 1
+    while start < len(body):
+        end = body.find("\n", start)
+        if end == -1:
+            end = len(body)
+        line = body[start:end]
+        prefix = QUOTE_PREFIX.match(line)
+        line_depth = prefix[0].count(">")
+        if line_depth < depth:
+            return start - 1
+        if line_depth == depth and close.fullmatch(line[prefix.end():]):
+            return end
+        start = end + 1
+    return len(body) - int(body.endswith("\n"))
+
+
+def plain_report(text, aliases=()):
     body = re.sub(r"(?ms)\A---[ \t]*\n.*?^(?:---|\.\.\.)[ \t]*(?:\n|\Z)", "", text)
-    body = re.sub(r"(?s)<!--.*?(?:-->|\Z)", "", "\n".join(unfenced(body, include_quotes=True)))
-    # Indented code can start at a block boundary, not inside a running paragraph.
-    body = re.sub(r"(?m)(\A|^[ \t]*\n|^ {0,3}#{1,6}(?:[ \t][^\n]*)?\n)"
-                  r"(?:(?: {4}| {0,3}\t)[^\n]*(?:\n|\Z))+", r"\1", body)
-    body = re.sub(r"(?is)<(script|style|pre)\b[^>]*>.*?</\1\s*>", "", body)
-    body = re.sub(r"(?i)\[\[\s*claim\s*:[^\]\n]*\]\]", "", body)
-    body = re.sub(r"(?m)^ {0,3}\[[^\]\n]+\]:[^\n]*$", "", body)
-    body = re.sub(r"(!?)\[([^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])",
-                  lambda match: "" if match[1] else match[2], body)
-    body = re.sub(r"</?[A-Za-z][\w-]*(?:\s[^<>]*)?/?>|<https?://[^<>\s]+>", "", body)
+    alias_pattern = re.compile("|".join(map(re.escape, sorted(aliases, key=len, reverse=True))),
+                               re.IGNORECASE) if aliases else None
+
+    def redact(value):
+        if alias_pattern:
+            value = alias_pattern.sub("[redacted]", value)
+        value = ARM_FIELD.sub(r"\1[redacted]", value)
+        return ARM_MARKER.sub("[redacted]", value)
+
+    # Keep literal code out of the prose cleanup. Markup that hides content is
+    # consumed as a whole, before any code inside it can be saved.
+    marker = "\0"
+    while marker in body:
+        marker += "\0"
+    code = []
+
+    def save(value):
+        code.append(redact(CODE_URL.sub("[redacted]", value)))
+        return f"{marker}{len(code) - 1}{marker}"
+
+    chunks = []
+    end = 0
+    while match := REPORT_MARKUP.search(body, end):
+        chunks.append(body[end:match.start()])
+        end = match.end()
+        if match["fence"]:
+            end = fenced_end(body, match)
+            chunks.append(save(body[match.start():end]))
+        elif match["indent"]:
+            start = match.start()
+            previous_start = body.rfind("\n", 0, max(0, start - 1)) + 1
+            previous = body[previous_start:start].rstrip("\n")
+            if not previous.strip() or re.match(r"^ {0,3}#{1,6}(?:[ \t]|$)", previous):
+                end = INDENTED_BLOCK.match(body, start).end()
+                chunks.append(save(body[start:end]))
+            else:
+                chunks.append(match[0])
+        elif match["inline"]:
+            chunks.append(save(match[0]))
+        elif match["label"] is not None and not match["image"]:
+            chunks.append(re.sub(INLINE, lambda span: save(span[0]), match["label"]))
+    chunks.append(body[end:])
+    body = "".join(chunks)
     body = re.sub(r"(?m)^[ \t]*\|?[ \t]*:?-{3,}:?(?:[ \t]*\|[ \t]*:?-{3,}:?)+[ \t]*\|?[ \t]*\n?", "", body)
-    body = re.sub(r"(?m)^ {0,3}(?:#{1,6}[ \t]+|> ?|[-*+] +|[0-9]+[.)] +)", "", body)
+    body = re.sub(rf"(?m)^{QUOTE} {{0,3}}(?:#{{1,6}}[ \t]+|[-*+] +|[0-9]+[.)] +)?", "", body)
     body = re.sub(r"(?m)^ {0,3}(?:={2,}|-{3,}|\*{3,}|_{3,})[ \t]*$", "", body)
-    body = re.sub(r"(?<!\w)(\*{1,3}|_{1,3}|`+)(?=\S)([^\n]+?)(?<=\S)\1(?!\w)", r"\2", body)
+    body = re.sub(r"(?<!\w)(\*{1,3}|_{1,3})(?=\S)([^\n]+?)(?<=\S)\1(?!\w)", r"\2", body)
     body = re.sub(r"(?i)\bhttps?://[^\s<>]+", "", html.unescape(body))
     lines = [" ".join(line.split()) for line in body.splitlines()]
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines).strip()) + "\n"
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines).strip())
+    fragments = re.split(rf"{marker}([0-9]+){marker}", body)
+    return "".join(code[int(fragment)] if index % 2 else redact(fragment)
+                   for index, fragment in enumerate(fragments)) + "\n"
 
 
 def blind(args):
     output, mapping = args.output.resolve(), args.mapping.resolve()
+    if any(not alias.strip() for alias in args.redact):
+        raise ValueError("redaction aliases must contain text")
     if mapping.is_relative_to(output) or mapping.exists() or output.exists():
         raise ValueError("output and private mapping must be new, with mapping outside output")
     if not mapping.parent.is_dir():
@@ -230,7 +315,7 @@ def blind(args):
         code = token_hex(8)
         while code in reports:
             code = token_hex(8)
-        plain = plain_report(read(source))
+        plain = plain_report(read(source), args.redact)
         if not plain.strip():
             raise ValueError(f"no report text: {source}")
         reports[code] = (str(source.resolve()), plain)
@@ -260,6 +345,8 @@ def main():
     export.add_argument("output", type=Path)
     export.add_argument("mapping", type=Path)
     export.add_argument("reports", nargs="+", type=Path)
+    export.add_argument("--redact", action="append", default=[], metavar="TEXT",
+                        help="hide an additional literal arm identifier (repeatable)")
     export.set_defaults(run=blind)
     args = parser.parse_args()
     try:
