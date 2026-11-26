@@ -238,8 +238,12 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
         "[[claim: private-claim]]\n"
         "[ref]: private-reference\n"
         "Visit <https://private-angle.invalid/> or https://private-bare.invalid/.\n\n"
-        "`curl 'https://private-inline.invalid/'`\n\n"
-        "```sh\n  curl \"https://private-code.invalid/\"\n```\n",
+        "`curl 'https://private-inline.invalid/a;private-inline-tail=synthetic'`\n\n"
+        "```sh\n"
+        "  curl \"https://private-code.invalid/a;private-code-tail=synthetic\"\n"
+        "  curl https://private-bare-code.invalid/a;echo done\n"
+        "  curl https://private-pipe.invalid/a|head\n"
+        "```\n",
         encoding="utf-8",
     )
     out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
@@ -251,4 +255,21 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
     assert "private-" not in result
     assert "Visible\nSee the `<work>` placeholder and ." in result
     assert "`curl '[redacted]'`" in result
-    assert '```sh\n  curl "[redacted]"\n```' in result
+    assert '```sh\n  curl "[redacted]"\n  curl [redacted];echo done\n  curl [redacted]|head\n```' in result
+
+
+def test_blind_preserves_fence_nested_in_list(cli, tmp_path):
+    source = tmp_path / "synthetic-list.md"
+    fence = (
+        "    ```sh\n"
+        "    printf \"<work>\" \\\n"
+        "      --arm 2\n"
+        "    ```\n"
+    )
+    source.write_text(
+        f"- Run:\n{fence}\n- Finish.\n\n<!-- private-comment -->\n", encoding="utf-8",
+    )
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == f"Run:\n{fence.replace('--arm 2', '--arm [redacted]')}\nFinish.\n"

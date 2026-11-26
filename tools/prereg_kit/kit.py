@@ -202,7 +202,7 @@ QUOTE = r"(?: {0,3}>[ \t]?)*"
 INDENT = r"(?: {4}| {0,3}\t)"
 INLINE = r"(?<![\\`])(?P<ticks>`+)(?!`)(?:[^\n]|\n(?![ \t]*(?:\n|[>`~])))*?(?<!`)(?P=ticks)(?!`)"
 REPORT_MARKUP = re.compile(
-    rf"^(?P<quote>{QUOTE}) {{0,3}}(?P<fence>`{{3,}}(?!`)(?=[^`\n]*$)|~{{3,}})[^\n]*"
+    rf"^(?P<quote>{QUOTE})(?P<margin>[ \t]*)(?P<fence>`{{3,}}(?!`)(?=[^`\n]*$)|~{{3,}})[^\n]*"
     rf"|(?P<indent>^{INDENT})"
     rf"|<!--(?s:.*?)(?:-->|\Z)|<(?P<tag>script|style|pre)\b[^>]*>(?s:.*?)</(?P=tag)\s*>"
     rf"|\[\[\s*claim\s*:[^\]\n]*\]\]|^{QUOTE} {{0,3}}\[[^\]\n]+\]:[^\n]*$"
@@ -212,6 +212,7 @@ REPORT_MARKUP = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 QUOTE_PREFIX = re.compile(QUOTE)
+LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+(?=\S)")
 INDENTED_BLOCK = re.compile(rf"{INDENT}[^\n]*(?:\n(?:[ \t]*\n)*{INDENT}[^\n]*)*")
 ARM_MARKER = re.compile(
     r"(?<![a-z0-9])(?:arm(?:[ _-]*[1-6①②③④⑤⑥]|[ _-]+[a-f])|(?:branch|lane)[_-][a-f1-6]"
@@ -222,13 +223,47 @@ ARM_FIELD = re.compile(
     r"|--(?:arm|branch|lane)[ \t]+)[\"']?)"
     r"[a-f1-6①②③④⑤⑥](?![\w-])", re.IGNORECASE,
 )
-CODE_URL = re.compile(r"https?://[^\s<>\"'`|;]+", re.IGNORECASE)
+CODE_URL = re.compile(
+    r"""(?P<quoted>"(?:\\[^\n]|[^"\\\n])*"|'[^'\n]*')|https?://[^\s<>"'`|;]+""", re.IGNORECASE,
+)
+QUOTED_URL = re.compile(r"https?://[^\s<>`]+", re.IGNORECASE)
 
 
-def fenced_end(body, opening):
+def redact_code_url(match):
+    value = match["quoted"]
+    if value:
+        return value[0] + QUOTED_URL.sub("[redacted]", value[1:-1]) + value[-1]
+    return "[redacted]"
+
+
+def list_margin(body, opening, width):
+    depth = opening["quote"].count(">")
+    end = opening.start() - 1
+    while end >= 0:
+        start = body.rfind("\n", 0, end) + 1
+        line = body[start:end]
+        end = start - 1
+        prefix = QUOTE_PREFIX.match(line)
+        content = line[prefix.end():]
+        if not content.strip():
+            continue
+        if prefix[0].count(">") != depth:
+            break
+        item = LIST_ITEM.match(content)
+        if item:
+            margin = len(item[0].expandtabs(4))
+            if margin <= width <= margin + 3:
+                return margin
+        leading = content[:len(content) - len(content.lstrip(" \t"))]
+        if len(leading.expandtabs(4)) < width - 3:
+            break
+    return None
+
+
+def fenced_end(body, opening, margin):
     fence = opening["fence"]
     depth = opening["quote"].count(">")
-    close = re.compile(rf" {{0,3}}{fence[0]}{{{len(fence)},}}[ \t]*")
+    close = re.compile(rf"{fence[0]}{{{len(fence)},}}[ \t]*")
     start = opening.end() + 1
     while start < len(body):
         end = body.find("\n", start)
@@ -239,8 +274,14 @@ def fenced_end(body, opening):
         line_depth = prefix[0].count(">")
         if line_depth < depth:
             return start - 1
-        if line_depth == depth and close.fullmatch(line[prefix.end():]):
-            return end
+        if line_depth == depth:
+            content = line[prefix.end():]
+            stripped = content.lstrip(" \t")
+            indent = len(content[:len(content) - len(stripped)].expandtabs(4))
+            if stripped and indent < margin:
+                return start - 1
+            if indent <= margin + 3 and close.fullmatch(stripped):
+                return end
         start = end + 1
     return len(body) - int(body.endswith("\n"))
 
@@ -264,7 +305,7 @@ def plain_report(text, aliases=()):
     code = []
 
     def save(value):
-        code.append(redact(CODE_URL.sub("[redacted]", value)))
+        code.append(redact(CODE_URL.sub(redact_code_url, value)))
         return f"{marker}{len(code) - 1}{marker}"
 
     chunks = []
@@ -273,17 +314,23 @@ def plain_report(text, aliases=()):
         chunks.append(body[end:match.start()])
         end = match.end()
         if match["fence"]:
-            end = fenced_end(body, match)
-            chunks.append(save(body[match.start():end]))
-        elif match["indent"]:
+            width = len(match["margin"].expandtabs(4))
+            margin = 0 if width <= 3 else list_margin(body, match, width)
+            if margin is not None:
+                end = fenced_end(body, match, margin)
+                chunks.append(save(body[match.start():end]))
+                continue
+            end = match.start("fence")
+        if match["indent"] or match["fence"]:
             start = match.start()
             previous_start = body.rfind("\n", 0, max(0, start - 1)) + 1
             previous = body[previous_start:start].rstrip("\n")
-            if not previous.strip() or re.match(r"^ {0,3}#{1,6}(?:[ \t]|$)", previous):
-                end = INDENTED_BLOCK.match(body, start).end()
+            indented = INDENTED_BLOCK.match(body, start)
+            if indented and (not previous.strip() or re.match(r"^ {0,3}#{1,6}(?:[ \t]|$)", previous)):
+                end = indented.end()
                 chunks.append(save(body[start:end]))
             else:
-                chunks.append(match[0])
+                chunks.append(body[start:end])
         elif match["inline"]:
             chunks.append(save(match[0]))
         elif match["label"] is not None and not match["image"]:
