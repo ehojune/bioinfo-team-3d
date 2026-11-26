@@ -5,11 +5,13 @@ import html
 import json
 import re
 import sys
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextlib import redirect_stdout
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from io import StringIO
+from itertools import accumulate
 from pathlib import Path
 from secrets import token_hex
 from tempfile import TemporaryDirectory
@@ -200,7 +202,8 @@ def existing_checks(args):
 
 QUOTE = r"(?: {0,3}>[ \t]?)*"
 INDENT = r"(?: {4}| {0,3}\t)"
-INLINE = r"(?<![\\`])(?P<ticks>`+)(?!`)(?:[^\n]|\n(?![ \t]*(?:\n|[>`~])))*?(?<!`)(?P=ticks)(?!`)"
+INLINE = (r"(?<![\\`])(?P<ticks>`+)(?!`)(?:[^\n]|\n(?![ \t]*\n| {0,3}(?:>|`{3,}|~{3,})))*?"
+          r"(?<!`)(?P=ticks)(?!`)")
 REPORT_MARKUP = re.compile(
     rf"^(?P<quote>{QUOTE})(?P<margin>[ \t]*)(?P<fence>`{{3,}}(?!`)(?=[^`\n]*$)|~{{3,}})[^\n]*"
     rf"|^(?P<indent_quote>{QUOTE})(?P<indent>{INDENT})"
@@ -225,24 +228,22 @@ ARM_FIELD = re.compile(
 )
 CONTINUATION = "\\\n"
 CODE_URL = re.compile(
-    r"""(?P<quoted>"(?:\\[\s\S]|[^"\\\n])*"|'[^'\n]*')"""
+    r"""(?P<quoted>"(?:\\[^\n]|[^"\\\n])*"|'[^'\n]*')"""
     # Keep shell separators, but hide escaped characters and URL key/value pairs.
-    r"""|https?://(?:\\[\s\S]|[;&](?=[\w.%~-]+=)|[^\s<>"'`\\|;&()])+""",
+    r"""|https?://(?:\\[^\n]|[;&](?=[\w.%~-]+=)|[^\s<>"'`\\|;&()])+""",
     re.IGNORECASE,
 )
-QUOTED_URL = re.compile(r"https?://(?:\\\n|[^\s<>`])+", re.IGNORECASE)
+QUOTED_URL = re.compile(r"https?://[^\s<>`]+", re.IGNORECASE)
 
 
-def mask_code_url(value):
-    return CONTINUATION.join("[redacted]" if part else "" for part in value.split(CONTINUATION))
-
-
-def redact_code_url(match):
-    value = match["quoted"]
-    if value:
-        content = QUOTED_URL.sub(lambda url: mask_code_url(url[0]), value[1:-1])
-        return value[0] + content + value[-1]
-    return mask_code_url(match[0])
+def code_url_spans(value):
+    for match in CODE_URL.finditer(value):
+        if match["quoted"]:
+            offset = match.start() + 1
+            for url in QUOTED_URL.finditer(value, offset, match.end() - 1):
+                yield url.span()
+        else:
+            yield match.span()
 
 
 def list_margin(body, opening, width):
@@ -314,20 +315,39 @@ def plain_report(text, aliases=()):
     alias_choices = "|".join(map(re.escape, sorted(aliases, key=len, reverse=True)))
     alias_pattern = re.compile(rf"(?=({alias_choices}))", re.IGNORECASE) if alias_choices else None
 
-    def redact(value):
-        # Identify every sensitive span against the original before replacing any.
-        spans = [match.span("value") for match in ARM_FIELD.finditer(value)]
+    def redact(value, *, literal_code=False):
+        # Find sensitive spans in the logical command, then map them to the
+        # original so the output retains the shell's backslash-newline pairs.
+        if literal_code:
+            lines = value.split(CONTINUATION)
+            logical = "".join(lines)
+            breaks = tuple(accumulate(map(len, lines[:-1])))
+        else:
+            logical, breaks = value, ()
+        spans = [match.span("value") for match in ARM_FIELD.finditer(logical)]
         field_ends = {end for _, end in spans}
         # A recognized option keeps its name and only masks its value.
-        spans.extend(match.span() for match in ARM_MARKER.finditer(value) if match.end() not in field_ends)
+        spans.extend(match.span() for match in ARM_MARKER.finditer(logical) if match.end() not in field_ends)
         if alias_pattern:
-            spans.extend(match.span(1) for match in alias_pattern.finditer(value))
+            spans.extend(match.span(1) for match in alias_pattern.finditer(logical))
+        if literal_code:
+            spans.extend(code_url_spans(logical))
+
+        merged = []
+        for start, end in sorted(spans):
+            if merged and start < merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([start, end])
+
         parts = []
         end = 0
-        for start, stop in sorted(spans):
-            if start >= end:
-                parts.extend((value[end:start], "[redacted]"))
-            end = max(end, stop)
+        for start, stop in merged:
+            start += len(CONTINUATION) * bisect_right(breaks, start)
+            stop += len(CONTINUATION) * bisect_left(breaks, stop)
+            masked = CONTINUATION.join("[redacted]" if part else "" for part in value[start:stop].split(CONTINUATION))
+            parts.extend((value[end:start], masked))
+            end = stop
         parts.append(value[end:])
         return "".join(parts)
 
@@ -339,7 +359,7 @@ def plain_report(text, aliases=()):
     code = []
 
     def save(value):
-        code.append(redact(CODE_URL.sub(redact_code_url, value)))
+        code.append(redact(value, literal_code=True))
         return f"{marker}{len(code) - 1}{marker}"
 
     chunks = []

@@ -250,6 +250,8 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
         "?private-continued-tail=synthetic&&echo done\n"
         "  curl \"https://private-quoted-continued.invalid/a\\\n"
         "?private-quoted-tail=synthetic\"\n"
+        "  curl ht\\\n"
+        "tps://private-split-scheme.invalid/a\n"
         "```\n",
         encoding="utf-8",
     )
@@ -270,7 +272,8 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
         "  curl [redacted] &\n"
         "  curl [redacted]\n"
         "  curl [redacted]\\\n[redacted]&&echo done\n"
-        '  curl "[redacted]\\\n[redacted]"\n```'
+        '  curl "[redacted]\\\n[redacted]"\n'
+        "  curl [redacted]\\\n[redacted]\n```"
     ) in result
 
 
@@ -315,4 +318,34 @@ def test_blind_redacts_overlapping_aliases_and_defaults(cli, tmp_path):
     [export] = out.iterdir()
     assert export.read_text(encoding="utf-8") == (
         "Run `check --[redacted] [redacted] --[redacted]=[redacted] --[redacted] [redacted]` from `[redacted]`.\n"
+    )
+
+
+def test_blind_keeps_line_continuations_in_commands(cli, tmp_path):
+    source = tmp_path / "synthetic-continuation.md"
+    report = (
+        "Run `python -I \\\n"
+        "  ~/scripts/check.py \\\n"
+        "    >result.txt --root '<work>'`.\n\n"
+        "```sh\n"
+        "check --arm \\\n"
+        "  2 --branch=\\\n"
+        "A --la\\\n"
+        "ne B\n"
+        "```\n"
+    )
+    source.write_text(report, encoding="utf-8")
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == (
+        "Run `python -I \\\n"
+        "  ~/scripts/check.py \\\n"
+        "    >result.txt --root '<work>'`.\n\n"
+        "```sh\n"
+        "check --arm \\\n"
+        "  [redacted] --branch=\\\n"
+        "[redacted] --la\\\n"
+        "ne [redacted]\n"
+        "```\n"
     )
