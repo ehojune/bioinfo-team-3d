@@ -4,6 +4,16 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 채점용 가림본의 실행 명령 보존
+
+Closes #1528
+
+- `kit.py blind`에서 코드 울타리, 줄바꿈, 들여쓰기, 인라인 `<work>`를 보존합니다. 코드와 본문의 갈래 표식을 가리며 추가 실행 이름이나 경로는 `--redact`로 지정합니다.
+- Windows에서 관련 pytest 125건이 통과했습니다. 합성 CLI 시험에서 목록과 인용문의 코드, 줄을 이은 명령과 리디렉션 보존을 확인했습니다. 여러 줄에 걸친 URL과 갈래 값도 가리고 대응표는 별도로 저장합니다.
+- 도구 코드 순증 194줄, 제품 코드(`labhq/`) 변경 0줄. 과제 1·2 가림본은 재생성하지 않았습니다.
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## 6번 비교군 ② 감사·수정 도구
 
 Refs #1483, #1522
