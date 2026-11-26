@@ -243,6 +243,9 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
         "  curl \"https://private-code.invalid/a;private-code-tail=synthetic\"\n"
         "  curl https://private-bare-code.invalid/a;echo done\n"
         "  curl https://private-pipe.invalid/a|head\n"
+        "  curl https://private-shell.invalid/a&&echo done\n"
+        "  curl https://private-query.invalid/a?public=1&private-query-tail=synthetic &\n"
+        "  curl https://private-escaped.invalid/a\\;private-escaped-tail=synthetic\n"
         "```\n",
         encoding="utf-8",
     )
@@ -255,7 +258,14 @@ def test_blind_keeps_hidden_markup_and_links_out_of_export(cli, tmp_path):
     assert "private-" not in result
     assert "Visible\nSee the `<work>` placeholder and ." in result
     assert "`curl '[redacted]'`" in result
-    assert '```sh\n  curl "[redacted]"\n  curl [redacted];echo done\n  curl [redacted]|head\n```' in result
+    assert (
+        '```sh\n  curl "[redacted]"\n'
+        "  curl [redacted];echo done\n"
+        "  curl [redacted]|head\n"
+        "  curl [redacted]&&echo done\n"
+        "  curl [redacted] &\n"
+        "  curl [redacted]\n```"
+    ) in result
 
 
 def test_blind_preserves_fence_nested_in_list(cli, tmp_path):
@@ -273,3 +283,16 @@ def test_blind_preserves_fence_nested_in_list(cli, tmp_path):
     cli("blind", out, mapping, source, script="kit.py")
     [export] = out.iterdir()
     assert export.read_text(encoding="utf-8") == f"Run:\n{fence.replace('--arm 2', '--arm [redacted]')}\nFinish.\n"
+
+
+def test_blind_preserves_indented_code_in_quote(cli, tmp_path):
+    source = tmp_path / "synthetic-quote.md"
+    source.write_text(
+        'Intro\n\n>     printf "<work>"\n>\n>     --arm 2\n>\n> Summary.\n', encoding="utf-8",
+    )
+    out, mapping = tmp_path / "blinded", tmp_path / "mapping.json"
+    cli("blind", out, mapping, source, script="kit.py")
+    [export] = out.iterdir()
+    assert export.read_text(encoding="utf-8") == (
+        'Intro\n\n>     printf "<work>"\n>\n>     --arm [redacted]\n\nSummary.\n'
+    )

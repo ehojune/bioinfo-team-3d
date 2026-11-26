@@ -203,7 +203,7 @@ INDENT = r"(?: {4}| {0,3}\t)"
 INLINE = r"(?<![\\`])(?P<ticks>`+)(?!`)(?:[^\n]|\n(?![ \t]*(?:\n|[>`~])))*?(?<!`)(?P=ticks)(?!`)"
 REPORT_MARKUP = re.compile(
     rf"^(?P<quote>{QUOTE})(?P<margin>[ \t]*)(?P<fence>`{{3,}}(?!`)(?=[^`\n]*$)|~{{3,}})[^\n]*"
-    rf"|(?P<indent>^{INDENT})"
+    rf"|^(?P<indent_quote>{QUOTE})(?P<indent>{INDENT})"
     rf"|<!--(?s:.*?)(?:-->|\Z)|<(?P<tag>script|style|pre)\b[^>]*>(?s:.*?)</(?P=tag)\s*>"
     rf"|\[\[\s*claim\s*:[^\]\n]*\]\]|^{QUOTE} {{0,3}}\[[^\]\n]+\]:[^\n]*$"
     rf"|(?P<image>!?)\[(?P<label>[^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])"
@@ -213,7 +213,7 @@ REPORT_MARKUP = re.compile(
 )
 QUOTE_PREFIX = re.compile(QUOTE)
 LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+(?=\S)")
-INDENTED_BLOCK = re.compile(rf"{INDENT}[^\n]*(?:\n(?:[ \t]*\n)*{INDENT}[^\n]*)*")
+CODE_INDENT = re.compile(INDENT)
 ARM_MARKER = re.compile(
     r"(?<![a-z0-9])(?:arm(?:[ _-]*[1-6①②③④⑤⑥]|[ _-]+[a-f])|(?:branch|lane)[_-][a-f1-6]"
     r"|(?:갈래|비교군)[ \t_-]*[①②③④⑤⑥1-6a-f])(?![a-z0-9])", re.IGNORECASE,
@@ -224,7 +224,10 @@ ARM_FIELD = re.compile(
     r"[a-f1-6①②③④⑤⑥](?![\w-])", re.IGNORECASE,
 )
 CODE_URL = re.compile(
-    r"""(?P<quoted>"(?:\\[^\n]|[^"\\\n])*"|'[^'\n]*')|https?://[^\s<>"'`|;]+""", re.IGNORECASE,
+    r"""(?P<quoted>"(?:\\[^\n]|[^"\\\n])*"|'[^'\n]*')"""
+    # Keep shell separators, but hide escaped characters and URL key/value pairs.
+    r"""|https?://(?:\\[^\n]|[;&](?=[\w.%~-]+=)|[^\s<>"'`\\|;&()])+""",
+    re.IGNORECASE,
 )
 QUOTED_URL = re.compile(r"https?://[^\s<>`]+", re.IGNORECASE)
 
@@ -260,30 +263,44 @@ def list_margin(body, opening, width):
     return None
 
 
-def fenced_end(body, opening, margin):
-    fence = opening["fence"]
-    depth = opening["quote"].count(">")
-    close = re.compile(rf"{fence[0]}{{{len(fence)},}}[ \t]*")
-    start = opening.end() + 1
+def report_lines(body, start):
     while start < len(body):
         end = body.find("\n", start)
         if end == -1:
             end = len(body)
         line = body[start:end]
         prefix = QUOTE_PREFIX.match(line)
-        line_depth = prefix[0].count(">")
+        yield start, end, prefix[0].count(">"), line[prefix.end():]
+        start = end + 1
+
+
+def fenced_end(body, opening, margin):
+    fence = opening["fence"]
+    depth = opening["quote"].count(">")
+    close = re.compile(rf"{fence[0]}{{{len(fence)},}}[ \t]*")
+    for start, end, line_depth, content in report_lines(body, opening.end() + 1):
         if line_depth < depth:
             return start - 1
         if line_depth == depth:
-            content = line[prefix.end():]
             stripped = content.lstrip(" \t")
             indent = len(content[:len(content) - len(stripped)].expandtabs(4))
             if stripped and indent < margin:
                 return start - 1
             if indent <= margin + 3 and close.fullmatch(stripped):
                 return end
-        start = end + 1
     return len(body) - int(body.endswith("\n"))
+
+
+def indented_end(body, start, depth):
+    end = start
+    for _, line_end, line_depth, content in report_lines(body, start):
+        if line_depth != depth:
+            break
+        if CODE_INDENT.match(content):
+            end = line_end
+        elif content.strip():
+            break
+    return end
 
 
 def plain_report(text, aliases=()):
@@ -323,14 +340,20 @@ def plain_report(text, aliases=()):
             end = match.start("fence")
         if match["indent"] or match["fence"]:
             start = match.start()
+            quote = match["indent_quote"] if match["indent"] else match["quote"]
+            depth = quote.count(">")
             previous_start = body.rfind("\n", 0, max(0, start - 1)) + 1
             previous = body[previous_start:start].rstrip("\n")
-            indented = INDENTED_BLOCK.match(body, start)
-            if indented and (not previous.strip() or re.match(r"^ {0,3}#{1,6}(?:[ \t]|$)", previous)):
-                end = indented.end()
-                chunks.append(save(body[start:end]))
-            else:
-                chunks.append(body[start:end])
+            previous_quote = QUOTE_PREFIX.match(previous)
+            previous_text = previous[previous_quote.end():]
+            if (previous_quote[0].count(">") < depth or not previous_text.strip()
+                    or re.match(r"^ {0,3}#{1,6}(?:[ \t]|$)", previous_text)):
+                code_end = indented_end(body, start, depth)
+                if code_end > start:
+                    end = code_end
+                    chunks.append(save(body[start:end]))
+                    continue
+            chunks.append(body[start:end])
         elif match["inline"]:
             chunks.append(save(match[0]))
         elif match["label"] is not None and not match["image"]:
