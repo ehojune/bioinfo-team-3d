@@ -95,10 +95,18 @@ def check_integrity(state, run):
         if snapshot(path) != state["source_sha256"]:
             raise ValueError(f"baseline changed: {path}")
     repair_hash = snapshot(run / "repair")
-    if not any(event["kind"] == "repair" for event in state["events"]) and repair_hash != state["source_sha256"]:
+    expected = state.get("result_sha256")
+    if expected is not None:
+        if repair_hash != expected:
+            raise ValueError("final repair copy changed after recording")
+    elif any(event["kind"] == "repair" for event in state["events"]):
+        if status(state, run)["result_report"] is not None:
+            raise ValueError("final repair copy has no recorded digest")
+    elif repair_hash != state["source_sha256"]:
         raise ValueError("repair copy changed before its first reservation")
     if not (run / "repair" / state["report"]).is_file():
         raise ValueError("repair report is missing")
+    return repair_hash
 
 
 def status(state, run):
@@ -177,7 +185,7 @@ def record(args, state, run):
     if args.cost_usd > event["limit"]:
         state["stop"] = "cost_overrun"
     try:
-        check_integrity(state, run)
+        repair_hash = check_integrity(state, run)
     except (ValueError, OSError) as error:
         state["stop"] = state["stop"] or "integrity_failed"
         event["integrity_error"] = str(error)
@@ -189,6 +197,8 @@ def record(args, state, run):
     event.update(cost=args.cost_usd, failed=args.failed,
                  fork_created=bool(pending.get("fork_session") and (args.result or args.fork_created)))
     result = status(state, run)
+    if result["result_report"] is not None:
+        state["result_sha256"] = repair_hash
     if "integrity_error" in event:
         result["integrity_error"] = event["integrity_error"]
     return result, int(bool(state["stop"]))

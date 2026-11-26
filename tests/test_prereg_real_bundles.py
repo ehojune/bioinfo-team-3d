@@ -95,6 +95,7 @@ def test_three_offline_bundle_layouts(cli, tmp_path, report, artifacts, path):
         second = cli("next", run)
         assert second["max_usd"] == "1.2" and second["fork_session"] is None
         assert second["resume_session"] == first["fork_session"] and second["p1"] == {"P1-2": first["p1"]["P1-2"]}
+        (run / "repair" / report).write_text("# Second revision\n", encoding="utf-8")
         record(cli, run, 3, "0", {"unresolved": ["P2"]}, expected=2, error="incoming P1 list")
         result = record(cli, run, 3, "1.200000001" if path == "budget" else "1.20",
                         {"unresolved": ["P1-2"]}, expected=int(path == "budget"))
@@ -107,6 +108,9 @@ def test_three_offline_bundle_layouts(cli, tmp_path, report, artifacts, path):
     assert hashes(source) == hashes(run / "audit") == baseline
     if p1:
         assert hashes(run / "repair")[report] != baseline[report]
+    if result["result_report"]:
+        Path(result["result_report"]).write_text("# Changed after recording\n", encoding="utf-8")
+        cli("status", run, expected=2, error="final repair copy changed")
 
 
 def test_concurrent_reservations_and_failed_audit_are_single_attempt(cli, tmp_path):
@@ -143,6 +147,9 @@ def test_failed_first_repair_counts_and_next_uses_same_lineage(cli, tmp_path, fo
     assert second["fork_session"] == (None if fork_created else first["fork_session"])
     final = record(cli, run, 3, "1", {"unresolved": []})
     assert final["state"] == "complete" and final["remaining_usd"] == "0"
+    assert cli("status", run) == final
+    Path(final["result_report"]).write_text("# Changed after recording\n", encoding="utf-8")
+    cli("status", run, expected=2, error="final repair copy changed")
 
 
 @pytest.mark.parametrize("changed", ["source", "audit", "repair"])

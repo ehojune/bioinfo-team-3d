@@ -257,6 +257,7 @@
     "tests/test_pr990_stale_dispatch_repro.py",
     "tests/test_pr_gate.py",
     "tests/test_precedent_texts_951.py",
+    "tests/test_prereg_real_bundles.py",
     "tests/test_private_paths.py",
     "tests/test_probe_inbound_mcp.py",
     "tests/test_probe_timeout.py",

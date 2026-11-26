@@ -55,6 +55,8 @@ python arm2.py record run 3 --cost-usd 1.20 --result repair2.json
 python arm2.py status run
 ```
 
+가림본을 만들기 직전에 `status`를 실행합니다. 종료를 기록한 뒤 수정 사본이 바뀌면 보고서 경로를 내주지 않습니다.
+
 - `next` 한 번이 호출 한 번을 배정합니다. 실행 담당자가 시작 전에 `max_usd`를 호출 도구에 적용하고 총 실험의 $400 정지선을 확인합니다. 측정 B에서 쓴 Codex CLI에는 달러 기준 중단 옵션이 없어 승인된 비용 제한 수단이 필요합니다. `record`에는 실패·중단 비용도 적습니다.
 - 감사는 출력의 `working_dir`에서 다른 벤더의 읽기 전용 세션으로 한 번 실행합니다. 출력의 `prompt`는 측정 B 지시문에 이번 보고서 경로를 붙인 것입니다. 감사 JSON 전체를 `record`에 넣으면 `issues`의 P1에만 ID를 붙여 수정에 보냅니다. P1이 없으면 끝납니다.
 - 수정은 출력의 `working_dir`에서 [측정 B의 수정 지시문](https://github.com/ehojune/bioinfo-team-3d/issues/1481#issuecomment-7124979566)에 `p1`과 `report`를 넣어 진행합니다. `fork_session`이 있으면 `resume_session`에서 그 UUID로 분기하고, 이후에는 분기 세션을 이어 엽니다. 수정 기록을 읽고 남은 ID를 `{"unresolved":["P1-1"]}`로 적습니다. 모두 닫혔으면 빈 배열을 씁니다. 실패 시 `--result` 대신 `--failed`를 쓰고, 분기가 생성됐으면 `--fork-created`도 붙입니다.
