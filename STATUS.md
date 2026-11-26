@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## 6번 비교군 ② 감사·수정 도구
+
+Refs #1483, #1522
+
+- `arm2.py`가 감사·수정 사본을 만들고 감사의 P1만 수정 세션에 전달합니다. 감사 1회·$4, 수정 최대 2회·회당 $5, 묶음당 $10을 예약과 비용 기록에 적용합니다.
+- 종료 때 수정 사본의 SHA-256을 기록합니다. 이후 사본이 바뀌면 `status`에서 보고서 경로를 내주지 않습니다. Windows 테스트 목록에 합성 묶음 검사를 등록했습니다.
+- Windows에서 `PYTHONUTF8=1`로 관련 pytest 173건 통과. 합성 묶음에서 원본 해시 보존, 종료 후 변경 감지, $10 경계와 초과 청구 뒤 호출 차단을 확인했습니다.
+- 순증 477줄, 제품 코드 `labhq/` 0줄. 실제 모델·자료·HPC는 미실행입니다. 실감사는 호출 전에 승인된 비용 제한 수단을 확인한 뒤 진행합니다. [도구 README](../../tools/prereg_kit/README.md)
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 # HPC 셸 업로드 한도
 
 Refs #1447

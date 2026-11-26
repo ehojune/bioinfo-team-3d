@@ -14,6 +14,8 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 16:03 | [`0a26584`](https://github.com/ehojune/bioinfo-team-3d/commit/0a26584) | **수정이 끝난 뒤 내용이 바뀐 보고서가 채점에 넘어가는 일을 막습니다.**<br>종료 때 수정 사본의 SHA-256을 저장하고 보고서 경로를 내주기 전에 다시 검사합니다. |
+| 15:52 | [`97b4cf8`](https://github.com/ehojune/bioinfo-team-3d/commit/97b4cf8) | **실험 비교군에서 원본을 보존하면서 감사와 수정의 횟수와 비용을 기록합니다.**<br>감사 1회와 P1 수정 최대 2회를 배정하고, 회차별 한도와 묶음당 $10 상한을 함께 적용합니다. |
 | 04:13 | [`3e9d971`](https://github.com/ehojune/bioinfo-team-3d/pull/1519/commits/3e9d971) | **한·영 연구 매뉴얼에 큰 결과표의 검사와 전송 한도를 적었습니다.**<br>gateway 버전별 한도와 일부 표를 받지 못했을 때의 report_incomplete 판정을 설명합니다. |
 | 03:52 | [`52a3a75`](https://github.com/ehojune/bioinfo-team-3d/pull/1519/commits/52a3a75) | **구버전 gateway에 큰 결과표를 보내지 않습니다.**<br>gateway가 새 전송 한도를 알린 task에만 확대 한도를 쓰고, 구버전 연결에서는 초안을 전송해 검사하지 못한 표를 기록합니다. |
 | 03:48 | [`1bb0bbe`](https://github.com/ehojune/bioinfo-team-3d/pull/1519/commits/1bb0bbe) | **결과표의 UTF-8 행 읽기를 문서 검사에서 확인합니다.**<br>행 읽기 메서드 이름을 바꿔 파일 열기 호출과 구분합니다. |
