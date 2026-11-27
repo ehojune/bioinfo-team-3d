@@ -8654,7 +8654,8 @@ class Orchestrator:
 
             async def recover_failures() -> None:
                 """Opt-in (#271): re-plan around failed steps until the DAG succeeds or the cap stops it."""
-                while rid not in self.budget_denials and any(not r.ok for r in results.values()):
+                while has_failures() and not partial_closeout.limit_kind(serialized_results(),
+                                                                         self.budget_denials.get(rid)):
                     if await attempt_replan() != "applied":
                         return
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
@@ -8696,13 +8697,9 @@ class Orchestrator:
             if research_lane:  # its own end: never the generic re-plan, review or synthesis below (#90 CP2)
                 await self._research_after_steps(rid, text, steps, results, n, serialized_results, packs)
                 return
-            limit = partial_closeout.limit_kind(serialized_results(), self.budget_denials.get(rid))
-            if not limit:
-                await recover_failures()
-                limit = partial_closeout.limit_kind(serialized_results(), self.budget_denials.get(rid))
-            if limit or has_failures():
-                await self._finish(rid, self.report_results(steps, results, n), serialized_results(),
-                                   ok=False, limit_error=limit)
+            await recover_failures()
+            if rid in self.budget_denials or has_failures():
+                await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False)
                 return
 
             progress = req.get("review_progress") or {}
@@ -9079,7 +9076,8 @@ class Orchestrator:
         req.pop("partial_closeout", None)
         continuing = self._continuation_unstarted(req)
         report, results, review = self._unstarted_continuation_end(req, report, results, review)
-        limit = (partial_closeout.limit_kind({}, self.budget_denials.get(rid), limit_error)
+        limit_results = {} if req.get("research_contract") else results
+        limit = (partial_closeout.limit_kind(limit_results, self.budget_denials.get(rid), limit_error)
                  if not ok and not continuing and not preserve_report and partial_closeout.has_completed_outputs(results)
                  else None)
         if not ok and _developer_action(error or report) and not req.get("dev_reports"):

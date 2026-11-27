@@ -7,6 +7,7 @@ import pytest
 
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
+from tests.test_cso import replan_hub, replan_plan, result
 from tests.test_research_cp2 import _settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 from tests.test_research_report import _hub as research_report_hub
@@ -174,3 +175,38 @@ async def test_compact_draft_limit_is_preserved(tmp_path, audit_before_cp2, erro
     assert saved["error"] == "synthetic draft limit"
     assert "s1/outputs/result1.tsv" in saved["report"] and "s2/outputs/result2.tsv" in saved["report"]
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "step", "analysis_draft"]
+
+
+
+@pytest.mark.asyncio
+async def test_generic_review_replan_turn_limit_preserves_earlier_outputs():
+    plan = [
+        {"id": "evidence", "agent_id": "worker", "instruction": "collect evidence",
+         "outputs": ["outputs/evidence.tsv"], "depends_on": []},
+        {"id": "analysis", "agent_id": "worker", "instruction": "analyze evidence", "depends_on": ["evidence"]},
+    ]
+
+    def on_step(task):
+        sid = task.meta["step_id"]
+        if sid == "replacement":
+            return result(task, ok=False, error="synthetic replan turn limit", error_kind="error_max_turns")
+        return result(task, text=f"{sid} done", workdir_id=sid, outputs=task.meta["outputs"])
+
+    def on_review(task):
+        return {"verdict": "revise", "scores": {"addresses_question": 3, "evidence": 2, "thoroughness": 3},
+                "issues": [{"step_id": "analysis", "priority": "P1", "problem": "wrong model",
+                            "request": "use a mixed model"}]}
+
+    def on_replan(task):
+        return replan_plan([
+            {"id": "replacement", "agent_id": "worker", "instruction": "mixed model",
+             "outputs": ["outputs/replacement.tsv"], "depends_on": ["evidence"]},
+        ], drop=["analysis"])
+
+    hub = replan_hub(plan, on_step, on_replan, max_failure_replans=2, on_review=on_review)
+    await Orchestrator(hub).run_request("r")
+    saved = hub.requests["r"]
+    assert saved["status"] == "failed" and saved["partial_closeout"] == "error_max_turns"
+    assert "evidence/outputs/evidence.tsv" in saved["report"] and "outputs/replacement.tsv" in saved["report"]
+    assert saved["results"]["replacement"]["error_kind"] == "error_max_turns"
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "step", "review", "replan", "step"]
