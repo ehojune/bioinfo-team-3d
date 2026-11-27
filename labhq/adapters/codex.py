@@ -30,9 +30,10 @@ READ_ONLY_DISABLED_FEATURES = ("hooks", "computer_use", "browser_use")
 STAFF_DISABLED_FEATURES = ("multi_agent", "memories", "apps", "plugins")
 # The Windows elevated sandbox lets a shell command reach the network whatever the profile or network_access says
 # (#1055: a read-only reviewer's urllib calls to Europe PMC, RCSB and ChEMBL went through and were not counted by
-# lookup admission). A closed local proxy makes the default HTTP clients of a shell command fail, which stops lookups
-# made by accident; code that ignores the proxy variables still connects. The process boundary is #666.
-_CLOSED_PROXY = "http://127.0.0.1:9"
+# lookup admission). An unresolvable proxy makes default HTTP clients fail. A reserved .invalid host also keeps
+# the guard out of the elevated sandbox's loopback port allowlist, which is shared with writable staff (#1538).
+# Code that ignores the proxy can still connect. The process boundary is #666.
+_CLOSED_PROXY = "http://labhq-shell-disabled.invalid."
 SHELL_NO_PROXY_ENV = {**{name: _CLOSED_PROXY for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy",
                                                            "https_proxy", "all_proxy")},
                       "NO_PROXY": "", "no_proxy": ""}
