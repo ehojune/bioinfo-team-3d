@@ -3213,6 +3213,8 @@ class Runner:
                                  engine_cli_version=(self.engine_versions or {}).get(agent.engine.value),
                                  resume_of=task.resume_session_id, kind=task.meta.get("kind"),
                                  revision=task.meta.get("revision", 0),
+                                 **({"parent_task": task.meta.get("parent_task")}
+                                    if task.meta.get("kind") == "result_correction" else {}),
                                  **({"reference_dirs": read_dirs} if read_dirs else {}))
             self.active_roots[task.id] = (read_only, [ws.dir.resolve(), *(Path(d).resolve() for d in extra_dirs)])
             self.tool_contexts[task.id] = ctx
