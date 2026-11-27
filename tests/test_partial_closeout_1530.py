@@ -2,15 +2,18 @@
 
 import asyncio
 import copy
+import json
 
 import pytest
 
+from labhq.gateway.server import Hub
 from labhq.models import TaskResult
 from labhq.orchestrator.cso import Orchestrator
-from tests.test_cso import replan_hub, replan_plan, result
+from tests.test_cso import FakeHub, replan_hub, replan_plan, result
 from tests.test_research_cp2 import _settings
 from tests.test_research_protocol import MiniHub, _cp2_result, valid_plan
 from tests.test_research_report import _hub as research_report_hub
+from tests.test_solo_route import SoloHub
 
 pytestmark = pytest.mark.usefixtures("pre_v1_defaults")
 DIGEST = "a" * 64
@@ -210,3 +213,129 @@ async def test_generic_review_replan_turn_limit_preserves_earlier_outputs():
     assert "evidence/outputs/evidence.tsv" in saved["report"] and "outputs/replacement.tsv" in saved["report"]
     assert saved["results"]["replacement"]["error_kind"] == "error_max_turns"
     assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "step", "review", "replan", "step"]
+
+
+
+@pytest.mark.asyncio
+async def test_finished_team_report_keeps_budget_denial_reason():
+    plan = [{"id": "evidence", "agent_id": "worker", "instruction": "collect evidence",
+             "outputs": ["outputs/evidence.tsv"], "depends_on": []}]
+    hub = replan_hub(
+        plan, lambda task: result(task, text="evidence ready", outputs=task.meta["outputs"]),
+        lambda task: pytest.fail("unexpected replan"),
+    )
+    orchestrator = Orchestrator(hub)
+    dispatch = hub.dispatch
+    denial = "budget exceeded ($1.02 > $1.00); approval denied"
+
+    async def dispatch_with_denial(task):
+        reply = await dispatch(task)
+        if task.meta["kind"] == "synthesis":
+            orchestrator.budget_denials["r"] = denial
+        return reply
+
+    hub.dispatch = dispatch_with_denial
+    await orchestrator.run_request("r")
+    saved = hub.requests["r"]
+    assert saved["status"] == "failed" and saved["error"] == denial
+    assert saved["report"] == "final" and "partial_closeout" not in saved
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "synthesis"]
+
+
+@pytest.mark.asyncio
+async def test_finished_direct_answer_publishes_budget_denial_reason():
+    async def dispatch(task):
+        return result(task, text="direct answer", cost_usd=1.02)
+
+    hub = FakeHub(dispatch)
+    hub.requests["r"].update(mode="direct", agent_id="worker", budget_usd=1.0)
+    await Orchestrator(hub).run_request("r")
+    await asyncio.sleep(0)  # FakeHub publishes terminal events on the next loop tick.
+
+    denial = "budget exceeded ($1.02 > $1.00); approval denied"
+    saved = hub.requests["r"]
+    assert saved["status"] == "failed" and saved["error"] == denial
+    assert saved["report"] == "direct answer" and "partial_closeout" not in saved
+    assert [task.meta["kind"] for task in hub.calls] == ["direct"]
+    assert [card["kind"] for card in hub.approvals] == ["budget"]
+    [terminal] = [event["data"] for event in hub.events if event["type"] == "request.completed"]
+    assert terminal["ok"] is False and terminal["error"] == denial
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("error_kind", "limit", "reason"), [
+    ("error_max_turns", "error_max_turns", "synthetic turn limit after a timeout"),
+    ("error_max_budget_usd", "budget_cap", "synthetic budget cap"),
+    (None, "budget_denied", "budget exceeded ($1.10 > $1.00); approval denied"),
+    ("before_dispatch", "budget_cap", "호출 상한이 1센트보다 작아 보내지 않았습니다(one cent: $0.0000); nothing was dispatched"),
+])
+async def test_solo_review_limit_closes_from_saved_outputs_and_survives_restart(error_kind, limit, reason):
+    hub = SoloHub()
+    hub.s.orchestrator.solo_review = True
+    hub.s.orchestrator.reviewer_agent = "reviewer"
+    hub.agents["reviewer"] = {**hub.agents["solo"], "id": "reviewer"}
+    hub.supports_resume = lambda agent_id: agent_id == "reviewer"
+    hub.requests["r"]["budget_usd"] = 1.0
+    expected_dispatches = ["plan", "direct", "review"]
+    if error_kind == "before_dispatch":
+        hub.s.policy.budget.reserve_before_dispatch = True
+        hub.agents["reviewer"]["max_budget_usd"] = 0.004
+        expected_dispatches.pop()
+    artifact = "outputs/evidence.tsv"
+    hub.solo = hub.solo.model_copy(update={"outputs": [artifact], "output_sha256": {artifact: DIGEST}})
+    dispatch = hub.dispatch
+    checkpoint = None
+
+    async def reply(task):
+        if task.meta["kind"] not in {"plan", "direct", "review"}:
+            pytest.fail(f"unexpected dispatch: {task.meta['kind']}")
+        response = await dispatch(task)
+        if task.meta["kind"] != "review":
+            return response
+        if error_kind is None:
+            return response.model_copy(update={"cost_usd": 0.7, "cost_known": True})
+        return TaskResult(task_id=task.id, agent_id=task.agent_id, ok=False, error_kind=error_kind,
+                          error=reason, session_id="review-session", cost_usd=0)
+
+    async def reject_budget(**kwargs):
+        assert kwargs["kind"] == "budget"
+        return {"approved": False}
+
+    async def save_request(rid):
+        nonlocal checkpoint
+        saved = hub.requests[rid]
+        if checkpoint is None and saved.get("solo_review") and saved["status"] == "running":
+            checkpoint = json.dumps(saved)
+
+    hub.dispatch = reply
+    hub.request_approval = reject_budget
+    hub.asave_request = save_request
+    await Orchestrator(hub).run_request("r")
+
+    assert [task.meta["kind"] for task in hub.calls] == expected_dispatches
+    saved = hub.requests["r"]
+    assert saved["status"] == "failed" and saved["partial_closeout"] == limit
+    assert saved["error"] == reason and saved["review"]["status"] == limit
+    assert f"task_solo/{artifact}" in saved["report"] and DIGEST in saved["report"]
+    assert "outputs/team.tsv" in saved["report"]
+    assert saved["results"]["direct"]["output_sha256"] == {artifact: DIGEST}
+    assert saved["route_decision"]["mode"] == "solo"
+    assert len(hub.terminal) == 1 and hub.terminal[0][2]["ok"] is False
+
+    assert checkpoint is not None
+    restarted = SoloHub()
+    restarted.requests["r"] = json.loads(checkpoint)
+    gateway = object.__new__(Hub)
+    gateway.requests = restarted.requests
+    gateway.s = restarted.s  # The review limit remains terminal even when solo review is now disabled.
+    assert gateway.resume_agents("r") == set()
+    await Orchestrator(restarted).run_request("r", resume=True)
+    recovered = restarted.requests["r"]
+    for field in ("status", "partial_closeout", "error", "review", "report", "results", "route_decision"):
+        assert recovered[field] == saved[field]
+
+    completed = copy.deepcopy(recovered)
+    await Orchestrator(restarted).run_request("r", resume=True)
+    assert restarted.requests["r"] == completed
+    assert restarted.calls == []
+    assert len(restarted.terminal) == 1 and restarted.terminal[0][2]["report"] == saved["report"]

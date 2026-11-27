@@ -45,6 +45,11 @@ def has_completed_outputs(results):
     return any(row.get("ok") and row.get("outputs") for row in results.values())
 
 
+def saved_review_limit(review):
+    status = review.get("status") if isinstance(review, dict) else None
+    return status if isinstance(status, str) and status in LABELS else None
+
+
 def _code(value):
     value = " ".join(str(value).split())
     fence = "`" * (1 + max(map(len, re.findall(r"`+", value)), default=0))

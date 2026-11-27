@@ -2715,9 +2715,9 @@ def solo_phase(req: dict, cfg: Any) -> SoloPhase | None:
     result = TaskResult.model_validate(stored)
     if _solo_result_problem(result):
         return "fallback"
-    if not cfg.solo_review:
-        return "done"
     stored_review = req.get("solo_review")
+    if partial_closeout.saved_review_limit(stored_review) or not cfg.solo_review:
+        return "done"
     if valid_review(stored_review):
         return "done" if with_p1_verdict(stored_review).get("verdict") == "accept" else "fallback"
     if isinstance(stored_review, dict) and stored_review.get("status") == "review_unparsed":
@@ -3995,6 +3995,12 @@ class Orchestrator:
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
                                 {"paper_skill", "recruit_check", "plan_recruit"})
         repairing_audit = task.meta.get("kind") == audit_repair.KIND
+        stop_on_limit = bool(task.meta.get("stop_on_limit"))
+
+        def stopped_by_limit(result: TaskResult) -> bool:
+            return stop_on_limit and (
+                rid in self.budget_denials or (not result.ok and result.error_kind in partial_closeout.TASK_LIMITS)
+            )
 
         async def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -4300,6 +4306,8 @@ class Orchestrator:
                 if not (optional_support or repairing_audit) and not (kind is None and final_step):
                     await self._check_budget(rid, block=False)
                 previous_result = res
+                if stopped_by_limit(res):
+                    return res
                 if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
                     # No generic transient/login retry may bypass the stricter early-exit evidence gate below.
                     return res
@@ -4334,6 +4342,10 @@ class Orchestrator:
             tool_errors = list(res.tool_errors)
             format_tries = 0
             while True:
+                if stopped_by_limit(res):
+                    await leave_login_window(current)
+                    await clear_quota_window()
+                    return res
                 if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
                     proof = res.early_exit_retry
                     known = (res.cost_known is not False and isinstance(res.cost_usd, (int, float))
@@ -4529,6 +4541,8 @@ class Orchestrator:
                 await self._release_step_jobs(result.task_id)
             return result
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
+        if stopped_by_limit(res):
+            return res
         if not res.ok and (res.exit_code in (0xC000013A, -1073741510) or res.early_exit_attempted):
             if final_step:
                 await self._check_budget(rid, block=False, final_turn=True)
@@ -7215,7 +7229,6 @@ class Orchestrator:
             return False
         agent = decision["agent_id"]
         result = None
-        review = None
 
         if phase == "solo":
             req.setdefault("solo_started_at", time.time())
@@ -7248,30 +7261,41 @@ class Orchestrator:
                 await persist_request(self.hub, rid)
                 await self._emit(rid, "request.route", req["route_decision"])
                 return False
-            reviewed = await self.run_step(Task(
+            task = Task(
                 agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
                 prompt=REVIEW_PROMPT.format(request=text, results=result.text) +
                        plan_review_context(req.get("plan"), topic_checklists.load(),
                                            req.get("analysis_precedents")),
                 meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "revision": 0, "request": text,
-                      "title": "단독 결과 과학 리뷰"}))
-            parsed = lenient_review(reviewed.structured, REVIEW_SCHEMA) or lenient_review(
-                extract_json(reviewed.text), REVIEW_SCHEMA)
-            review = with_p1_verdict(review_with_checklist(
-                parsed, req.get("plan"), topic_checklists.load(), req.get("analysis_precedents"),
-                owner=SOLO_OWNER)
-            ) if reviewed.ok and parsed else {
-                "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
+                      "title": "단독 결과 과학 리뷰", "stop_on_limit": True})
+            try:
+                reviewed = await self.run_step(task)
+            except BudgetExceeded as exc:
+                reviewed = TaskResult(task_id=task.id, agent_id=reviewer, ok=False,
+                                      error_kind="budget_cap", error=str(exc))
+            denial = self.budget_denials.get(rid)
+            limit = partial_closeout.limit_kind({}, denial, reviewed.error_kind if not reviewed.ok else None)
+            if limit:
+                review = {"status": limit, "reason": safe_failure_cause(
+                    denial or reviewed.error or partial_closeout.LABELS[limit])}
+            else:
+                parsed = lenient_review(reviewed.structured, REVIEW_SCHEMA) or lenient_review(
+                    extract_json(reviewed.text), REVIEW_SCHEMA)
+                review = with_p1_verdict(review_with_checklist(
+                    parsed, req.get("plan"), topic_checklists.load(), req.get("analysis_precedents"),
+                    owner=SOLO_OWNER)
+                ) if reviewed.ok and parsed else {
+                    "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
             req["solo_review"] = review
             await persist_request(self.hub, rid)
             await self._emit(rid, "request.review", {"revision": 0, **review})
             phase = solo_phase(req, self.cfg)
-            if rid in self.budget_denials:
-                (await self._finish(rid, result.text or result.error or "task failed",
-                             {"direct": result.model_dump(mode="json")}, ok=False,
-                             review=review, error=self.budget_denials[rid],
-                             preserve_report=bool(result.ok and result.text.strip())))
-                return True
+
+        stored_review = req.get("solo_review")
+        if result is not None and (limit := partial_closeout.saved_review_limit(stored_review)):
+            await self._finish(rid, result.text, {"direct": result.model_dump(mode="json")}, ok=False,
+                               review=stored_review, error=stored_review.get("reason"), limit_error=limit)
+            return True
 
         if phase == "fallback":
             reason = decision.get("reason") or (_solo_result_problem(result) if result else "")
@@ -7285,8 +7309,7 @@ class Orchestrator:
             return True
 
         report = result.text.strip()
-        stored_review = req.get("solo_review")
-        review = with_p1_verdict(stored_review) if valid_review(stored_review) else review
+        review = with_p1_verdict(stored_review) if valid_review(stored_review) else None
         late_notes = self._solo_notes(req)
         if late_notes:
             report += "\n\n단독 턴이 시작된 뒤 온 메모는 반영되지 않았다.\n" + "\n".join(
@@ -7382,6 +7405,7 @@ class Orchestrator:
                     await persist_request(self.hub, rid)
                 (await self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
                              ok=res.ok and rid not in self.budget_denials,
+                             error=self.budget_denials.get(rid),
                              preserve_report=bool(res.ok and res.text.strip())))
                 return
 
@@ -8873,7 +8897,8 @@ class Orchestrator:
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             (await self._finish(rid, report, serialized_results(),
                          ok=final.ok and rid not in self.budget_denials, review=review,
-                         limit_error=final.error_kind, preserve_report=final.ok))
+                         error=self.budget_denials.get(rid), limit_error=final.error_kind,
+                         preserve_report=final.ok))
         except research_continuation.ReuseApprovalRequired:
             (await self._finish(rid, "재사용 증거가 바뀌어 단계를 보내지 않았습니다. 새 CP1 승인이 필요합니다.",
                          req.get('results') or {}, ok=False, error="reuse approval required"))

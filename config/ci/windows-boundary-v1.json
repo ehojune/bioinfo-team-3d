@@ -236,6 +236,7 @@
     "tests/test_paper_skill_recovery_identity.py",
     "tests/test_paper_skill_waiting.py",
     "tests/test_paper_skill_waiting_static.py",
+    "tests/test_partial_closeout_1530.py",
     "tests/test_partial_failure_1220.py",
     "tests/test_patch_notes.py",
     "tests/test_pdf_figure_policy.py",
@@ -446,6 +447,7 @@
     "tests/test_wsl_shared.py"
   ],
   "boundary_cohorts": {
+    "tests/test_partial_closeout_1530.py": "Partial reports preserve artifact paths and close only once across concurrent finish and resume; synthetic requests only.",
     "tests/test_hpc_cpu_ledger_1466.py": "Windows SQLite admission transactions, restart recovery and scheduler command boundaries; Slurm is faked.",
     "tests/test_annotation_outputs_1446.py": "Annotation artifact capture, native links, UTF-8 hashes and bounded ancestor-input staging; synthetic records only.",
     "tests/test_annot_pubmed_1446.py": "PubMed page files, UTF-8 hashes, shared lookup admission/deadlines and real Windows ancestor-input staging; synthetic records only.",
