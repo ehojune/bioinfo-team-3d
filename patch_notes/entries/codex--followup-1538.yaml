@@ -1,0 +1,6 @@
+pr: null
+rows:
+  - sha: 'a1a35b4'
+    at: '2026-11-28 06:27'
+    summary: 읽기 전용 Codex 직원의 셸 프록시가 Windows 방화벽 준비와 충돌하는 문제를 고쳤습니다.
+    text: 예약 도메인 .invalid를 써서 우발적인 외부 HTTP 조회를 막고 Windows sandbox에 loopback 포트를 추가하지 않습니다.
