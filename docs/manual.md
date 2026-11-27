@@ -24,7 +24,7 @@ PI의 질문과 결정은 [PI Q&A](pi-qa.md)에, 개발 규칙과 작업 큐는 
 | [연구 lane과 검증](manual/13-research-lane.md#연구-lane과-검증) | CP1·CP2, claim 앵커, `labhq verify` |
 | [의미 모델과 온톨로지](manual/14-semantic-model.md#의미-모델과-온톨로지) | 어휘·EDAM, 분야 점검표, CP1 입력 적합성, #1388 삭제안 |
 | [설정 포인트](manual/15-config.md#설정-포인트) | 상태, HPC, 직원, 엔진, 참고 자료, 의미 모델 |
-| [비교 bench](manual/16-bench.md#비교-bench) | labhq와 단일 세션 비교 |
+| [비교 bench](manual/16-bench.md#비교-bench) | labhq와 단일 세션 비교 · [과제 1·2 단계별 비용 근거](reference/1522-stage-costs.md) |
 | [알려진 한계](manual/17-known-limits.md#알려진-한계) | 첫 실행 때 확인할 것 |
 | [구성요소와 상태](manual/18-components.md#구성요소와-상태) · [로드맵](manual/19-roadmap.md#로드맵) | 된 것과 남은 것 |
 | [배경](manual/20-background.md#배경-the-virtual-biotech) · [파일 구조](manual/22-file-layout.md#파일-구조) · [라이선스](manual/23-license.md#라이선스) | |

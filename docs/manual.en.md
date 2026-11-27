@@ -25,7 +25,7 @@ This page is the index. The text lives in one file per chapter under `docs/manua
 | [Research lane and verification](manual/13-research-lane.en.md#research-lane-and-verification) | CP1 and CP2, claim anchors, `labhq verify` |
 | [Semantic model and ontology](manual/14-semantic-model.en.md#semantic-model-and-ontology) | EDAM, input-fit checks and the offline provenance model |
 | [Configuration reference](manual/15-config.en.md#configuration-reference) | State, HPC, staff, engines, reference material, semantic model |
-| [Comparison bench](manual/16-bench.en.md#comparison-bench) | labhq versus a single session |
+| [Comparison bench](manual/16-bench.en.md#comparison-bench) | labhq versus a single session · [Stage cost evidence for tasks 1 and 2](reference/1522-stage-costs.md) (Korean) |
 | [Known limits](manual/17-known-limits.en.md#known-limits) | What to check on first run |
 | [Components and status](manual/18-components.en.md#components-and-status) · [Roadmap](manual/19-roadmap.en.md#roadmap) | What is done and what remains |
 | [Background](manual/20-background.en.md#background-the-virtual-biotech) · [File layout](manual/22-file-layout.en.md#file-layout) · [License](manual/23-license.en.md#license) | |
