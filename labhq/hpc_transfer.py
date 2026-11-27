@@ -526,23 +526,38 @@ with contextlib.ExitStack() as stack:
   if not stat.S_ISREG(s.st_mode) or s.st_nlink!=1:
    os.close(fd); raise ValueError('not a plain remote file')
   return fd, s
+ def marker(base, name):
+  s=os.stat(name,dir_fd=base,follow_symlinks=False)
+  return stat.S_ISREG(s.st_mode) and s.st_nlink==1
+ def jdk(d):
+  # Require the launcher and runtime alongside the release file (#1537).
+  try:
+   if not marker(d,'release'): return False
+   with folder(d,'bin') as bin_dir:
+    if not marker(bin_dir,'java'): return False
+  except OSError: return False
+  for path,filename in (('lib','modules'),('jre/lib','rt.jar')):
+   try:
+    with folder(d,path) as lib:
+     if marker(lib,filename): return True
+   except OSError: continue
+  return False
  def env(base, name):
-  # A conda/mamba environment or a Python venv a job built in its folder is tooling, not an output (#1368).
+  # Exclude tools installed inside the work folder (#1368, #1537).
   with folder(base, name) as d:
    try: names=set(os.listdir(d))
    except OSError: return False
    if 'conda-meta' in names or 'pyvenv.cfg' in names: return True
+   if {'release','bin'}<=names and jdk(d): return True
    # A conda package cache has both its URL record and an extracted package's metadata (#1413).
    # Do not exclude ordinary directories merely because they are named pkgs or contain urls.txt.
    if name!='pkgs' or 'urls.txt' not in names: return False
    try:
-    marker=os.stat('urls.txt',dir_fd=d,follow_symlinks=False)
-    if not stat.S_ISREG(marker.st_mode) or marker.st_nlink!=1: return False
+    if not marker(d,'urls.txt'): return False
     for entry in names:
      try:
       with folder(d,entry+'/info') as info_dir:
-       meta=os.stat('index.json',dir_fd=info_dir,follow_symlinks=False)
-       if stat.S_ISREG(meta.st_mode) and meta.st_nlink==1: return True
+       if marker(info_dir,'index.json'): return True
      except (OSError,ValueError): continue
    except OSError: return False
    return False

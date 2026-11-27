@@ -50,6 +50,8 @@ A plan may carry an optional `selection_record` (#890). When writing the plan, t
 
 ### Steps and CP2
 
+HPC result collection leaves Java installations with `release`, `bin/java`, and a runtime file (`lib/modules` or `jre/lib/rt.jar`) on the cluster and records the omission in `*.fetch.json` (#1537). On a successful fetch, the runner saves results and logs on the PC before sending `jobs.finished`.
+
 With `evidence_checkpoint: true` also on, after CP1 the research steps run under the `result v2` claim and evidence contract, and at the CP2 card the PI chooses approve, request revision or reject.
 **Request revision** has the CSO make a new plan with the points to fix written in the note, and the PI approves it at a new CP1 (PI check R10). A continuation card does not appear separately.
 If QC or review reports a correction to an earlier step's value or location, choose **Request revision** at CP2 instead of approving and rerun that step. Approval leaves the old value in the table and evidence ledger.
