@@ -7235,7 +7235,7 @@ class Orchestrator:
             if rid in self.budget_denials:
                 (await self._finish(rid, result.text or result.error or "task failed",
                              {"direct": result.model_dump(mode="json")}, ok=False,
-                             error=self.budget_denials[rid]))
+                             error=self.budget_denials[rid], preserve_report=bool(result.ok and result.text.strip())))
                 return True
 
         stored = req.get("solo_result")
@@ -7269,7 +7269,8 @@ class Orchestrator:
             if rid in self.budget_denials:
                 (await self._finish(rid, result.text or result.error or "task failed",
                              {"direct": result.model_dump(mode="json")}, ok=False,
-                             review=review, error=self.budget_denials[rid]))
+                             review=review, error=self.budget_denials[rid],
+                             preserve_report=bool(result.ok and result.text.strip())))
                 return True
 
         if phase == "fallback":
@@ -7380,7 +7381,8 @@ class Orchestrator:
                     req["output_types_stats"] = res.output_types_stats
                     await persist_request(self.hub, rid)
                 (await self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
-                             ok=res.ok and rid not in self.budget_denials))
+                             ok=res.ok and rid not in self.budget_denials,
+                             preserve_report=bool(res.ok and res.text.strip())))
                 return
 
             # A contract hire on probation stays on the web roster as 수습 but is not offered to the CSO (#424).
