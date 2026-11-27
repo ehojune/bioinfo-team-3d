@@ -132,3 +132,45 @@ async def test_report_phase_turn_exhaustion_keeps_completed_steps(stage):
     assert "outputs/result1.tsv" in saved["report"] and "synthetic report-stage failure" in saved["execution_record"]
     assert [task.meta["kind"] for task in hub.calls] == (
         ["plan", "step", "review"] + (["synthesis"] if stage == "synthesis" else []))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("audit_before_cp2", [False, True])
+@pytest.mark.parametrize(("error_kind", "limit"), [
+    ("error_max_turns", "error_max_turns"),
+    ("error_max_budget_usd", "budget_cap"),
+])
+async def test_compact_draft_limit_is_preserved(tmp_path, audit_before_cp2, error_kind, limit):
+    hub = research_report_hub()
+    hub.requests["r"]["research_options"] = {"compact_workflow": True, "audit_before_cp2": audit_before_cp2}
+    hub.supports_resume = lambda agent_id: agent_id == "worker"
+    plan = valid_plan(steps=2)
+    plan["steps"][1].update(phase="validation", depends_on=["s1"])
+
+    async def reply(task):
+        common = {"task_id": task.id, "agent_id": task.agent_id}
+        if task.meta["kind"] == "plan":
+            return TaskResult(**common, ok=True, structured=plan)
+        if task.meta["kind"] == "analysis_draft":
+            assert task.resume_session_id == "s1"
+            return TaskResult(**common, ok=False, error="synthetic draft limit", error_kind=error_kind)
+        assert task.meta["kind"] == "step"
+        sid = task.meta["step_id"]
+        [path] = task.meta["required_outputs"]
+        ledger = _cp2_result(hub, task)
+        if sid == "s2":
+            ledger["claims"][0]["id"] = "c2"
+            ledger["evidence"][0].update(id="e2", slots=["e2"])
+            ledger["links"][0].update(claim_id="c2", evidence_id="e2")
+        ledger["artifact_refs"][0]["path"] = path
+        return TaskResult(**common, ok=True, structured=ledger, workdir=str(tmp_path / sid), workdir_id=sid,
+                          outputs=[path], output_sha256={path: DIGEST}, session_id=sid)
+
+    hub.reply = reply
+    await Orchestrator(hub).run_request("r")
+    saved = hub.requests["r"]
+    assert saved["status"] == "failed" and saved["outcome"] == "research_failed"
+    assert saved["partial_closeout"] == limit
+    assert saved["error"] == "synthetic draft limit"
+    assert "s1/outputs/result1.tsv" in saved["report"] and "s2/outputs/result2.tsv" in saved["report"]
+    assert [task.meta["kind"] for task in hub.calls] == ["plan", "step", "step", "analysis_draft"]

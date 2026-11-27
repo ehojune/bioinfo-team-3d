@@ -6373,7 +6373,7 @@ class Orchestrator:
                         restricted=prepared.restricted, session_origin=self._session_origin,
                         free_session=self._free_session, budget_error=BudgetExceeded,
                         claim_problems=problems, render_evidence=staged_ledgers, prepare_draft=prepare_draft,
-                        run_step=partial_closeout.stop_on_limit(lambda task: self._run_compact_handoff(task, draft, results)))
+                        run_step=lambda task: self._run_compact_handoff(task, draft, results))
                     if recheck:
                         return await self._research_after_steps(rid, text, all_steps, results, n, serialized, packs)
                     rejected = repair_record.get("rejected_problems") or []
@@ -6551,7 +6551,7 @@ class Orchestrator:
             self.hub, rid, draft, results, cp2_report=report, cp2_notes=notes, render_evidence=render_evidence,
             restricted_inputs=lambda: self._restricted_draft_inputs(rid), session_origin=self._session_origin,
             free_session=self._free_session, budget_denials=self.budget_denials, raw=raw,
-            run_step=lambda task: self._run_compact_handoff(task, draft, results))
+            run_step=partial_closeout.stop_on_limit(lambda task: self._run_compact_handoff(task, draft, results)))
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
