@@ -23,9 +23,14 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 12:42 | [`5229143`](https://github.com/ehojune/bioinfo-team-3d/commit/5229143) | **단독 리뷰가 예산이나 턴 한도에서 멈추면 앞서 만든 산출물을 부분 보고서에 남깁니다.**<br>저장한 리뷰 종료 사유를 읽어 재시작 뒤에도 추가 호출 없이 마감합니다. 완성된 direct 답변과 팀 보고서는 예산 거절 사유와 함께 보존합니다. 부분 마감 회귀를 Windows CI에서 검사합니다. |
 | 11:58 | [`40d1942`](https://github.com/ehojune/bioinfo-team-3d/commit/40d1942) | **사용량 한도 뒤 결과 수정을 재개할 때 산출물을 이어받는 조건을 한영 매뉴얼에 적었습니다.**<br>8장에 실패한 수정 턴에서 세션을 잇는 동작과 부모 연결·산출물 SHA-256 검사 기준을 보탰다. |
+| 11:43 | [`0e15808`](https://github.com/ehojune/bioinfo-team-3d/commit/0e15808) | **리뷰 뒤 다시 계획한 단계가 턴 한도에서 멈춰도 앞 단계 산출물이 남습니다.**<br>대체 단계에 기록된 한도 오류로 부분 마감을 결정하고 추가 재계획을 보내지 않습니다. |
+| 11:35 | [`2a4dcab`](https://github.com/ehojune/bioinfo-team-3d/commit/2a4dcab) | **단독 요청이 이미 작성한 답변은 이후 예산 증액이 거절돼도 남습니다.**<br>직접 실행·solo 경로에서 완성된 답변을 보존하고 예산 거절의 실패 상태를 유지합니다. |
 | 11:34 | [`adbedc9`](https://github.com/ehojune/bioinfo-team-3d/commit/adbedc9) | **사용량 한도 뒤 결과 수정을 다시 시작하는 방법을 README에 적었습니다.**<br>한영 README를 갱신하고 성공 산출물 계승, 해시 불일치와 잘못된 연결을 검사하는 runner 회귀 테스트를 추가했다. |
 | 11:34 | [`e2ebec9`](https://github.com/ehojune/bioinfo-team-3d/commit/e2ebec9) | **한영 매뉴얼 목차에서 과제 1·2의 단계별 비용 근거를 찾을 수 있습니다.**<br>비교 bench 항목에서 실측·추정과 미귀속 비용을 정리한 v2 설계 참고 문서에 연결했다. |
+| 11:32 | [`0df63e3`](https://github.com/ehojune/bioinfo-team-3d/commit/0df63e3) | **분석 초안 작성이 예산이나 턴 한도에서 멈춰도 앞 단계 산출물이 보고서에 남습니다.**<br>결과 승인 전후의 compact 초안 작성이 반환한 한도 오류를 보존합니다. |
+| 11:23 | [`8c4fd42`](https://github.com/ehojune/bioinfo-team-3d/commit/8c4fd42) | **예산이나 턴 한도로 멈춘 요청도 완료한 단계의 산출물을 부분 보고서로 확인할 수 있습니다.**<br>추가 모델 호출 없이 산출 경로와 기록된 SHA-256, 누락을 모으고 실패 상태를 유지합니다. |
 | 11:20 | [`86d6714`](https://github.com/ehojune/bioinfo-team-3d/commit/86d6714) | **두 과제에서 계획과 분석, 검토에 든 비용을 정리했습니다.**<br>보존 장부에서 실측과 추정, 금액 미상 항목을 대조하고 v2 비용 절감 후보를 기록했다. |
 | 11:14 | [`933197b`](https://github.com/ehojune/bioinfo-team-3d/commit/933197b) | **사용량 한도에서 결과 수정을 다시 시작해도 이미 확인한 산출물을 이어받습니다.**<br>실패한 수정 턴의 부모를 기록하고 같은 단계의 성공 턴에서 산출물과 SHA-256을 대조한다. |
 | 05:18 | [`6cb51f2`](https://github.com/ehojune/bioinfo-team-3d/commit/6cb51f2) | **여러 줄로 나눈 인라인 명령도 읽을 수 있고 갈래 값은 가려집니다.**<br>이어 쓴 코드에서 URL과 갈래 값을 가리면서 리디렉션, 원래 줄바꿈과 들여쓰기를 보존합니다. |
