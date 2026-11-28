@@ -1,5 +1,6 @@
 """Named instances keep one PC's labhq processes separate."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -52,12 +53,30 @@ def test_init_instances_have_distinct_ports_paths_tokens_and_runner_ids(isolated
     assert alpha["gateway"]["client_token"] != beta["gateway"]["client_token"]
 
 
-def test_existing_instance_is_not_overwritten(isolated_home):
+def test_existing_instance_is_not_overwritten(isolated_home, monkeypatch, capsys):
     cli.main(["init", "--instance", "alpha", "--yes"])
     path, _ = _instance(isolated_home, "alpha")
     original = path.read_bytes()
+    capsys.readouterr()
+
+    acl_paths = []
+
+    def probe(argv, env):
+        assert argv[:-1] == ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"]
+        assert "Get-Acl -LiteralPath $env:LABHQ_ACL_CHECK_PATH" in argv[-1]
+        acl_paths.append(Path(env["LABHQ_ACL_CHECK_PATH"]))
+        return 0, "DENY"
+
+    monkeypatch.setattr(doctor, "_probe", probe)
     cli.main(["init", "--instance", "alpha", "--yes"])
     assert path.read_bytes() == original
+
+    if os.name == "nt":
+        assert acl_paths == [path.parent / "runs"]
+        rows = capsys.readouterr().out.splitlines()
+        assert any(row.split()[:5] == ["staff", "codex", "workspace", "ACL", "warn"] for row in rows)
+    else:
+        assert not acl_paths
 
 
 def test_instance_selects_config_and_conflicts_with_config(isolated_home, monkeypatch):
