@@ -14,6 +14,7 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 10:42 | [`80bcb94`](https://github.com/ehojune/bioinfo-team-3d/commit/80bcb94) | **Windows에서 초기화 명령을 다시 실행하는 테스트를 고쳤습니다.**<br>기존 설정을 그대로 보존하고 작업 폴더의 Codex 읽기 거부를 경고하는지 검사합니다. |
 | 07:00 | [`73c06ac`](https://github.com/ehojune/bioinfo-team-3d/commit/73c06ac) | **셸 프록시의 현재 값과 Windows 진단 절차를 참고 문서에 적었습니다.**<br>방화벽 로그의 저장 포트와 요청 포트를 대조하는 방법을 설명하고 모의 시험과 실환경 검증 범위를 밝혔습니다. |
 | 06:37 | [`4c63852`](https://github.com/ehojune/bioinfo-team-3d/commit/4c63852) | **Windows에서도 HPC 결과를 저장한 뒤 직원이 깨어나는지 확인합니다.**<br>기존 Windows CI 대상 파일에서 원격 목록 수신부터 완료 알림 발행까지 시험합니다. |
 | 06:27 | [`a1a35b4`](https://github.com/ehojune/bioinfo-team-3d/commit/a1a35b4) | **읽기 전용 Codex 직원의 셸 프록시가 Windows 방화벽 준비와 충돌하는 문제를 고쳤습니다.**<br>예약 도메인 .invalid를 써서 우발적인 외부 HTTP 조회를 막고 Windows sandbox에 loopback 포트를 추가하지 않습니다. |
