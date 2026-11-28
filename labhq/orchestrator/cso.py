@@ -86,7 +86,7 @@ from ..research.packs import (assess_pack_applicability, configured_packs, norma
                               select_applied_packs, select_legacy_applied_packs)
 from ..util import INPUT_STEP_ID, clip, extract_json, input_relpath, output_relpath, short
 from . import execution as execution_policy
-from . import step_execution
+from . import partial_closeout, step_execution
 from .. import vocab as output_vocab
 from ..recruit import paper2agent, paper_skills, planning as recruit_planning
 from ..bioinfo_policy import BIOINFO_ASSIGNMENT_RULE
@@ -2715,9 +2715,9 @@ def solo_phase(req: dict, cfg: Any) -> SoloPhase | None:
     result = TaskResult.model_validate(stored)
     if _solo_result_problem(result):
         return "fallback"
-    if not cfg.solo_review:
-        return "done"
     stored_review = req.get("solo_review")
+    if partial_closeout.saved_review_limit(stored_review) or not cfg.solo_review:
+        return "done"
     if valid_review(stored_review):
         return "done" if with_p1_verdict(stored_review).get("verdict") == "accept" else "fallback"
     if isinstance(stored_review, dict) and stored_review.get("status") == "review_unparsed":
@@ -2980,6 +2980,7 @@ class Orchestrator:
         self.budget_locks: dict[str, asyncio.Lock] = {}
         self.budget_denials: dict[str, str] = {}
         self.budget_outcomes: dict[str, list[dict]] = {}
+        self.partial_closeouts_inflight: set[str] = set()
         self.step_tasks: dict[str, set[asyncio.Task]] = {}  # tasks a request runs beside its own (R13 cancel)
         self.paper_builds: dict[str, paper_skills.ApprovedBuilds] = {}
         self.first_step_dispatch: dict[str, step_execution.FirstDispatch] = {}
@@ -3994,6 +3995,12 @@ class Orchestrator:
         optional_support = bool(task.meta.get("facilities_diagnosis") or task.meta.get("kind") in
                                 {"paper_skill", "recruit_check", "plan_recruit"})
         repairing_audit = task.meta.get("kind") == audit_repair.KIND
+        stop_on_limit = bool(task.meta.get("stop_on_limit"))
+
+        def stopped_by_limit(result: TaskResult) -> bool:
+            return stop_on_limit and (
+                rid in self.budget_denials or (not result.ok and result.error_kind in partial_closeout.TASK_LIMITS)
+            )
 
         async def quota_deadline() -> float:
             req = self.hub.requests[rid]
@@ -4299,6 +4306,8 @@ class Orchestrator:
                 if not (optional_support or repairing_audit) and not (kind is None and final_step):
                     await self._check_budget(rid, block=False)
                 previous_result = res
+                if stopped_by_limit(res):
+                    return res
                 if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
                     # No generic transient/login retry may bypass the stricter early-exit evidence gate below.
                     return res
@@ -4333,6 +4342,10 @@ class Orchestrator:
             tool_errors = list(res.tool_errors)
             format_tries = 0
             while True:
+                if stopped_by_limit(res):
+                    await leave_login_window(current)
+                    await clear_quota_window()
+                    return res
                 if res.exit_code in (0xC000013A, -1073741510) and res.error_kind != "halted":
                     proof = res.early_exit_retry
                     known = (res.cost_known is not False and isinstance(res.cost_usd, (int, float))
@@ -4528,6 +4541,8 @@ class Orchestrator:
                 await self._release_step_jobs(result.task_id)
             return result
         res = await dispatch_turn(task, max_attempts=task.meta.get("max_attempts"), start=initial_attempt)
+        if stopped_by_limit(res):
+            return res
         if not res.ok and (res.exit_code in (0xC000013A, -1073741510) or res.early_exit_attempted):
             if final_step:
                 await self._check_budget(rid, block=False, final_turn=True)
@@ -5462,13 +5477,14 @@ class Orchestrator:
             texts, dirs = self._request_inputs(rid)
             restricted = restricted_input_steps(steps, [request, *texts], dirs, self.hub.s)
 
-        async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None) -> None:
+        async def skip(sid: str, reason: str, upstream_ids: list[str] | None = None, *,
+                       error_kind: str | None = None) -> None:
             previous = results.get(sid)
             if feedback and sid in feedback and previous and previous.ok:
                 await save_result(results, sid, previous.model_copy(update={"revision_failed": f"skipped: {reason}"}))
             else:
                 await save_result(results, sid, TaskResult(task_id="", agent_id=by_id[sid]["agent_id"], ok=False,
-                                                          error=f"skipped: {reason}"))
+                                                          error=f"skipped: {reason}", error_kind=error_kind))
             await self._emit(rid, "request.step_skipped", {"step_id": sid, "status": "skipped",
                                                             "upstream": upstream_ids or [], "reason": reason})
 
@@ -5952,7 +5968,7 @@ class Orchestrator:
                     await skip(sid, "research step stopped for a continuation decision")
                     continue
                 if rid in self.budget_denials:
-                    await skip(sid, self.budget_denials[rid])
+                    await skip(sid, self.budget_denials[rid], error_kind="budget_denied")
                     continue
                 blocked = [d for d in by_id[sid]["depends_on"] if d not in results or not results[d].ok]
                 if blocked:
@@ -5991,7 +6007,7 @@ class Orchestrator:
                     try:
                         outcome = t.result()
                     except BudgetExceeded as e:
-                        await skip(sid, str(e))
+                        await skip(sid, str(e), error_kind="budget_denied" if rid in self.budget_denials else "budget_cap")
                         continue
                     except (ShutdownInterrupted, research_continuation.ReuseApprovalRequired):
                         for pending in running.values():
@@ -6110,7 +6126,8 @@ class Orchestrator:
         contract = req["research_contract"]
         stopped = [(s["id"], results[s["id"]].error or "") for s in steps
                    if s["id"] in results and results[s["id"]].error_kind == "research_stop"]
-        if stopped and rid not in self.budget_denials:
+        limit = partial_closeout.limit_kind(serialized(), self.budget_denials.get(rid))
+        if stopped and not limit:
             ended = await self._research_continue(rid, None, results, stops=stopped)
             if ended is None:
                 return
@@ -6133,7 +6150,9 @@ class Orchestrator:
         branch_states = _branch_terminal_states(branch_topology, steps, results)
         no_successful_branch_terminal = bool(branch_states and
                                              not any(state["successful_terminals"] for state in branch_states))
-        if rid in self.budget_denials or pi_stopped or not successful or no_successful_branch_terminal:
+        if limit == "error_max_turns" and branch_states and not no_successful_branch_terminal:
+            limit = None  # an independent branch still has an answer for CP2
+        if limit or pi_stopped or not successful or no_successful_branch_terminal:
             contract["failure"] = {"steps": failed, "plan_sha256": contract["plan_sha256"],
                                    **({"reason": "no branch terminal completed", "branch_status": branch_states}
                                       if no_successful_branch_terminal else {}),
@@ -6144,7 +6163,7 @@ class Orchestrator:
                              if no_successful_branch_terminal else "")
             (await self._finish(rid, self.report_results(steps, results, n) + branch_report +
                          "\n\nResearch stopped before CP2. labhq does not re-plan a frozen research PLAN; a changed "
-                         "plan needs a new CP1 approval of its hash.", serialized(), ok=False))
+                         "plan needs a new CP1 approval of its hash.", serialized(), ok=False, limit_error=limit))
             return
         all_steps = steps
         steps = successful
@@ -6340,7 +6359,7 @@ class Orchestrator:
                 review, reason = await independent_review.run(
                     self.hub, rid, text, reviewer=reviewer, refs=reference_meta(req), packs=packs,
                     cp2_notes=earlier_notes,
-                    run_step=self.run_step, budget_denials=self.budget_denials, before_cp2=prepared,
+                    run_step=partial_closeout.stop_on_limit(self.run_step), budget_denials=self.budget_denials, before_cp2=prepared,
                     render_evidence=lambda: independent_review.render_ledgers(
                         steps, results, ledgers, refused, unsupported, artifact_sha256, n, draft_path=draft.path),
                     spending_cap=lambda: self._spending_cap_line(rid))
@@ -6351,7 +6370,9 @@ class Orchestrator:
                                        "error": str(error)}
                 req["outcome"] = "research_failed"
                 await self._finish(rid, cp2_report + f"\n\nResearch stopped before CP2: {error}.",
-                                   serialized(), ok=False, error=str(error))
+                                   serialized(), ok=False, error=str(error),
+                                   limit_error=getattr(error, "kind", None) or
+                                   ("budget_cap" if isinstance(error, BudgetExceeded) else None))
                 return
             preaudited = (draft.for_report(body), review)
             audit_record = detail["independent_audit"] = prepared.card(reviewer, review)
@@ -6544,7 +6565,7 @@ class Orchestrator:
             self.hub, rid, draft, results, cp2_report=report, cp2_notes=notes, render_evidence=render_evidence,
             restricted_inputs=lambda: self._restricted_draft_inputs(rid), session_origin=self._session_origin,
             free_session=self._free_session, budget_denials=self.budget_denials, raw=raw,
-            run_step=lambda task: self._run_compact_handoff(task, draft, results))
+            run_step=partial_closeout.stop_on_limit(lambda task: self._run_compact_handoff(task, draft, results)))
 
     async def _research_report(self, rid: str, text: str, steps: list[dict], results: dict[str, TaskResult], n: int,
                                serialized: Callable[[], dict[str, dict]], packs: dict, cp2_report: str,
@@ -6577,7 +6598,8 @@ class Orchestrator:
                                                                     unsupported=unsupported))
 
         async def end(outcome: str, report: str, ok: bool, review: dict | None, failure: dict | None = None,
-                error: str | None = None, reference_lines: list[str] | None = None) -> None:
+                error: str | None = None, reference_lines: list[str] | None = None,
+                limit_error: str | None = None, preserve_report: bool = False) -> None:
             if failure is not None:
                 contract["failure"] = {"steps": [], "plan_sha256": plan_hash, **failure}
             req["outcome"] = outcome
@@ -6587,7 +6609,8 @@ class Orchestrator:
             if lookup_section:
                 report = _execution_warning_summary(report, compact=reference_lines is not None)
             (await self._finish(rid, _append_report_metadata(report, lookup_section), serialized(), ok=ok, review=review,
-                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome), reference_lines=reference_lines))
+                         error=None if ok else error or RESEARCH_END_ERRORS.get(outcome), reference_lines=reference_lines,
+                         limit_error=limit_error, preserve_report=preserve_report))
 
         async def budget_denied(stage: str, review: dict | None) -> None:
             (await end("research_failed", cp2_report + f"\n\nResearch {stage} stopped: the budget was not approved.",
@@ -6605,19 +6628,26 @@ class Orchestrator:
                     return
             except ValueError as exc:
                 await end("research_failed", cp2_report + f"\n\nAnalysis draft unavailable: {exc}.",
-                          False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc))
+                          False, None, {"stage": "analysis_draft", "error": str(exc)}, error=str(exc),
+                          limit_error=getattr(exc, "kind", None))
                 return
 
         if preaudited:
             draft_body, review = preaudited
             reason = None
         else:
-            review, reason = await independent_review.run(
-                self.hub, rid, text, reviewer=reviewer, refs=refs, packs=packs, cp2_notes=cp2_notes,
-                run_step=self.run_step, budget_denials=self.budget_denials,
-                render_evidence=lambda: independent_review.render_ledgers(
-                    steps, results, ledgers, refused, unsupported, artifact_sha256, n),
-                spending_cap=lambda: self._spending_cap_line(rid))
+            try:
+                review, reason = await independent_review.run(
+                    self.hub, rid, text, reviewer=reviewer, refs=refs, packs=packs, cp2_notes=cp2_notes,
+                    run_step=partial_closeout.stop_on_limit(self.run_step), budget_denials=self.budget_denials,
+                    render_evidence=lambda: independent_review.render_ledgers(
+                        steps, results, ledgers, refused, unsupported, artifact_sha256, n),
+                    spending_cap=lambda: self._spending_cap_line(rid))
+            except (BudgetExceeded, partial_closeout.TurnLimit) as exc:
+                await end("research_failed", cp2_report + f"\n\nResearch review stopped: {exc}.", False, None,
+                          {"stage": "review", "error": str(exc)}, error=str(exc),
+                          limit_error=getattr(exc, "kind", "budget_cap"))
+                return
         if not review:
             if reason is None:
                 await budget_denied("review", None)
@@ -6682,7 +6712,8 @@ class Orchestrator:
                 else:
                     (await end("research_failed", cp2_report + f"\n\nSynthesis failed: {final.error}", False, review,
                         {"stage": "synthesis", "error": final.error or "unknown error"},
-                        error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}"))
+                        error=f"보고서 작성에 실패했어요: {short(final.error or '원인을 알 수 없어요', 120)}",
+                        limit_error=final.error_kind))
                 return
             # A report that finished keeps its text and check even if the budget card after it was denied; the denial
             # only fails the request, as in the generic synthesis (run_step: a completed attempt keeps its result).
@@ -6744,7 +6775,8 @@ class Orchestrator:
         req["execution_record"] = _appendix_sections("", [*claim_check, cp2_audit])
         report = body.rstrip() + ("\n\n" + model_appendix if model_appendix else "")
         (await end("report_incomplete" if check["problems"] else "research_reported", report,
-            not check["problems"] and rid not in self.budget_denials, review, reference_lines=reference_lines))
+            not check["problems"] and rid not in self.budget_denials, review, reference_lines=reference_lines,
+            preserve_report=True))
 
     async def _research_continue(self, rid: str, review: dict | None, results: dict[str, TaskResult], *,
                                  cp2_note: str | None = None, stops: list[tuple[str, str]] | None = None) -> str | None:
@@ -7197,7 +7229,6 @@ class Orchestrator:
             return False
         agent = decision["agent_id"]
         result = None
-        review = None
 
         if phase == "solo":
             req.setdefault("solo_started_at", time.time())
@@ -7217,7 +7248,7 @@ class Orchestrator:
             if rid in self.budget_denials:
                 (await self._finish(rid, result.text or result.error or "task failed",
                              {"direct": result.model_dump(mode="json")}, ok=False,
-                             error=self.budget_denials[rid]))
+                             error=self.budget_denials[rid], preserve_report=bool(result.ok and result.text.strip())))
                 return True
 
         stored = req.get("solo_result")
@@ -7230,29 +7261,41 @@ class Orchestrator:
                 await persist_request(self.hub, rid)
                 await self._emit(rid, "request.route", req["route_decision"])
                 return False
-            reviewed = await self.run_step(Task(
+            task = Task(
                 agent_id=reviewer, request_id=rid, output_schema=REVIEW_SCHEMA,
                 prompt=REVIEW_PROMPT.format(request=text, results=result.text) +
                        plan_review_context(req.get("plan"), topic_checklists.load(),
                                            req.get("analysis_precedents")),
                 meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "revision": 0, "request": text,
-                      "title": "단독 결과 과학 리뷰"}))
-            parsed = lenient_review(reviewed.structured, REVIEW_SCHEMA) or lenient_review(
-                extract_json(reviewed.text), REVIEW_SCHEMA)
-            review = with_p1_verdict(review_with_checklist(
-                parsed, req.get("plan"), topic_checklists.load(), req.get("analysis_precedents"),
-                owner=SOLO_OWNER)
-            ) if reviewed.ok and parsed else {
-                "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
+                      "title": "단독 결과 과학 리뷰", "stop_on_limit": True})
+            try:
+                reviewed = await self.run_step(task)
+            except BudgetExceeded as exc:
+                reviewed = TaskResult(task_id=task.id, agent_id=reviewer, ok=False,
+                                      error_kind="budget_cap", error=str(exc))
+            denial = self.budget_denials.get(rid)
+            limit = partial_closeout.limit_kind({}, denial, reviewed.error_kind if not reviewed.ok else None)
+            if limit:
+                review = {"status": limit, "reason": safe_failure_cause(
+                    denial or reviewed.error or partial_closeout.LABELS[limit])}
+            else:
+                parsed = lenient_review(reviewed.structured, REVIEW_SCHEMA) or lenient_review(
+                    extract_json(reviewed.text), REVIEW_SCHEMA)
+                review = with_p1_verdict(review_with_checklist(
+                    parsed, req.get("plan"), topic_checklists.load(), req.get("analysis_precedents"),
+                    owner=SOLO_OWNER)
+                ) if reviewed.ok and parsed else {
+                    "status": "review_unparsed", "reason": reviewed.error or "missing or invalid verdict"}
             req["solo_review"] = review
             await persist_request(self.hub, rid)
             await self._emit(rid, "request.review", {"revision": 0, **review})
             phase = solo_phase(req, self.cfg)
-            if rid in self.budget_denials:
-                (await self._finish(rid, result.text or result.error or "task failed",
-                             {"direct": result.model_dump(mode="json")}, ok=False,
-                             review=review, error=self.budget_denials[rid]))
-                return True
+
+        stored_review = req.get("solo_review")
+        if result is not None and (limit := partial_closeout.saved_review_limit(stored_review)):
+            await self._finish(rid, result.text, {"direct": result.model_dump(mode="json")}, ok=False,
+                               review=stored_review, error=stored_review.get("reason"), limit_error=limit)
+            return True
 
         if phase == "fallback":
             reason = decision.get("reason") or (_solo_result_problem(result) if result else "")
@@ -7266,8 +7309,7 @@ class Orchestrator:
             return True
 
         report = result.text.strip()
-        stored_review = req.get("solo_review")
-        review = with_p1_verdict(stored_review) if valid_review(stored_review) else review
+        review = with_p1_verdict(stored_review) if valid_review(stored_review) else None
         late_notes = self._solo_notes(req)
         if late_notes:
             report += "\n\n단독 턴이 시작된 뒤 온 메모는 반영되지 않았다.\n" + "\n".join(
@@ -7287,6 +7329,8 @@ class Orchestrator:
         goes on in this process through a new plan and CP1 (``_research_continue``); its running cost is kept, and no
         briefing runs again."""
         req = self.hub.requests[rid]
+        if partial_closeout.committed(req) and not continuation:
+            return
         from ..research import final_checkpoint as cp4
         if cp4.enabled(req) and (req.get("research_contract") or {}).get("final_draft"):
             cp4.reconcile(req)
@@ -7360,7 +7404,9 @@ class Orchestrator:
                     req["output_types_stats"] = res.output_types_stats
                     await persist_request(self.hub, rid)
                 (await self._finish(rid, res.text, {"direct": res.model_dump(mode="json")},
-                             ok=res.ok and rid not in self.budget_denials))
+                             ok=res.ok and rid not in self.budget_denials,
+                             error=self.budget_denials.get(rid),
+                             preserve_report=bool(res.ok and res.text.strip())))
                 return
 
             # A contract hire on probation stays on the web roster as 수습 but is not offered to the CSO (#424).
@@ -8632,7 +8678,8 @@ class Orchestrator:
 
             async def recover_failures() -> None:
                 """Opt-in (#271): re-plan around failed steps until the DAG succeeds or the cap stops it."""
-                while rid not in self.budget_denials and any(not r.ok for r in results.values()):
+                while has_failures() and not partial_closeout.limit_kind(serialized_results(),
+                                                                         self.budget_denials.get(rid)):
                     if await attempt_replan() != "applied":
                         return
                     await self.run_dag(rid, text, steps, results, only={s["id"] for s in steps} - set(results))
@@ -8676,7 +8723,7 @@ class Orchestrator:
                 return
             await recover_failures()
             if rid in self.budget_denials or has_failures():
-                (await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False))
+                await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False)
                 return
 
             progress = req.get("review_progress") or {}
@@ -8711,9 +8758,10 @@ class Orchestrator:
                         'Every issue must include step_id, priority, problem, and request. Do not add prose.',
                         meta={**refs, "kind": "review", "outputs": ["outputs/review.json"], "revision": rev, "parse_attempt": parse_attempt,
                               "request": text, "title": f"과학 리뷰 #{rev}"}))
-                    if rid in self.budget_denials:
-                        (await self._finish(rid, self.report_results(steps, results, n), serialized_results(), ok=False,
-                                     review={"status": "budget_denied"}))
+                    limit = partial_closeout.limit_kind({}, self.budget_denials.get(rid), r.error_kind)
+                    if limit:
+                        await self._finish(rid, self.report_results(steps, results, n), serialized_results(),
+                                           ok=False, review={"status": limit}, limit_error=limit, error=r.error)
                         return
                     parsed = lenient_review(r.structured, REVIEW_SCHEMA) or lenient_review(
                         extract_json(r.text), REVIEW_SCHEMA)
@@ -8813,13 +8861,15 @@ class Orchestrator:
                 try:
                     final = await self.run_step(synthesis)
                 except BudgetExceeded as error:
-                    final = TaskResult(task_id=synthesis.id, agent_id=synthesis.agent_id, ok=False, error=str(error))
+                    final = TaskResult(task_id=synthesis.id, agent_id=synthesis.agent_id, ok=False,
+                                       error=str(error), error_kind="budget_cap")
                 body = (final.text if final.ok else self.report_results(steps, results, n) +
                         f"\n\nSynthesis failed: {final.error}")
                 report = _append_report_metadata(body, ["Review: revisions unresolved."])
                 (await self._finish(rid, report,
                              serialized_results(), ok=False, review=review,
-                             error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다"))
+                             error="리뷰 지적이 수정 상한 뒤에도 남아 있습니다",
+                             limit_error=final.error_kind, preserve_report=final.ok))
                 return
             final = await self.run_step(synthesis)
             review_appendix = ("남은 P2·P3 지적 원문:\n" + "\n".join(
@@ -8846,7 +8896,9 @@ class Orchestrator:
                 body = _before_bench_block(body, reference)
             report = _append_report_metadata(body, [review_appendix]) if review_appendix else body
             (await self._finish(rid, report, serialized_results(),
-                         ok=final.ok and rid not in self.budget_denials, review=review))
+                         ok=final.ok and rid not in self.budget_denials, review=review,
+                         error=self.budget_denials.get(rid), limit_error=final.error_kind,
+                         preserve_report=final.ok))
         except research_continuation.ReuseApprovalRequired:
             (await self._finish(rid, "재사용 증거가 바뀌어 단계를 보내지 않았습니다. 새 CP1 승인이 필요합니다.",
                          req.get('results') or {}, ok=False, error="reuse approval required"))
@@ -8864,6 +8916,11 @@ class Orchestrator:
             if self._continuation_unstarted(req):
                 # Ends as the revise it continued, with that round's plan and results put back (``_finish``).
                 (await self._finish(rid, f"{type(e).__name__}: {e}", {}, ok=False, error=f"{type(e).__name__}: {e}"))
+                return
+            if (isinstance(e, (BudgetExceeded, partial_closeout.TurnLimit))
+                    and partial_closeout.has_completed_outputs(req.get("results") or {})):
+                await self._finish(rid, str(e), req["results"], ok=False, error=str(e),
+                                   limit_error=getattr(e, "kind", "budget_cap"))
                 return
             req.update(status="failed", error=f"{type(e).__name__}: {e}", finished_at=time.time())
             execution = []
@@ -9031,23 +9088,34 @@ class Orchestrator:
         await persist_request(self.hub, rid)
 
     async def _finish(self, rid: str, report: str, results: dict, ok: bool, review: dict | None = None,
-                error: str | None = None, *, reference_lines: list[str] | None = None) -> None:
+                error: str | None = None, *, reference_lines: list[str] | None = None,
+                limit_error: str | None = None, preserve_report: bool = False) -> None:
         before = copy.deepcopy(self.hub.requests[rid])
         req = copy.deepcopy(before)
-        if req.get("status") == "cancelled":
-            return  # request cancel already wrote its report and terminal record (R13)
+        if req.get("status") == "cancelled" or partial_closeout.committed(req):
+            return  # cancellation or partial closeout already wrote the terminal record
         from ..research import final_checkpoint as cp4
         if cp4.enabled(req) and (req.get("research_contract") or {}).get("final_draft"):
             await persist_request(self.hub, rid)
             return  # preserve the exact body and audit the PI saw
+        req.pop("partial_closeout", None)
+        continuing = self._continuation_unstarted(req)
         report, results, review = self._unstarted_continuation_end(req, report, results, review)
+        limit_results = {} if req.get("research_contract") else results
+        limit = (partial_closeout.limit_kind(limit_results, self.budget_denials.get(rid), limit_error)
+                 if not ok and not continuing and not preserve_report and partial_closeout.has_completed_outputs(results)
+                 else None)
         if not ok and _developer_action(error or report) and not req.get("dev_reports"):
             (await self._record_dev_failure(rid, "request", error or report, "internal"))
             req["dev_reports"] = copy.deepcopy(self.hub.requests[rid].get("dev_reports") or [])
         report, report_appendix = _split_report_appendix(report)
         report_appendix, legacy_execution = split_appendix(report_appendix)
         execution = [req.get("execution_record") or "", legacy_execution]
-        if report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
+        if limit:
+            execution.append(report)
+            report = partial_closeout.prepare(req, results, limit)
+            error = safe_failure_cause(self.budget_denials.get(rid) or error or partial_closeout.LABELS[limit])
+        elif report.lstrip().startswith("### ") and "Full instructions, outputs and errors per step:" in report:
             execution.append(report)
             summary, feed_error = failed_request_summary(req, results, error or report)
             branch_status = ((req.get("research_contract") or {}).get("failure") or {}).get("branch_status") or []
@@ -9200,6 +9268,13 @@ class Orchestrator:
                         pi_review_pending=True, pi_reviewed_at=None)
         if error:  # one readable office-feed line; `labhq send` prints report first, or error when report is absent
             req["error"] = data["error"] = error
+        if limit:
+            await partial_closeout.publish_once(rid, self.hub.requests[rid], self.partial_closeouts_inflight,
+                                                lambda: self._publish_finish(rid, data, req, before))
+        else:
+            await self._publish_finish(rid, data, req, before)
+
+    async def _publish_finish(self, rid: str, data: dict, req: dict, before: dict) -> None:
         if hasattr(self.hub, "aschedule_terminal"):
             await self.hub.aschedule_terminal(rid, "request.completed", data, request=req, before=before)
             return
