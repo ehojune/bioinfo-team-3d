@@ -10,6 +10,13 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 
 초기 PR(#1–#11)은 머지 커밋으로 들어와 개별 커밋이 main에도 남아 있지만, 링크는 똑같이 PR 안의 커밋으로 걸었습니다. PR 없이 main에 바로 올린 커밋은 `/commit/` 주소로 연결됩니다.
 
+## 2026-11-28
+
+| 시간 | 커밋 | 주요 변경사항 |
+|---|---|---|
+| 07:00 | [`73c06ac`](https://github.com/ehojune/bioinfo-team-3d/commit/73c06ac) | **셸 프록시의 현재 값과 Windows 진단 절차를 참고 문서에 적었습니다.**<br>방화벽 로그의 저장 포트와 요청 포트를 대조하는 방법을 설명하고 모의 시험과 실환경 검증 범위를 밝혔습니다. |
+| 06:27 | [`a1a35b4`](https://github.com/ehojune/bioinfo-team-3d/commit/a1a35b4) | **읽기 전용 Codex 직원의 셸 프록시가 Windows 방화벽 준비와 충돌하는 문제를 고쳤습니다.**<br>예약 도메인 .invalid를 써서 우발적인 외부 HTTP 조회를 막고 Windows sandbox에 loopback 포트를 추가하지 않습니다. |
+
 ## 2026-11-27
 
 | 시간 | 커밋 | 주요 변경사항 |

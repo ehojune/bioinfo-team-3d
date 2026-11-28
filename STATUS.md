@@ -4,6 +4,17 @@
 
 최신 항목이 맨 위. 단계를 끝낼 때마다 PR 본문과 같은 내용을 여기에 추가합니다 (형식: `.github/pull_request_template.md`).
 
+## Codex 직원의 Windows sandbox 방화벽 설정 충돌
+
+Refs #1538
+
+- 웹 도구가 없는 읽기 전용 직원의 셸 프록시를 `http://labhq-shell-disabled.invalid.`로 바꿨습니다. 기본 프록시 설정을 따르는 HTTP 클라이언트의 우발적인 외부 조회를 막고 이 프록시가 loopback 포트를 추가하는 일을 없앱니다.
+- Windows에서 관련 pytest 146건을 통과했습니다. 직원 조합 6건에서 셸 설정과 웹 도구 설정을 확인했고 DNS 실패를 모의해 `urllib`의 HTTP·HTTPS 연결을 검사했습니다.
+- 참고 문서에 현재 프록시 값과 Windows 로그에서 저장 포트와 요청 포트를 대조하는 절차를 적었습니다.
+- 실제 Codex 직원의 교대 실행과 방화벽 전환은 미검증입니다. #1522 과제 3 채점·판정까지 `hold`를 유지합니다.
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
 ## 채점용 가림본의 실행 명령 보존
 
 Closes #1528
