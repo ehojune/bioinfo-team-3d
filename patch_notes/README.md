@@ -15,12 +15,19 @@ PR로 들어온 변경은 스쿼시 머지라 개별 커밋이 main에 남지 �
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
 | 07:00 | [`73c06ac`](https://github.com/ehojune/bioinfo-team-3d/commit/73c06ac) | **셸 프록시의 현재 값과 Windows 진단 절차를 참고 문서에 적었습니다.**<br>방화벽 로그의 저장 포트와 요청 포트를 대조하는 방법을 설명하고 모의 시험과 실환경 검증 범위를 밝혔습니다. |
+| 06:37 | [`4c63852`](https://github.com/ehojune/bioinfo-team-3d/commit/4c63852) | **Windows에서도 HPC 결과를 저장한 뒤 직원이 깨어나는지 확인합니다.**<br>기존 Windows CI 대상 파일에서 원격 목록 수신부터 완료 알림 발행까지 시험합니다. |
 | 06:27 | [`a1a35b4`](https://github.com/ehojune/bioinfo-team-3d/commit/a1a35b4) | **읽기 전용 Codex 직원의 셸 프록시가 Windows 방화벽 준비와 충돌하는 문제를 고쳤습니다.**<br>예약 도메인 .invalid를 써서 우발적인 외부 HTTP 조회를 막고 Windows sandbox에 loopback 포트를 추가하지 않습니다. |
+| 06:25 | [`638b348`](https://github.com/ehojune/bioinfo-team-3d/commit/638b348) | **HPC 작업 결과를 가져올 때 작업 폴더에 설치한 Java는 클러스터에 둡니다.**<br>JDK 설치 파일을 회수 목록에서 빼고 제외 사유를 기록합니다. 합성 시험에서 결과와 로그를 저장한 뒤 직원이 깨어나는 순서를 확인했습니다. |
 
 ## 2026-11-27
 
 | 시간 | 커밋 | 주요 변경사항 |
 |---|---|---|
+| 11:58 | [`40d1942`](https://github.com/ehojune/bioinfo-team-3d/commit/40d1942) | **사용량 한도 뒤 결과 수정을 재개할 때 산출물을 이어받는 조건을 한영 매뉴얼에 적었습니다.**<br>8장에 실패한 수정 턴에서 세션을 잇는 동작과 부모 연결·산출물 SHA-256 검사 기준을 보탰다. |
+| 11:34 | [`adbedc9`](https://github.com/ehojune/bioinfo-team-3d/commit/adbedc9) | **사용량 한도 뒤 결과 수정을 다시 시작하는 방법을 README에 적었습니다.**<br>한영 README를 갱신하고 성공 산출물 계승, 해시 불일치와 잘못된 연결을 검사하는 runner 회귀 테스트를 추가했다. |
+| 11:34 | [`e2ebec9`](https://github.com/ehojune/bioinfo-team-3d/commit/e2ebec9) | **한영 매뉴얼 목차에서 과제 1·2의 단계별 비용 근거를 찾을 수 있습니다.**<br>비교 bench 항목에서 실측·추정과 미귀속 비용을 정리한 v2 설계 참고 문서에 연결했다. |
+| 11:20 | [`86d6714`](https://github.com/ehojune/bioinfo-team-3d/commit/86d6714) | **두 과제에서 계획과 분석, 검토에 든 비용을 정리했습니다.**<br>보존 장부에서 실측과 추정, 금액 미상 항목을 대조하고 v2 비용 절감 후보를 기록했다. |
+| 11:14 | [`933197b`](https://github.com/ehojune/bioinfo-team-3d/commit/933197b) | **사용량 한도에서 결과 수정을 다시 시작해도 이미 확인한 산출물을 이어받습니다.**<br>실패한 수정 턴의 부모를 기록하고 같은 단계의 성공 턴에서 산출물과 SHA-256을 대조한다. |
 | 05:18 | [`6cb51f2`](https://github.com/ehojune/bioinfo-team-3d/commit/6cb51f2) | **여러 줄로 나눈 인라인 명령도 읽을 수 있고 갈래 값은 가려집니다.**<br>이어 쓴 코드에서 URL과 갈래 값을 가리면서 리디렉션, 원래 줄바꿈과 들여쓰기를 보존합니다. |
 | 05:04 | [`f3ff472`](https://github.com/ehojune/bioinfo-team-3d/commit/f3ff472) | **줄을 잇거나 가림 문구가 겹쳐도 갈래를 드러내는 값이 빠집니다.**<br>줄 연속으로 적은 URL 전체를 가리고 원문에서 기본 표식과 추가 문구의 가림 범위를 함께 찾습니다. |
 | 04:56 | [`a8ed3ad`](https://github.com/ehojune/bioinfo-team-3d/commit/a8ed3ad) | **인용문에 들여쓴 명령과 URL 뒤의 셸 연산자도 가림본에 남습니다.**<br>인용문 깊이와 코드 들여쓰기를 함께 확인하고, URL 가림 처리에서 셸 연산자와 주소에 포함된 값을 구분합니다. |

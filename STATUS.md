@@ -15,6 +15,39 @@ Refs #1538
 
 🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
 
+## HPC 결과 회수에서 JDK 설치본 제외
+
+Closes #1537
+
+- 결과 목록을 만들 때 `release`, `bin/java`와 `lib/modules` 또는 `jre/lib/rt.jar`를 갖춘 설치 폴더를 제외하고 `*.fetch.json`에 사유를 남깁니다.
+- 회귀 시험을 Windows CI 목록에 있는 `tests/test_hpc_remote_data.py`로 옮겼습니다. Windows에서 원격 목록을 재현한 1건이 통과했고, WSL의 실제 POSIX 스캔을 연결해 JDK 배치 2건도 확인했습니다. 결과·로그·회수 기록을 저장한 뒤 `jobs.finished`가 한 번 발행됩니다.
+- 과제 3 채점·판정까지 병합과 시험판 적용을 보류합니다. 실제 HPC 회수 시간은 미검증입니다.
+
+🤖 Co-Authored-By: Codex (GPT-6) <199175422+chatgpt-codex-connector[bot]@users.noreply.github.com>
+
+## 결론
+
+[#1531](https://github.com/ehojune/bioinfo-team-3d/issues/1531)의 과제 1·2 비용을 [v2 설계 참고 문서](../reference/1522-stage-costs.md)에 정리했습니다. 계획·요청 검토에 LabHQ 기록액의 31.9%가 들었습니다.
+
+## 검증
+
+- LabHQ 5개 요청 146건을 단계별로 대조했습니다. 단일 세션은 단계별 비용이 없어 미귀속으로 남겼습니다. 감사·수정은 최종 장부의 추정·증분액을 사용했습니다.
+- 공개 요약의 $207.16과 원장 합계의 센트 단위 표시 차이는 실행별 반올림 순서와 일치합니다. 금액 미상 자문 1건과 실패 실행을 남겼습니다.
+- 한영 매뉴얼 목차의 비교 bench 항목에 단계별 비용 근거를 연결했습니다. 두 링크가 같은 참고 문서를 여는지 확인했습니다.
+- 제품 코드 순증 0줄(300줄 여유). `hold` 해제는 과제 3 종료·채점·판정 뒤입니다.
+
+## 결론
+
+[#1524](https://github.com/ehojune/bioinfo-team-3d/issues/1524)의 실패는 Claude 사용량 한도에서 재개할 때 발생했습니다. 수정 턴 재개는 실패한 세션 턴에서 이어가고, 산출물은 연결이 확인된 마지막 성공 턴에서 가져옵니다.
+
+## 근거와 검증
+
+- 시험 기록의 첫 수정은 11/26 18:01:13 KST에 5시간 한도로 실패했습니다. 재개는 20:34:23에 부모 오류로 끝났습니다. 예산 카드는 21:05:11에 열렸고 11/27 00:05:48에 거절됐습니다. 요청은 00:05:59에 종료됐습니다. [실행 기록 대조](https://github.com/ehojune/bioinfo-team-3d/issues/1524#issuecomment-7207894388)
+- Runner가 수정 턴의 부모 ID를 manifest에 적습니다. 실패한 수정 턴만 거슬러 올라가며 요청·단계·직원·revision이 각 연결에서 일치해야 합니다. 성공 턴의 산출물과 SHA-256을 그대로 대조합니다. 연결이 없는 과거 실패 턴은 계속 거절합니다.
+- 사용량 한도 뒤 수정 결과를 이어받는 동작을 한영 README에 적었습니다. 로컬에서 산출물·quota 관련 검사 73건 통과, 2건 건너뜀. 새 회귀 파일의 Windows CI 목록 검사를 통과했습니다. 실제 시험 빌드는 고정했으며 재실행하지 않았습니다.
+- 제품 코드 순증 18줄(300줄 한도 중 282줄 여유). `daemon.py` 2줄은 기존 manifest 쓰기 호출의 인자입니다.
+- `hold` 해제는 과제 3 종료·채점·판정 뒤입니다. 최종 head CI와 실제 봇 리뷰를 확인한 뒤 Codex 총괄이 병합을 판단합니다.
+
 ## 채점용 가림본의 실행 명령 보존
 
 Closes #1528
