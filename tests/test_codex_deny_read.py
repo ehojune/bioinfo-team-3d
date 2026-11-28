@@ -1,7 +1,11 @@
 """#382: PI personal paths reach the Codex staff sandbox as deny-read, not only as an instruction. Command building
 only; the live check (a canary under a denied path is unreadable) is in the PR report."""
 import json
+import socket
 import sys
+from urllib.error import URLError
+from urllib.parse import urlsplit
+from urllib.request import build_opener
 
 import pytest
 
@@ -104,7 +108,7 @@ def test_new_default_private_entries():
 
 
 # ---- #1055: a read-only reviewer's shell reached public sites through the elevated sandbox, uncounted ----
-def _shell_policy(tmp_path, *, tools=(), sandbox="read-only", read_only=False, read_only_inputs=()):
+def _shell_overrides(tmp_path, *, tools=(), sandbox="read-only", read_only=False, read_only_inputs=()):
     settings = Settings()
     agent = AgentSpec(id="w", name="W", role="test", engine=Engine.codex, builtin_mcp=[], sandbox=sandbox,
                       tools=list(tools))
@@ -118,18 +122,64 @@ def _shell_policy(tmp_path, *, tools=(), sandbox="read-only", read_only=False, r
                      mcp_servers=[], env={}, emit=emit, prompt="x", read_only=read_only,
                      read_only_inputs=list(read_only_inputs))
     cmd = get_adapter(Engine.codex, settings).build_command(ctx)
-    return [cmd[i + 1] for i, arg in enumerate(cmd) if arg == "-c" and cmd[i + 1].startswith("shell_environment_policy.")]
+    return dict(cmd[i + 1].split("=", 1) for i, arg in enumerate(cmd) if arg == "-c")
+
+
+def _shell_policy(tmp_path, **kwargs):
+    return [f"{key}={value}" for key, value in _shell_overrides(tmp_path, **kwargs).items()
+            if key.startswith("shell_environment_policy.")]
 
 
 def test_a_read_only_shell_gets_a_closed_proxy_so_default_http_clients_fail(tmp_path):
     [setting] = _shell_policy(tmp_path)
     value = setting.split("=", 1)[1]
+    proxy = "http://labhq-shell-disabled.invalid."
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
-        assert f'{name} = "http://127.0.0.1:9"' in value
+        assert f'{name} = "{proxy}"' in value
     assert 'NO_PROXY = ""' in value and 'no_proxy = ""' in value, "no host may be exempted from the closed proxy"
     if sys.version_info >= (3, 11):
         import tomllib
-        assert tomllib.loads("p = " + value)["p"]["HTTPS_PROXY"] == "http://127.0.0.1:9"
+        assert tomllib.loads("p = " + value)["p"]["HTTPS_PROXY"] == proxy
+
+
+@pytest.mark.parametrize("sandbox,read_only,staged,tools,blocked", [
+    ("read-only", False, False, [], True),
+    ("workspace-write", True, False, [], True),
+    ("read-only", True, False, ["WebSearch"], False),
+    ("read-only", True, False, ["WebFetch"], False),
+    ("workspace-write", False, False, [], False),
+    ("workspace-write", False, True, [], False),
+])
+def test_elevated_codex_shell_guard_adds_no_firewall_port(tmp_path, monkeypatch, windows, sandbox, read_only, staged,
+                                                         tools, blocked):
+    overrides = _shell_overrides(tmp_path, sandbox=sandbox, read_only=read_only, tools=tools,
+                                 read_only_inputs=[str(tmp_path / "inputs")] if staged else [])
+    assert overrides["windows.sandbox"] == '"elevated"'
+    assert overrides["web_search"] == ('"live"' if tools else '"disabled"')
+    if not blocked:
+        assert "shell_environment_policy.set" not in overrides
+        return
+
+    # The flat TOML table uses JSON string values, also on Python 3.10.
+    pairs = [entry.strip().split(" = ", 1) for entry in overrides["shell_environment_policy.set"][1:-1].split(",")]
+    proxy_env = {name: json.loads(value) for name, value in pairs}
+    proxy = "http://labhq-shell-disabled.invalid."
+    assert proxy_env == {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "ALL_PROXY": proxy,
+                         "http_proxy": proxy, "https_proxy": proxy, "all_proxy": proxy,
+                         "NO_PROXY": "", "no_proxy": ""}
+    assert urlsplit(proxy_env["HTTPS_PROXY"]).port is None
+    for name, value in proxy_env.items():
+        monkeypatch.setenv(name, value)
+
+    def unresolved_proxy(address, *args, **kwargs):
+        assert address[0] == "labhq-shell-disabled.invalid."
+        raise socket.gaierror(socket.EAI_NONAME, "reserved name")
+
+    monkeypatch.setattr(socket, "create_connection", unresolved_proxy)
+    opener = build_opener()
+    for url in ("http://example.com/", "https://example.com/"):
+        with pytest.raises(URLError, match="reserved name"):
+            opener.open(url, timeout=1)
 
 
 def test_the_proxy_is_set_for_the_shell_only_not_for_the_codex_process(tmp_path):
