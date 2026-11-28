@@ -6,7 +6,7 @@ import os
 import shlex
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 import pytest
@@ -126,6 +126,103 @@ def prepare(cluster, transfer, tmp_path, contents=None):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
     return spec
+
+
+@pytest.mark.parametrize("runtime", [
+    pytest.param(None, id="remote-manifest"),
+    pytest.param("lib/modules", id="jdk-modules", marks=pytest.mark.skipif(
+        os.name == "nt", reason="remote inventory helper needs POSIX directory descriptors")),
+    pytest.param("jre/lib/rt.jar", id="jdk-rt-jar", marks=pytest.mark.skipif(
+        os.name == "nt", reason="remote inventory helper needs POSIX directory descriptors")),
+])
+async def test_installed_jdk_does_not_delay_receipt_and_wake(cluster, tmp_path, monkeypatch, runtime):
+    transfer = helper_transfer(cluster, fetch_total_bytes=256)
+    files = {
+        "analysis/result.tsv": b"value\n42\n",
+        "analysis/run.log": b"analysis finished\n",
+        "jdk-results/release": b"report release",
+        "jdk-results/bin/java": b"result named java",
+    }
+    runtime_path = runtime or "lib/modules"
+    spec = prepare(cluster, transfer, tmp_path, {
+        **files,
+        "tools/java-sdk/release": b"Java release metadata\n",
+        "tools/java-sdk/bin/java": b"launcher",
+        f"tools/java-sdk/{runtime_path}": b"x" * 240,
+    })
+
+    if runtime is None:
+        # Windows runs the receiver against the same manifest shape as the POSIX scanner.
+        run = transfer.run
+
+        def replay_scan(command):
+            if not command.startswith("python3 "):
+                return run(command)
+            manifest = {
+                "request_id": spec["request_id"],
+                "data": spec["data"],
+                "bytes": sum(map(len, files.values())),
+                "files": [
+                    {"path": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+                    for name, data in files.items()
+                ],
+                "directories": ["analysis", "jdk-results", "jdk-results/bin", "tools"],
+                "skipped": [{"path": "tools/java-sdk", "reason": "environment folder"}],
+            }
+            cluster.path(f"{spec['dir']}/remote-data.json").write_text(json.dumps(manifest), encoding="utf-8")
+            return SimpleNamespace(exit_code=0, output="")
+
+        monkeypatch.setattr(transfer, "run", replay_scan)
+
+    scheduler_log = b"scheduler finished\n"
+    for rel in spec["logs"]:
+        cluster.path(rel).write_bytes(scheduler_log)
+
+    fetched_files = []
+    fetch_file = transfer.fetch_file
+
+    def observe_fetch(rel, *args, **kwargs):
+        fetched_files.append(rel)
+        return fetch_file(rel, *args, **kwargs)
+
+    monkeypatch.setattr(transfer, "fetch_file", observe_fetch)
+    runner = Runner(_settings(tmp_path))
+    monkeypatch.setattr(runner.scheduler, "transfer", lambda: transfer)
+    job_workdir = tmp_path / "step"
+    job_workdir.mkdir()
+    outputs = job_workdir / "outputs"
+    logs = job_workdir / "jobs" / "logs"
+    job = {"job_id": "42", "name": "align", "task_id": "t", "agent_id": "a", "state": "completed",
+           "terminal": True, "exit_status": 0, "workdir": str(job_workdir),
+           "transfer": {**spec, "fetch_to": str(outputs)}}
+    runner.jobs["42"] = job
+    runner.task_req["t"] = "r"
+    emit_all = runner.emit_all
+
+    async def observe_wake(events, **kwargs):
+        if any(event.type == "jobs.finished" for event in events):
+            assert job["fetched"]
+            assert not any("/tools/java-sdk/" in rel for rel in fetched_files)
+            for name, data in files.items():
+                assert (outputs / name).read_bytes() == data
+            for rel in spec["logs"]:
+                assert (logs / PurePosixPath(rel).name).read_bytes() == scheduler_log
+            receipt = json.loads((logs / f"{spec['stem']}.fetch.json").read_text(encoding="utf-8"))
+            assert {row["path"] for row in receipt["fetched"]} == set(files)
+            assert {"path": "tools/java-sdk", "reason": "environment folder"} in receipt["skipped"]
+        await emit_all(events, **kwargs)
+
+    monkeypatch.setattr(runner, "emit_all", observe_wake)
+    try:
+        await runner._wake_finished_jobs()
+        await runner._wake_finished_jobs()
+        wakes = [event for event in runner.store.pending() if event["type"] == "jobs.finished"]
+        assert len(wakes) == 1
+        assert wakes[0]["task_id"] == "t"
+        assert wakes[0]["data"]["jobs"][0]["exit_status"] == 0
+        assert cluster.path(f"{spec['work']}/tools/java-sdk/{runtime_path}").read_bytes() == b"x" * 240
+    finally:
+        runner.store.close()
 
 
 def test_request_folder_is_stable_but_job_folders_are_fresh():
