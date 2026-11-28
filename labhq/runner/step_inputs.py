@@ -117,18 +117,34 @@ def validate_runner_env(root, source, artifact, expected, request_id=None):
     return source / '.venv'
 
 
-def repair_outputs(manifest, task, records):
-    """Recover only the successful parent turn's collected files, retaining its original hashes."""
+def _correction_source(manifest, task):
+    """Find the successful producer along the correction's recorded retry chain."""
     parent = task.meta.get('parent_task')
-    run = (manifest.get('runs') or {}).get(parent) if isinstance(parent, str) else None
+    runs = manifest.get('runs') or {}
     origin = manifest.get('task') or {}
-    if (not isinstance(run, dict) or run.get('ok') is not True or
-            not task.request_id or origin.get('request_id') != task.request_id or
-            run.get('request_id') != task.request_id or run.get('step_id') != task.meta.get('step_id') or
-            not task.meta.get('step_id') or run.get('agent_id') != task.agent_id or
-            run.get('revision') != task.meta.get('revision', 0) or
-            run.get('kind') not in {'step', 'result_correction'}):
-        raise ValueError('result correction parent is not a successful turn of this step')
+    step = task.meta.get('step_id')
+    if task.request_id and origin.get('request_id') == task.request_id and step:
+        seen = {task.id}
+        while isinstance(parent, str) and parent not in seen:
+            seen.add(parent)
+            run = runs.get(parent)
+            if (not isinstance(run, dict) or run.get('request_id') != task.request_id
+                    or run.get('step_id') != step or run.get('agent_id') != task.agent_id
+                    or run.get('revision') != task.meta.get('revision', 0)
+                    or run.get('kind') not in {'step', 'result_correction'}):
+                break
+            if run.get('ok') is True:
+                return run
+            if run.get('ok') is not False or run.get('kind') != 'result_correction':
+                break
+            # A failed correction may be the session's resume point, but its inventory is incomplete.
+            parent = run.get('parent_task')
+    raise ValueError('result correction parent is not a successful turn of this step')
+
+
+def repair_outputs(manifest, task, records):
+    """Recover only the successful source turn's collected files, retaining its original hashes."""
+    run = _correction_source(manifest, task)
     outputs, hashes = run.get('outputs'), run.get('output_sha256')
     if (not isinstance(outputs, list) or not isinstance(hashes, dict) or
             any(not isinstance(p, str) or output_relpath(p) != p for p in outputs) or
